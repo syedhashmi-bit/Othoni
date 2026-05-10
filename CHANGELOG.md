@@ -8,6 +8,45 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.23.0] — 2026-05-10
+
+Multi-host source attribution on `custom.*` metrics. Multiple agents can now
+push to the same othoni instance without stepping on each other's metric
+names, and the History page groups the results by host.
+
+### Added
+
+- **Optional `host` field on `POST /api/metrics`** — accepted at the
+  top level (default for the whole batch) or per-metric. When present
+  and valid, the server splices it onto the metric name:
+  `{ name: "custom.requests", host: "app-server-1" }` lands as
+  `custom.app-server-1.requests` in the store.
+- **DNS-style validation** on the host: `[a-z0-9-]{1,40}` with no
+  leading/trailing dash. Invalid hosts return a clear `400
+  invalid_host` rather than silently dropping the prefix.
+- **Per-host grouping on the History page Custom section** — one
+  `<Section>` per host, plus an "ungrouped" bucket for legacy agents
+  that push the un-prefixed `custom.<leaf>` form. Single regex parser
+  on the client (matches the server's host pattern) splits metric
+  names into `{ host, leaf }`.
+
+### Changed
+
+- `package.json` bumped to `0.23.0`.
+- `server/routes/metrics.js` — adds `applyHost()` between normalize
+  and insert; rejects bad hosts up front.
+- `client/src/pages/History.jsx` — replaces the single Custom section
+  with a `CustomMetricsSection` that fans out one section per host.
+
+### Notes
+
+- **Backwards compatible.** Existing agents that don't send `host`
+  continue to write `custom.<leaf>` — those land in the new
+  "Custom · ungrouped" section. No data migration needed.
+- The host segment is part of the metric name (not a separate column),
+  so it flows through the same `samples` table, the same retention
+  sweep, the same `/api/history` query path. Zero schema changes.
+
 ## [0.22.0] — 2026-05-10
 
 Optional Prometheus exporter. Off by default — additive only, doesn't
@@ -1096,6 +1135,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.23.0]: #0230--2026-05-10
 [0.22.0]: #0220--2026-05-10
 [0.21.0]: #0210--2026-05-10
 [0.20.0]: #0200--2026-05-10

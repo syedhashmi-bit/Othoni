@@ -275,6 +275,31 @@ curl -X POST https://othoni.example.com/api/metrics \
 Optional `t` field on each metric (unix milliseconds) for backfill.
 Defaults to "now" on the server.
 
+### Multi-host attribution
+
+If multiple machines push to the same othoni, send a `host` field. The server
+splices it into the metric name so each host's series stays distinct, and the
+History page groups the Custom section by host:
+
+```bash
+# top-level host (applies to every row in the batch)
+curl -X POST https://othoni.example.com/api/metrics \
+  -H "Authorization: Bearer othoni_<your-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "host": "app-server-1",
+        "metrics": [
+          {"name":"custom.requests","value":42},
+          {"name":"custom.errors","value":0}
+        ]
+      }'
+# stored as custom.app-server-1.requests, custom.app-server-1.errors
+```
+
+Host names must match `[a-z0-9-]{1,40}` (DNS-style). Existing agents that
+don't send `host` continue to write `custom.<leaf>` and show up under
+"Custom · ungrouped" — fully backwards compatible, no migration.
+
 Limits: 600 requests/minute per key, 1000 metrics per batch. Pushed
 metrics share the same SQLite store and 24h retention as built-in
 metrics, and show up automatically under a **Custom** section on the

@@ -738,18 +738,61 @@ export default function History() {
       </Section>
 
       {customMetrics.length > 0 && (
-        <Section title={`Custom (${customMetrics.length})`}>
-          {customMetrics.map((m) => (
-            <SingleChartCard
-              key={m}
-              metric={m}
-              title={m.replace(/^custom\./, '')}
-              format="number"
-              range={range}
-            />
-          ))}
-        </Section>
+        <CustomMetricsSection metrics={customMetrics} range={range} />
       )}
     </div>
+  );
+}
+
+// `custom.<host>.<leaf>` is the multi-host attribution form (v0.23.0). Older
+// agents push `custom.<leaf>` with no host segment — those land in an
+// "Ungrouped" section so existing dashboards keep working unchanged.
+function parseCustom(name) {
+  const tail = name.replace(/^custom\./, '');
+  const dot = tail.indexOf('.');
+  if (dot > 0) {
+    const host = tail.slice(0, dot);
+    if (/^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$|^[a-z0-9]$/.test(host)) {
+      return { host, leaf: tail.slice(dot + 1) };
+    }
+  }
+  return { host: null, leaf: tail };
+}
+
+function CustomMetricsSection({ metrics, range }) {
+  // Group by host, preserve sorted order, give the no-host group a stable key.
+  const byHost = {};
+  for (const m of metrics) {
+    const { host, leaf } = parseCustom(m);
+    const key = host || '__ungrouped__';
+    (byHost[key] = byHost[key] || []).push({ metric: m, leaf });
+  }
+  const hostKeys = Object.keys(byHost).sort((a, b) => {
+    if (a === '__ungrouped__') return 1;
+    if (b === '__ungrouped__') return -1;
+    return a.localeCompare(b);
+  });
+  return (
+    <>
+      {hostKeys.map((hk) => {
+        const list = byHost[hk];
+        const title = hk === '__ungrouped__'
+          ? `Custom · ungrouped (${list.length})`
+          : `Custom · ${hk} (${list.length})`;
+        return (
+          <Section key={hk} title={title}>
+            {list.map(({ metric, leaf }) => (
+              <SingleChartCard
+                key={metric}
+                metric={metric}
+                title={leaf}
+                format="number"
+                range={range}
+              />
+            ))}
+          </Section>
+        );
+      })}
+    </>
   );
 }
