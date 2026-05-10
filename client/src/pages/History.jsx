@@ -1,7 +1,47 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import { usePoller } from '../hooks';
+import { usePoller, useLocalSetting } from '../hooks';
 import { LineChart, MultiLineChart, StackedAreaChart } from '../Charts.jsx';
+import { IconPlus, IconTrash } from '../Icons.jsx';
+
+// Catalog of metrics the saved-views picker can pull from. Static set only —
+// the per-core / per-iface / per-disk / custom.* variable-cardinality series
+// have their own dedicated cards on this page already.
+const VIEW_METRICS = [
+  // Compute
+  { id: 'cpu',         label: 'CPU usage',          format: 'percent', group: 'Compute' },
+  { id: 'cpu.user',    label: 'CPU user',           format: 'percent', group: 'Compute' },
+  { id: 'cpu.system',  label: 'CPU system',         format: 'percent', group: 'Compute' },
+  { id: 'cpu.idle',    label: 'CPU idle',           format: 'percent', group: 'Compute' },
+  { id: 'load1',       label: 'Load avg (1m)',      format: 'number',  group: 'Compute' },
+  // Memory
+  { id: 'mem',         label: 'Memory usage',       format: 'percent', group: 'Memory'  },
+  { id: 'swap',        label: 'Swap usage',         format: 'percent', group: 'Memory'  },
+  { id: 'mem.active',  label: 'Memory active',      format: 'bytes',   group: 'Memory'  },
+  { id: 'mem.cached',  label: 'Memory cached',      format: 'bytes',   group: 'Memory'  },
+  { id: 'mem.buffers', label: 'Memory buffers',     format: 'bytes',   group: 'Memory'  },
+  { id: 'mem.free',    label: 'Memory free',        format: 'bytes',   group: 'Memory'  },
+  // I/O
+  { id: 'disk_root',   label: 'Root disk usage',    format: 'percent', group: 'I/O'     },
+  { id: 'disk.read',   label: 'Disk read',          format: 'rate',    group: 'I/O'     },
+  { id: 'disk.write',  label: 'Disk write',         format: 'rate',    group: 'I/O'     },
+  // Network
+  { id: 'net_rx',      label: 'Network in',         format: 'rate',    group: 'Network' },
+  { id: 'net_tx',      label: 'Network out',        format: 'rate',    group: 'Network' },
+  { id: 'conn.established', label: 'Conn established', format: 'number', group: 'Network' },
+  { id: 'conn.timewait',    label: 'Conn time-wait',   format: 'number', group: 'Network' },
+  { id: 'conn.listening',   label: 'Conn listening',   format: 'number', group: 'Network' },
+  { id: 'conn.total',       label: 'Conn total',       format: 'number', group: 'Network' },
+];
+const METRIC_BY_ID = Object.fromEntries(VIEW_METRICS.map((m) => [m.id, m]));
+const VIEW_GROUPS = Array.from(new Set(VIEW_METRICS.map((m) => m.group)));
+const VIEWS_KEY = 'othoni.history.views';
+const MAX_VIEWS = 8;
+const MAX_METRICS_PER_VIEW = 8;
+const SERIES_COLORS = [
+  '#5b8cff', '#22c55e', '#f59e0b', '#ef4444', '#a855f7',
+  '#06b6d4', '#84cc16', '#ec4899',
+];
 
 const RANGES = ['15m', '1h', '6h', '24h'];
 
@@ -339,6 +379,266 @@ function Section({ title, children }) {
   );
 }
 
+// ---------- Saved views ----------
+
+// Pollers are stateful — we can't call useMetric inside a map() because hook
+// counts must be stable across renders. This hook fans out to N concurrent
+// fetchers via Promise.all, on the same cadence as the rest of the page.
+function useViewSeries(metricIds, range) {
+  const [series, setSeries] = useState([]);
+  const key = metricIds.join('|');
+  useEffect(() => {
+    if (!metricIds.length) { setSeries([]); return undefined; }
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const results = await Promise.all(metricIds.map((id) => api.history(id, range)));
+        if (!alive) return;
+        setSeries(metricIds.map((id, i) => ({
+          name: METRIC_BY_ID[id]?.label || id,
+          color: SERIES_COLORS[i % SERIES_COLORS.length],
+          points: results[i].points || [],
+        })));
+      } catch {
+        /* keep prior series on error */
+      }
+    };
+    refresh();
+    const id = setInterval(() => { if (!document.hidden) refresh(); }, refreshFor(range));
+    return () => { alive = false; clearInterval(id); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, range]);
+  return series;
+}
+
+// If every selected metric shares a format, use it; otherwise fall back to
+// raw numbers (mixing %/bytes/rate on one axis loses the unit anyway).
+function chooseFormat(metricIds) {
+  if (!metricIds.length) return 'number';
+  const formats = new Set(metricIds.map((id) => METRIC_BY_ID[id]?.format).filter(Boolean));
+  if (formats.size === 1) return [...formats][0];
+  return 'number';
+}
+
+function SavedViewsCard({ range }) {
+  const [views, setViews] = useLocalSetting(VIEWS_KEY, []);
+  const [picking, setPicking] = useState(false);
+  const [selected, setSelected] = useState([]); // metric ids in current draft
+  const [draftName, setDraftName] = useState('');
+  const [activeName, setActiveName] = useState(null); // name of preset whose draft is loaded
+
+  function toggle(id) {
+    setSelected((s) => {
+      if (s.includes(id)) return s.filter((x) => x !== id);
+      if (s.length >= MAX_METRICS_PER_VIEW) return s;
+      return [...s, id];
+    });
+  }
+  function clearAll() {
+    setSelected([]);
+    setDraftName('');
+    setActiveName(null);
+  }
+  function applyPreset(v) {
+    setSelected(v.metrics.filter((id) => METRIC_BY_ID[id]));
+    setDraftName(v.name);
+    setActiveName(v.name);
+    setPicking(true);
+  }
+  function saveCurrent() {
+    const name = draftName.trim();
+    if (!name || !selected.length) return;
+    const next = views.filter((v) => v.name !== name);
+    next.unshift({ name, metrics: selected });
+    setViews(next.slice(0, MAX_VIEWS));
+    setActiveName(name);
+  }
+  function deleteView(name) {
+    setViews(views.filter((v) => v.name !== name));
+    if (activeName === name) {
+      setActiveName(null);
+      setDraftName('');
+    }
+  }
+
+  const series = useViewSeries(selected, range);
+  const format = chooseFormat(selected);
+  const fixedMax = format === 'percent' ? 100 : undefined;
+  const groupedMetrics = useMemo(
+    () => VIEW_GROUPS.map((g) => ({ group: g, items: VIEW_METRICS.filter((m) => m.group === g) })),
+    []
+  );
+
+  return (
+    <div className="card" style={{ padding: 18 }}>
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Saved views</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Pick a handful of metrics to overlay on a single chart. Mix-and-match
+            within one unit (all rate, all percent, …) for a clean axis. Saves
+            to localStorage per browser.
+          </div>
+        </div>
+        <div className="toolbar" style={{ margin: 0 }}>
+          {!picking && (
+            <button
+              type="button"
+              className="btn compact"
+              onClick={() => setPicking(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <IconPlus /> Build view
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Saved presets */}
+      {views.length > 0 && (
+        <div className="toolbar" style={{ marginTop: 12, gap: 6, flexWrap: 'wrap' }}>
+          <span className="dim" style={{ fontSize: 12 }}>Presets:</span>
+          {views.map((v) => (
+            <span key={v.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 0 }}>
+              <button
+                type="button"
+                className={`btn tiny ${activeName === v.name ? 'active' : ''}`}
+                onClick={() => applyPreset(v)}
+                title={`${v.metrics.length} metric${v.metrics.length === 1 ? '' : 's'}: ${v.metrics.join(', ')}`}
+                style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+              >
+                {v.name}
+              </button>
+              <button
+                type="button"
+                className="btn tiny"
+                onClick={() => deleteView(v.name)}
+                aria-label={`Delete view ${v.name}`}
+                title="Delete view"
+                style={{
+                  borderTopLeftRadius: 0,
+                  borderBottomLeftRadius: 0,
+                  borderLeft: 'none',
+                  padding: '4px 6px',
+                  color: 'var(--text-dim)',
+                }}
+              >
+                <IconTrash />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Picker */}
+      {picking && (
+        <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+          <div className="toolbar" style={{ marginBottom: 10 }}>
+            <span className="dim" style={{ fontSize: 12 }}>
+              {selected.length} of {MAX_METRICS_PER_VIEW} selected
+              {selected.length > 0 && ` · y-axis: ${format}`}
+            </span>
+            <button
+              type="button"
+              className="btn tiny ghost pushright"
+              onClick={clearAll}
+              disabled={selected.length === 0}
+            >
+              clear
+            </button>
+            <button
+              type="button"
+              className="btn tiny ghost"
+              onClick={() => setPicking(false)}
+            >
+              hide
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+            {groupedMetrics.map(({ group, items }) => (
+              <div key={group}>
+                <div className="dim" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+                  {group}
+                </div>
+                <div style={{ display: 'grid', gap: 4 }}>
+                  {items.map((m) => {
+                    const checked = selected.includes(m.id);
+                    const cap = !checked && selected.length >= MAX_METRICS_PER_VIEW;
+                    return (
+                      <label
+                        key={m.id}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          fontSize: 13,
+                          opacity: cap ? 0.4 : 1,
+                          cursor: cap ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={cap}
+                          onChange={() => toggle(m.id)}
+                        />
+                        <span>{m.label}</span>
+                        <span className="dim mono" style={{ fontSize: 10 }}>{m.format}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <form
+            onSubmit={(e) => { e.preventDefault(); saveCurrent(); }}
+            className="toolbar"
+            style={{ marginTop: 14 }}
+          >
+            <input
+              type="text"
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              placeholder="view name (e.g. ssh-watch, db-load)"
+              maxLength={32}
+              className="input"
+              style={{ width: 220 }}
+            />
+            <button
+              type="submit"
+              className="btn compact"
+              disabled={!draftName.trim() || selected.length === 0}
+            >
+              {activeName === draftName.trim() ? 'Update' : 'Save view'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Live chart */}
+      {selected.length > 0 && (
+        <div style={{ marginTop: 18 }}>
+          <MultiLineChart
+            series={series}
+            height={240}
+            format={format}
+            range={range}
+            fixedMax={fixedMax}
+            enableBrush
+          />
+          <CsvButton
+            slug={`view-${activeName || 'untitled'}`}
+            range={range}
+            series={series}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function History() {
   const [range, setRange] = useState('1h');
   const [cores, setCores] = useState(0);
@@ -389,6 +689,9 @@ export default function History() {
           </button>
         ))}
       </div>
+
+      <h2 className="section-title">Saved views</h2>
+      <SavedViewsCard range={range} />
 
       <Section title="Compute">
         <SingleChartCard metric="cpu" title="CPU usage" format="percent" fixedMax={100} range={range} />

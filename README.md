@@ -27,7 +27,8 @@
   sampled every 5 s, stored in a local SQLite file. Sparklines on dashboard
   cards, plus a dedicated History page with 15m / 1h / 6h / 24h ranges,
   CPU & memory breakdown stacked-area charts, per-core CPU multi-line, and
-  multi-series disk + network I/O.
+  multi-series disk + network I/O. **Saved views** let you build a custom
+  overlay chart from a checkbox grid and persist the selection.
 - Per-mount storage usage
 - Top 20 processes (by CPU or memory) — plus a **process trends** card
   showing the heaviest named processes in the last 15 min / 1 h / 6 h /

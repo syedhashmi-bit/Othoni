@@ -8,6 +8,47 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.18.0] — 2026-05-10
+
+Saved views — pick a handful of metrics and overlay them on a single chart.
+Save the selection as a named preset for one-click recall.
+
+### Added
+
+- **Saved views card** at the top of the History page (after the
+  range toolbar). Pure-client feature; no server changes.
+- **Metric picker** — checkbox grid of 20 static metrics grouped by
+  category (Compute / Memory / I/O / Network), each labeled with its
+  unit format. Cap of 8 metrics per view to keep the chart legible.
+- **Live chart** — selected metrics render in a `<MultiLineChart>`
+  with brushable zoom + CSV export. If every selected metric shares a
+  format (all `percent`, all `rate`, etc.), the y-axis uses that
+  format; otherwise it falls back to raw numbers (mixing units on one
+  axis loses the unit anyway). `fixedMax=100` when all-percent so
+  thresholds visually anchor at 100%.
+- **localStorage presets** at `othoni.history.views`, up to 8 with
+  FIFO eviction. Save current selection by name; click a preset to
+  apply; trash icon to delete.
+- **`useViewSeries` hook** — fans out to N concurrent `/api/history`
+  fetches via `Promise.all` on the same cadence as the rest of the
+  History page. Stable hook count per render (couldn't use the
+  existing `useMetric` inside a `.map()`).
+
+### Changed
+
+- `package.json` bumped to `0.18.0`.
+- `client/src/pages/History.jsx` adds the `<SavedViewsCard>` plus a
+  `VIEW_METRICS` catalog and small color palette for series.
+
+### Notes
+
+- Variable-cardinality metrics (per-core CPU, per-iface network,
+  per-disk I/O, `custom.*`) aren't in the picker — they'd dwarf the
+  static set. Their existing dedicated cards on this page already
+  group them.
+- The picker is hidden by default; click "Build view" to reveal it.
+  Saving a view doesn't reload the page or change other charts.
+
 ## [0.17.0] — 2026-05-10
 
 Keyboard shortcuts. Two-key navigation chords (`g` then a letter) plus
@@ -909,6 +950,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.18.0]: #0180--2026-05-10
 [0.17.0]: #0170--2026-05-10
 [0.16.0]: #0160--2026-05-10
 [0.15.0]: #0150--2026-05-10
