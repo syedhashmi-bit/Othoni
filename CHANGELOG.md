@@ -8,6 +8,64 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.16.0] — 2026-05-10
+
+Logs follow-ups. Five upgrades to the Logs page so it's a usable digging
+tool, not just a tail viewer.
+
+### Added
+
+- **Cursor pagination** ("Load more older" button) — `/api/logs` now
+  accepts `until=<ms>` and the collector passes it through as
+  `--until=@<unix-seconds>` to journalctl. The collector then strictly
+  post-filters `t < until` so boundary entries (sharing the same second
+  as the oldest visible row) aren't re-delivered. Client tracks an
+  accumulating entries array; first page reset on filter change. The
+  page now exposes the journal `__CURSOR` per row for stable React
+  keys, even though pagination uses timestamps.
+- **Search + highlight on loaded entries** — new search input below
+  the toolbar. Substring match (case-insensitive) across message, unit,
+  and identifier; matches rendered with an inline `<mark>` element
+  using the existing accent-warn color. Pure regex-escape on the input
+  so paths and regex-like strings can't crash the matcher.
+- **Per-priority count chips** — derived from the *visible* (search-
+  filtered) set, so toggling search updates them. Shown in priority
+  order (emerg → debug). Helps spot "lots of warnings" at a glance.
+- **Jump-to-time** — `<input type="datetime-local">` next to the
+  search box. When set, the first fetch uses that timestamp + 1 ms as
+  `until` so the page is anchored at that moment; "Load more older"
+  walks backward from there. Clearing the field returns to the live
+  tail. Auto-tail is disabled while a jump is set (it would
+  prepend live entries above the anchor, defeating the point).
+- **Saved filter presets** (localStorage) — name + save the current
+  filter set; click a preset to apply. Up to 8 presets, FIFO eviction.
+  Persisted to `localStorage` under `othoni.logs.presets` via the
+  existing `useLocalSetting` hook.
+
+### Changed
+
+- `package.json` bumped to `0.16.0`.
+- `server/collectors/logs.js` — `getLogs()` accepts `until`; entries
+  expose `cursor`. `buildArgs` adds `--until=@<sec>` when provided.
+- `server/routes/index.js` — `/api/logs` route forwards `until`.
+- `client/src/api.js` — `api.logs({...,until})`.
+- `client/src/pages/Logs.jsx` — substantial rewrite: pagination state,
+  load-more button, search, highlight, count chips, jump-to-time
+  input, presets bar.
+
+### Notes
+
+- Auto-tail behavior: pauses while jump-to-time is set, so live
+  prepending doesn't fight the anchor. Otherwise unchanged — 5s tick,
+  pauses when tab hidden.
+- The `since` whitelist (`5m` / `15m` / `1h` / etc.) is unchanged.
+  Jump-to-time is a separate axis (absolute `until`); the two combine
+  naturally via the existing `since`/`until` semantics.
+- "Load more older" intentionally drops the `since` window after the
+  first page, so walking backward isn't capped by "1h ago" — it's
+  capped by "before the oldest entry on screen", which is what users
+  actually want when they click load-more.
+
 ## [0.15.0] — 2026-05-10
 
 Per-port "top talkers" on the Connections page. Surfaces SSH brute-force /
@@ -815,6 +873,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.16.0]: #0160--2026-05-10
 [0.15.0]: #0150--2026-05-10
 [0.14.0]: #0140--2026-05-10
 [0.13.0]: #0130--2026-05-10

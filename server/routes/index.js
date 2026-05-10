@@ -59,6 +59,7 @@ router.get('/logs', async (req, res) => {
       priority: req.query.priority,
       unit: req.query.unit,
       since: req.query.since,
+      until: req.query.until,
     });
     res.json(data);
   } catch (e) {

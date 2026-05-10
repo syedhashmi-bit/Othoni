@@ -54,7 +54,9 @@
   failures dispatch to your webhooks
 - **System log feed** (opt-in) — Logs page reads from
   `journalctl --output=json` with priority / since / unit / limit
-  filters and an auto-tail toggle. Off by default — set
+  filters, **cursor-paginated "load more older"**, **search +
+  highlight**, **jump-to-time** anchor, **per-priority count chips**,
+  and **saved filter presets**. Off by default — set
   `OTHONI_LOGS_ENABLED=true` to enable. Filters are URL-driven so
   pages are deep-linkable (and firing alerts link directly into a
   pre-filtered view)

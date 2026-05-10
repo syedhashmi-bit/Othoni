@@ -42,12 +42,13 @@ export const api = {
   network: () => request('/api/network'),
   diskio: () => request('/api/diskio'),
   connections: () => request('/api/connections'),
-  logs: ({ limit, priority, unit, since } = {}) => {
+  logs: ({ limit, priority, unit, since, until } = {}) => {
     const qs = new URLSearchParams();
     if (limit != null) qs.set('limit', String(limit));
     if (priority != null) qs.set('priority', String(priority));
     if (unit) qs.set('unit', unit);
     if (since) qs.set('since', since);
+    if (until != null) qs.set('until', String(until));
     const tail = qs.toString();
     return request(`/api/logs${tail ? `?${tail}` : ''}`);
   },

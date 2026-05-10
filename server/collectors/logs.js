@@ -56,6 +56,7 @@ function parseEntry(line) {
   const unit = obj._SYSTEMD_UNIT || obj.UNIT || null;
   return {
     t: tsToMs(obj.__REALTIME_TIMESTAMP),
+    cursor: obj.__CURSOR || null,
     priority,
     level: PRIORITY_NAMES[priority] || 'info',
     identifier: obj.SYSLOG_IDENTIFIER || obj._COMM || obj._EXE || '',
@@ -69,7 +70,7 @@ function parseEntry(line) {
 // Build the journalctl argv from the requested filters. We DON'T interpolate
 // any user input into a shell — we always pass via execFile, so units, since
 // strings, etc. are arguments, not shell tokens.
-function buildArgs({ limit, priority, unit, since }) {
+function buildArgs({ limit, priority, unit, since, until }) {
   const args = ['--no-pager', '--output=json', `-n`, String(limit)];
   // priority can be a single value 0..7 ("up to and including this level")
   // or a "min..max" range. journalctl accepts numeric priorities directly.
@@ -82,10 +83,13 @@ function buildArgs({ limit, priority, unit, since }) {
   if (since) {
     args.push('--since', since);
   }
+  if (until) {
+    args.push('--until', until);
+  }
   return args;
 }
 
-async function getLogs({ limit, priority, unit, since } = {}) {
+async function getLogs({ limit, priority, unit, since, until } = {}) {
   if (!isEnabled()) {
     const e = new Error('logs collector disabled — set OTHONI_LOGS_ENABLED=true');
     e.code = 'logs_disabled';
@@ -107,8 +111,16 @@ async function getLogs({ limit, priority, unit, since } = {}) {
     'yesterday': 'yesterday',
   };
   const sinceArg = since && sinceMap[since] ? sinceMap[since] : null;
+  // Pagination: client passes `until` as ms since epoch (the timestamp of the
+  // oldest entry currently shown). journalctl accepts `@<unix-seconds>` as an
+  // absolute time. We also post-filter strictly < untilMs to guard against
+  // boundary entries sharing the same second.
+  const untilMs = (Number.isFinite(parseInt(until, 10)) && parseInt(until, 10) > 0)
+    ? parseInt(until, 10)
+    : null;
+  const untilArg = untilMs != null ? `@${Math.floor(untilMs / 1000)}` : null;
 
-  const args = buildArgs({ limit: lim, priority: pri, unit: u, since: sinceArg });
+  const args = buildArgs({ limit: lim, priority: pri, unit: u, since: sinceArg, until: untilArg });
   const r = await run('journalctl', args, { timeout: 10_000 });
   if (!r.ok) {
     const e = new Error(`journalctl failed: ${r.stderr || 'unknown'}`);
@@ -126,12 +138,16 @@ async function getLogs({ limit, priority, unit, since } = {}) {
   // journalctl -n N returns the last N entries oldest-first. Reverse so the
   // most recent is on top — that's what every log viewer expects.
   entries.reverse();
+  // Strict-less-than enforcement on the boundary: `--until=@<sec>` is
+  // inclusive of any entry within that second, which would re-deliver the
+  // tail of the previous page when the client passes the oldest-shown ms.
+  const filtered = untilMs != null ? entries.filter((e) => e.t != null && e.t < untilMs) : entries;
 
   return {
     enabled: true,
-    entries,
-    truncated: entries.length >= lim,
-    filter: { limit: lim, priority: pri, unit: u, since: sinceArg },
+    entries: filtered,
+    truncated: filtered.length >= lim,
+    filter: { limit: lim, priority: pri, unit: u, since: sinceArg, untilMs },
   };
 }
 
