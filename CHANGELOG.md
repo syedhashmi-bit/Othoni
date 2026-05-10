@@ -8,6 +8,32 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.19.0] — 2026-05-10
+
+Dashboard density toggle. Tighten card padding, table rows, and section
+spacing on demand — same theme, just packed denser for crowded
+dashboards or smaller screens.
+
+### Added
+
+- **Density setting** (`localStorage` `othoni.density` =
+  `"comfortable"` (default) | `"compact"`). Applied via a
+  `data-density="compact"` attribute on `<body>` from `App.jsx`, so
+  CSS rules can scope compact-mode without per-component changes.
+- **Density card on Settings page** — Comfortable / Compact toggle
+  buttons next to the existing Refresh-interval card.
+- **CSS rules** at the bottom of `styles.css` reduce: `.card` padding
+  18 → 12px, `.grid` gap 16 → 10px, table cell padding 10 → 7px,
+  `.card-value` 28 → 23px, `.section-title` margins, `.toolbar` gap,
+  page titles. Theme tokens (radii / colors / shadows) unchanged.
+
+### Changed
+
+- `package.json` bumped to `0.19.0`.
+- `App.jsx` exposes `density` / `setDensity` on the App context;
+  applies the body data attribute via a `useEffect`.
+- `Settings.jsx` adds a third card to the top row.
+
 ## [0.18.0] — 2026-05-10
 
 Saved views — pick a handful of metrics and overlay them on a single chart.
@@ -950,6 +976,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.19.0]: #0190--2026-05-10
 [0.18.0]: #0180--2026-05-10
 [0.17.0]: #0170--2026-05-10
 [0.16.0]: #0160--2026-05-10

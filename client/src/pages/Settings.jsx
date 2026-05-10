@@ -195,7 +195,7 @@ function ApiKeysCard() {
 }
 
 export default function Settings() {
-  const { refreshMs, setRefreshMs, user } = useApp();
+  const { refreshMs, setRefreshMs, density, setDensity, user } = useApp();
   const [server, setServer] = useState(null);
   const [err, setErr] = useState(null);
 
@@ -231,6 +231,32 @@ export default function Settings() {
               </option>
             ))}
           </select>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">Density</div>
+          </div>
+          <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+            Tighter spacing on cards / tables / sections. Useful on dense
+            dashboards or smaller screens.
+          </p>
+          <div className="toolbar" style={{ margin: 0 }}>
+            <button
+              type="button"
+              className={`btn ghost ${density !== 'compact' ? 'active' : ''}`}
+              onClick={() => setDensity('comfortable')}
+            >
+              Comfortable
+            </button>
+            <button
+              type="button"
+              className={`btn ghost ${density === 'compact' ? 'active' : ''}`}
+              onClick={() => setDensity('compact')}
+            >
+              Compact
+            </button>
+          </div>
         </div>
 
         <div className="card">

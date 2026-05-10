@@ -278,8 +278,19 @@ function useServerAlerts(active) {
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = unknown, null = logged out
   const [refreshMs, setRefreshMs] = useLocalSetting('othoni.refreshMs', 5000);
+  const [density, setDensity] = useLocalSetting('othoni.density', 'comfortable');
   const navigate = useNavigate();
   const alerts = useServerAlerts(!!user);
+
+  // Push the density preference onto <body> as a data attribute so CSS
+  // selectors can scope compact-mode rules — pure CSS, no per-component changes.
+  useEffect(() => {
+    if (density === 'compact') {
+      document.body.dataset.density = 'compact';
+    } else {
+      delete document.body.dataset.density;
+    }
+  }, [density]);
 
   // Check session on mount
   useEffect(() => {
@@ -326,7 +337,9 @@ export default function App() {
   }
 
   return (
-    <AppCtx.Provider value={{ user, refreshMs, setRefreshMs, onLogout: handleLogout, ...alerts }}>
+    <AppCtx.Provider
+      value={{ user, refreshMs, setRefreshMs, density, setDensity, onLogout: handleLogout, ...alerts }}
+    >
       <AuthedAppBody refreshMs={refreshMs} alerts={alerts} user={user} handleLogout={handleLogout} />
     </AppCtx.Provider>
   );

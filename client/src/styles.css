@@ -963,3 +963,50 @@ a:focus-visible,
     padding: 16px;
   }
 }
+
+/* ---------- Compact density ----------
+   Toggle on <body data-density="compact"> from App.jsx. Tightens padding,
+   gaps, and a few headline font sizes; keeps the same theme tokens so
+   colors / radii / shadows are unchanged. */
+body[data-density="compact"] .main {
+  padding: 18px 18px 40px;
+}
+body[data-density="compact"] .grid {
+  gap: 10px;
+}
+body[data-density="compact"] .card {
+  padding: 12px;
+}
+body[data-density="compact"] .card-value {
+  font-size: 23px;
+}
+body[data-density="compact"] .card-header {
+  margin-bottom: 6px;
+}
+body[data-density="compact"] .section-title {
+  margin: 16px 0 8px;
+}
+body[data-density="compact"] .t th,
+body[data-density="compact"] .t td {
+  padding: 7px 10px;
+}
+body[data-density="compact"] .stat-tile {
+  padding: 10px 12px;
+}
+body[data-density="compact"] .stat-tile .value {
+  font-size: 20px;
+}
+body[data-density="compact"] .toolbar {
+  gap: 6px;
+  margin-bottom: 8px;
+}
+body[data-density="compact"] .page-title {
+  margin-bottom: 4px;
+}
+body[data-density="compact"] .subtitle {
+  margin-top: 4px;
+  margin-bottom: 12px;
+}
+body[data-density="compact"] .spacer-md {
+  height: 12px;
+}
