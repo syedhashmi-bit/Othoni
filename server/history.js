@@ -118,6 +118,16 @@ function open() {
       v REAL NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_samples_metric_t ON samples(metric, t);
+
+    CREATE TABLE IF NOT EXISTS process_samples (
+      t    INTEGER NOT NULL,
+      name TEXT    NOT NULL,
+      pid  INTEGER,
+      cpu  REAL    NOT NULL,
+      mem  REAL    NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_proc_samples_t      ON process_samples(t);
+    CREATE INDEX IF NOT EXISTS idx_proc_samples_name_t ON process_samples(name, t);
   `);
   return db;
 }
@@ -198,7 +208,11 @@ async function takeSample() {
 function cleanup() {
   const cutoff = Date.now() - RETENTION_MS;
   const info = open().prepare('DELETE FROM samples WHERE t < ?').run(cutoff);
-  if (info.changes > 0) logger.debug(`history: pruned ${info.changes} old samples`);
+  const pinfo = open().prepare('DELETE FROM process_samples WHERE t < ?').run(cutoff);
+  const total = info.changes + pinfo.changes;
+  if (total > 0) {
+    logger.debug(`history: pruned ${info.changes} samples + ${pinfo.changes} process_samples`);
+  }
 }
 
 function start() {
@@ -332,14 +346,22 @@ function insertSample(metric, value, t = Date.now()) {
   insertStmt().run(metric, Number.isFinite(t) ? Math.floor(t) : Date.now(), value);
 }
 
+// Exposed so sibling modules (e.g. process-history.js) can share the same
+// SQLite handle / WAL session instead of opening a second connection.
+function getDb() {
+  return open();
+}
+
 module.exports = {
   start,
   stop,
   query,
   RANGES,
+  RETENTION_MS,
   isCustomMetric,
   insertCustom,
   insertCustomBatch,
   insertSample,
   listMetrics,
+  getDb,
 };

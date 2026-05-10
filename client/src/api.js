@@ -60,6 +60,10 @@ export const api = {
     request(`/api/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`),
   historyMetrics: (prefix) =>
     request(`/api/history/metrics${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ''}`),
+  historyProcesses: ({ range = '1h', sortBy = 'cpu', limit = 10 } = {}) => {
+    const qs = new URLSearchParams({ range, sortBy, limit: String(limit) });
+    return request(`/api/history/processes?${qs.toString()}`);
+  },
   keys: {
     list:    () => request('/api/keys'),
     create:  (label) => request('/api/keys', { method: 'POST', body: JSON.stringify({ label }) }),

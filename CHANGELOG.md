@@ -8,6 +8,62 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.13.0] — 2026-05-10
+
+Process trends — periodically captures the heaviest processes and surfaces a
+"who's been heavy in the last hour" view on the Processes page.
+
+### Added
+
+- **`server/process-history.js`** — slow-cadence sampler (default 30s,
+  tunable via `OTHONI_PROC_SAMPLE_MS`). Each tick reads `ps` twice in
+  parallel — once sorted by CPU, once by memory — dedupes by PID, and
+  inserts the union into a new `process_samples` table. The mem-sorted
+  read picks up RAM hogs that wouldn't make the CPU top-N. Rows where
+  both cpu% and mem% are below 0.1 are dropped at sample time so the
+  table stays focused on actually-loaded processes.
+- **New SQLite table** `process_samples(t, name, pid, cpu, mem)` with
+  indexes on `(t)` and `(name, t)`. Created by `server/history.js` next
+  to the existing `samples` table; both share the same DB file and are
+  pruned together at the existing 24h retention.
+- **`GET /api/history/processes?range=&sortBy=&limit=`** — aggregates by
+  process **name** (so a service that respawned shows as one row) over
+  the requested range and returns: peak/avg CPU%, peak/avg MEM%, sample
+  count, and a per-name sparkline of the chosen metric (~60 buckets).
+  Sort order is by peak with avg as tie-breaker — "who spiked" is the
+  question this view answers most directly.
+- **`history.getDb()` export** — sibling modules can now share the same
+  WAL session instead of opening a second connection.
+- **Trends card on the Processes page** — sits above the live `ps`
+  table, polls every 30s, range chips (15m / 1h / 6h / 24h). Each row:
+  process name, sample-count caption, sparkline (color-graded green /
+  amber / red at the existing 75 / 90% thresholds), peak%, avg%. Sort
+  toggle (CPU / memory) is shared with the live table below — flipping
+  it re-queries both.
+
+### Changed
+
+- `package.json` bumped to `0.13.0`.
+- `server/history.js` — `process_samples` schema added to the `open()`
+  bootstrap; `cleanup()` prunes both tables; `getDb` and `RETENTION_MS`
+  now exported.
+- `server/index.js` — `processHistory.start()` runs after `history.start()`
+  on `app.listen()`; `processHistory.stop()` runs before `history.stop()`
+  on SIGTERM/SIGINT (so the sampler doesn't try to write into a closed DB).
+- `server/routes/index.js` — new `/api/history/processes` route alongside
+  the existing `/api/history` and `/api/history/metrics`.
+- `client/src/api.js` — new `api.historyProcesses({ range, sortBy, limit })`
+  helper.
+- `client/src/pages/Processes.jsx` — adds the Trends card and shares the
+  sortBy state between trends + live table.
+
+### Notes
+
+- The trend sampler runs even on idle hosts; the empty-row filter
+  (cpu < 0.1 AND mem < 0.1) keeps churn low. Expect ~25–30 rows per
+  tick on a typical VPS — about 86k rows/day, well under SQLite's
+  comfort zone.
+
 ## [0.12.0] — 2026-05-10
 
 Synthetic checks — periodic HTTP / TCP / ICMP probes that record into the
@@ -660,6 +716,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.13.0]: #0130--2026-05-10
 [0.12.0]: #0120--2026-05-10
 [0.11.0]: #0110--2026-05-10
 [0.10.0]: #0100--2026-05-10

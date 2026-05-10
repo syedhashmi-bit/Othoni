@@ -19,6 +19,7 @@ const alerts = require('../alerts');
 const webhooks = require('../webhooks');
 const checks = require('../checks');
 const history = require('../history');
+const processHistory = require('../process-history');
 
 const router = express.Router();
 
@@ -93,6 +94,19 @@ router.get(
   wrap('history_metrics', (req) => {
     const prefix = req.query.prefix ? String(req.query.prefix) : undefined;
     return { metrics: history.listMetrics({ prefix }) };
+  })
+);
+
+// Process trends. Returns the heaviest named processes in the requested
+// range, each with a small sparkline of the chosen metric. Used by the
+// Trends section of the Processes page.
+router.get(
+  '/history/processes',
+  wrap('history_processes', (req) => {
+    const range = String(req.query.range || '1h');
+    const sortBy = req.query.sortBy === 'memory' ? 'memory' : 'cpu';
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || '10', 10) || 10));
+    return processHistory.query({ range, sortBy, limit });
   })
 );
 

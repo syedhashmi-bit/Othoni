@@ -29,7 +29,9 @@
   CPU & memory breakdown stacked-area charts, per-core CPU multi-line, and
   multi-series disk + network I/O.
 - Per-mount storage usage
-- Top 20 processes (by CPU or memory)
+- Top 20 processes (by CPU or memory) — plus a **process trends** card
+  showing the heaviest named processes in the last 15 min / 1 h / 6 h /
+  24 h with a sparkline per process
 - Docker container list (graceful fallback if Docker isn't installed)
 - systemd service status for common units
 - Per-interface network counters and live RX/TX speed
@@ -111,6 +113,7 @@ $EDITOR .env
 | `OTHONI_SESSION_TTL`    | `12h`        | session length (`12h`, `7d`, etc.)          |
 | `OTHONI_DB`             | `data/othoni.db` | path to the historical samples SQLite file |
 | `OTHONI_SAMPLE_MS`      | `5000`       | sampling interval in ms                     |
+| `OTHONI_PROC_SAMPLE_MS` | `30000`      | process-trends sampling interval in ms      |
 | `OTHONI_RETENTION_MS`   | `86400000`   | how long to keep samples (default 24 h)     |
 | `OTHONI_LOGS_ENABLED`   | unset        | set `true` to enable `/api/logs` + Logs page |
 | `OTHONI_TOTP_SECRET`    | unset        | base32 secret to require a TOTP code on login (see `npm run totp:setup`) |
@@ -202,6 +205,7 @@ authenticated session.
 | POST   | `/api/checks/:id/run` | Run a check immediately         |
 | DELETE | `/api/checks/:id`   | Remove a check                    |
 | GET    | `/api/history/metrics` | Distinct metric names in the store (`?prefix=`) |
+| GET    | `/api/history/processes` | Heaviest processes in a range, with sparklines |
 | POST   | `/api/metrics`      | **API key auth.** Push `custom.<name>` metrics |
 | GET    | `/api/processes`    | Top processes (`?sortBy=cpu      memory&limit=20`) |
 | GET    | `/api/docker`       | Container list, or "not installed"|
