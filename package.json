@@ -1,6 +1,6 @@
 {
   "name": "othoni",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "private": true,
   "license": "MIT",
   "description": "Self-hosted VPS monitoring dashboard",
@@ -13,6 +13,7 @@
     "client:dev": "npm --prefix client run dev",
     "build": "npm run client:install && npm run client:build",
     "totp:setup": "node scripts/totp-setup.js",
+    "hash-password": "node scripts/hash-password.js",
     "postinstall": "npm --prefix client install --no-audit --no-fund || true"
   },
   "engines": {

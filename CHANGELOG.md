@@ -8,6 +8,46 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.21.0] — 2026-05-10
+
+Auth hardening — scrypt-based password hashing, no new dependencies.
+
+### Added
+
+- **`server/password-hash.js`** — self-contained scrypt KDF (Node's
+  built-in `crypto.scryptSync`). Format
+  `scrypt$N=32768,r=8,p=1$<base64-salt>$<base64-hash>` — self-
+  describing so deployments don't need to track a separate salt.
+  Constant-time verify; malformed stored hashes return false rather
+  than throwing.
+- **`OTHONI_ADMIN_PASSWORD_HASH` env var** — when set, takes
+  precedence over `OTHONI_ADMIN_PASSWORD`. Both code paths run on
+  every login attempt to keep the timing constant; the chosen path
+  depends on whether a valid hash is present.
+- **`scripts/hash-password.js` + `npm run hash-password`** — reads
+  the password from stdin (silenced if attached to a TTY), prints
+  the line to add to `.env`. Each invocation generates a fresh salt
+  so the same password produces a different hash each time.
+
+### Changed
+
+- `package.json` bumped to `0.21.0`. New `hash-password` script entry.
+- `server/auth.js` — `login()` selects the hash path when
+  `OTHONI_ADMIN_PASSWORD_HASH` parses as a valid scrypt hash;
+  otherwise falls back to the existing constant-time plaintext
+  compare against `OTHONI_ADMIN_PASSWORD`. Username comparison
+  unchanged.
+- `.env.example` — documents the new (commented-out) hash variable.
+
+### Notes
+
+- No new npm dependencies — scrypt is part of Node's core `crypto`
+  module. The format is intentionally simple to read by eye, so an
+  operator can rotate the value without tooling.
+- The plaintext fallback stays so first-time users can follow the
+  README without a setup ritual; rotate to the hash form for any
+  internet-facing deployment.
+
 ## [0.20.0] — 2026-05-10
 
 Per-interface and per-device sparklines on the live pages. The History page
@@ -1014,6 +1054,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.21.0]: #0210--2026-05-10
 [0.20.0]: #0200--2026-05-10
 [0.19.0]: #0190--2026-05-10
 [0.18.0]: #0180--2026-05-10

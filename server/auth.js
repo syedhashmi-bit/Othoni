@@ -3,6 +3,7 @@
 const jwt = require('jsonwebtoken');
 const logger = require('./logger');
 const { verifyTotp } = require('./totp');
+const { verifyPassword, isHash } = require('./password-hash');
 
 const COOKIE_NAME = 'othoni_session';
 
@@ -68,18 +69,24 @@ function login(req, res) {
     return res.status(400).json({ error: 'invalid_request' });
   }
   const expectedUser = process.env.OTHONI_ADMIN_USER || 'admin';
+  // Prefer the hash if provided; fall back to plaintext for backward compat
+  // (the README still walks first-time users through plaintext setup, and
+  // the dev defaults are admin/admin123). We always run BOTH checks so the
+  // timing doesn't leak which path the deployment is on.
+  const expectedHash = process.env.OTHONI_ADMIN_PASSWORD_HASH;
   const expectedPass = process.env.OTHONI_ADMIN_PASSWORD || 'admin123';
-  // Always run all comparisons regardless of which (if any) failed — keeps
-  // timing constant and avoids leaking whether the password or the TOTP was
-  // wrong. The client always sees a single "invalid_credentials".
-  const passOk =
-    constantTimeEqual(username, expectedUser) &&
-    constantTimeEqual(password, expectedPass);
+  const userOk = constantTimeEqual(username, expectedUser);
+  let passOk = false;
+  if (expectedHash && isHash(expectedHash)) {
+    passOk = verifyPassword(password, expectedHash);
+  } else {
+    passOk = constantTimeEqual(password, expectedPass);
+  }
   let totpOk = true;
   if (totpEnabled()) {
     totpOk = typeof totp === 'string' && verifyTotp(process.env.OTHONI_TOTP_SECRET, totp);
   }
-  if (!passOk || !totpOk) {
+  if (!userOk || !passOk || !totpOk) {
     logger.warn(`failed login for "${username}" from ${req.ip}`);
     return res.status(401).json({ error: 'invalid_credentials' });
   }

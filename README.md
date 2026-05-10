@@ -118,6 +118,7 @@ $EDITOR .env
 | `HOST`                  | `0.0.0.0`    | bind address                                |
 | `OTHONI_ADMIN_USER`     | `admin`      | login username                              |
 | `OTHONI_ADMIN_PASSWORD` | `admin123`   | login password — **change this**            |
+| `OTHONI_ADMIN_PASSWORD_HASH` | unset   | scrypt hash of the password (preferred over `OTHONI_ADMIN_PASSWORD` when set; generate with `npm run hash-password`) |
 | `OTHONI_JWT_SECRET`     | dev secret   | session signing key — **set in production** |
 | `OTHONI_SESSION_TTL`    | `12h`        | session length (`12h`, `7d`, etc.)          |
 | `OTHONI_DB`             | `data/othoni.db` | path to the historical samples SQLite file |
@@ -282,6 +283,10 @@ History page.
 
 - Always change `OTHONI_ADMIN_PASSWORD` and set a unique `OTHONI_JWT_SECRET` in
   production. The defaults exist only to make first-time testing painless.
+- For internet-facing deployments, prefer `OTHONI_ADMIN_PASSWORD_HASH` over
+  the plaintext form. Generate it with `npm run hash-password`, paste the
+  printed line into `.env`, and remove `OTHONI_ADMIN_PASSWORD`. The hash uses
+  scrypt with a 16-byte random salt; format is self-describing.
 - Login is rate-limited to 10 attempts / 15 minutes per IP.
 - **Optional TOTP 2FA.** Run `npm run totp:setup`, follow the printed
   instructions to add `OTHONI_TOTP_SECRET=...` to `.env`, restart the
