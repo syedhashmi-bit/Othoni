@@ -39,8 +39,10 @@
   click "× reset zoom" to clear
 - **Threshold alerting** — define rules ("CPU > 90% sustained 5 min")
   on the Alerts page; a notification dot in the topbar shows count and
-  severity, click for the active-alerts popover. Optional browser
-  notifications. All client-side, stored in `localStorage` per browser
+  severity, click for the active-alerts popover. Server-side evaluator
+  on a 10s tick — alerts fire even when no browser is open
+- **Webhook destinations** — Slack, Discord, or generic JSON POST
+  on every alert fire. Per-destination test button, retry-on-failure
 - **System log feed** (opt-in) — Logs page reads from
   `journalctl --output=json` with priority / since / unit / limit
   filters and an auto-tail toggle. Off by default — set
@@ -182,6 +184,15 @@ authenticated session.
 | GET    | `/api/keys`         | List API keys (metadata only)     |
 | POST   | `/api/keys`         | Generate a new API key (returns plaintext once) |
 | DELETE | `/api/keys/:id`     | Revoke an API key                 |
+| GET    | `/api/alerts/rules` | List alert rules                  |
+| PUT    | `/api/alerts/rules` | Replace the entire rules list     |
+| GET    | `/api/alerts/active` | Currently-firing alerts (pre-formatted) |
+| GET    | `/api/alerts/metrics` | Available metric keys + units   |
+| GET    | `/api/webhooks`     | List webhook destinations         |
+| POST   | `/api/webhooks`     | Add a webhook (label, url, format) |
+| PATCH  | `/api/webhooks/:id` | Toggle / rename                   |
+| POST   | `/api/webhooks/:id/test` | Fire a synthetic test event  |
+| DELETE | `/api/webhooks/:id` | Remove a webhook                  |
 | GET    | `/api/history/metrics` | Distinct metric names in the store (`?prefix=`) |
 | POST   | `/api/metrics`      | **API key auth.** Push `custom.<name>` metrics |
 | GET    | `/api/processes`    | Top processes (`?sortBy=cpu      memory&limit=20`) |

@@ -15,6 +15,8 @@ const { getDiskIO } = require('../collectors/diskio');
 const { getConnections } = require('../collectors/connections');
 const { getLogs, isEnabled: isLogsEnabled } = require('../collectors/logs');
 const apiKeys = require('../api-keys');
+const alerts = require('../alerts');
+const webhooks = require('../webhooks');
 const history = require('../history');
 
 const router = express.Router();
@@ -120,6 +122,74 @@ router.delete('/keys/:id', (req, res) => {
   const ok = apiKeys.revokeKey(req.params.id);
   if (!ok) return res.status(404).json({ error: 'not_found' });
   res.json({ ok: true });
+});
+
+// ---------- alerts ----------
+
+router.get('/alerts/rules', (req, res) => {
+  res.json({ rules: alerts.getRules() });
+});
+
+router.put('/alerts/rules', (req, res) => {
+  try {
+    const next = alerts.setRules(req.body && req.body.rules);
+    res.json({ rules: next });
+  } catch (e) {
+    if (e.code === 'invalid_request') {
+      return res.status(400).json({ error: 'invalid_request', message: e.message });
+    }
+    logger.error('alerts setRules failed:', e.message);
+    res.status(500).json({ error: 'alerts_failed' });
+  }
+});
+
+router.get('/alerts/active', (req, res) => {
+  res.json({ active: alerts.getActive() });
+});
+
+router.get('/alerts/metrics', (req, res) => {
+  res.json({ metrics: alerts.listMetrics() });
+});
+
+// ---------- webhooks ----------
+
+router.get('/webhooks', (req, res) => {
+  res.json({ webhooks: webhooks.listWebhooks() });
+});
+
+router.post('/webhooks', (req, res) => {
+  try {
+    const created = webhooks.createWebhook({
+      label:  req.body && req.body.label,
+      url:    req.body && req.body.url,
+      format: req.body && req.body.format,
+    });
+    res.json({ webhook: created });
+  } catch (e) {
+    if (e.code === 'invalid_label' || e.code === 'invalid_url') {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    logger.error('webhooks create failed:', e.message);
+    res.status(500).json({ error: 'webhooks_failed' });
+  }
+});
+
+router.patch('/webhooks/:id', (req, res) => {
+  const updated = webhooks.updateWebhook(req.params.id, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'not_found' });
+  res.json({ webhook: updated });
+});
+
+router.delete('/webhooks/:id', (req, res) => {
+  const ok = webhooks.revokeWebhook(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true });
+});
+
+router.post('/webhooks/:id/test', async (req, res) => {
+  const result = await webhooks.testWebhook(req.params.id);
+  if (result.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+  res.json(result);
 });
 
 // Combined snapshot for the dashboard so the UI can refresh in one round-trip.

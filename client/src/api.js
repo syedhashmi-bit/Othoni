@@ -65,4 +65,23 @@ export const api = {
     create:  (label) => request('/api/keys', { method: 'POST', body: JSON.stringify({ label }) }),
     revoke:  (id) => request(`/api/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
+  alerts: {
+    rules:   () => request('/api/alerts/rules'),
+    setRules: (rules) => request('/api/alerts/rules', {
+      method: 'PUT', body: JSON.stringify({ rules }),
+    }),
+    active:  () => request('/api/alerts/active'),
+    metrics: () => request('/api/alerts/metrics'),
+  },
+  webhooks: {
+    list:    () => request('/api/webhooks'),
+    create:  ({ label, url, format }) => request('/api/webhooks', {
+      method: 'POST', body: JSON.stringify({ label, url, format }),
+    }),
+    update:  (id, patch) => request(`/api/webhooks/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify(patch),
+    }),
+    revoke:  (id) => request(`/api/webhooks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    test:    (id) => request(`/api/webhooks/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+  },
 };

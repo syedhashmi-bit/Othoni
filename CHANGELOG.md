@@ -8,6 +8,73 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.11.0] — 2026-05-10
+
+Server-side alert engine + webhook destinations. Alerts now fire even
+when no browser is open. Slack, Discord, and generic JSON formats all
+supported.
+
+### Added
+
+- **`server/alerts.js`** — rule storage at `data/alert-rules.json`,
+  in-memory firing state, evaluator on a 10s `setInterval`. Default
+  rules seeded on first start (CPU/mem/disk all > 90%). Same metric
+  set as the old client engine: `cpu`, `mem`, `swap`, `load1`,
+  `disk_root`, `net_rx`, `net_tx`, `disk_read`, `disk_write`. Rules
+  persist atomically.
+- **`server/webhooks.js`** — destination CRUD at `data/webhooks.json`,
+  dispatcher with one retry after 1.5s and an 8s per-call timeout.
+  Three format adapters:
+  - `generic` — full JSON payload (event, rule, value, sustainedMs,
+    timestamp, host, formatted text)
+  - `slack`   — `{ "text": "[WARN] label — value > threshold (...)" }`
+  - `discord` — `{ "content": "..." }`
+- **`/api/alerts/rules`** GET / PUT (replace whole list — server
+  validates each rule, drops invalid ones with a warning, preserves
+  per-rule firing state across edits by id).
+- **`/api/alerts/active`** GET — currently-firing alerts as a flat
+  view-model with pre-formatted `valueFmt` / `thresholdFmt` so the
+  client doesn't need to know the format rules.
+- **`/api/alerts/metrics`** GET — list of supported metrics + units,
+  used by the Alerts page to populate the dropdown without hardcoding.
+- **`/api/webhooks`** CRUD + **`POST /api/webhooks/:id/test`** —
+  fires a synthetic test event so the user can confirm connectivity
+  without waiting for a real alert.
+- **Alerts page** — rules now CRUD via the server. Edits buffer
+  locally; "Save rules" button persists. New "Webhooks" card below
+  with add / list / enable-toggle / test / delete. Per-row status
+  chip shows last-known state (idle / ok / test ok / failed).
+
+### Changed
+
+- `package.json` bumped to `0.11.0`.
+- `server/index.js` — alert engine + webhook dispatcher started after
+  `app.listen()`; both stopped on SIGTERM / SIGINT alongside the
+  history sampler.
+- `client/src/alerts.js` slimmed: now just `formatDuration` plus
+  browser-notification helpers. The metric map, rule storage,
+  evaluator, and `activeAlerts()` projector all moved server-side.
+  ~150 lines of client code deleted.
+- `client/src/App.jsx` — `useAlertsEngine` replaced with
+  `useServerAlerts` (polls `/api/alerts/active` every 10s, fires
+  browser notifications on transitions, exposes `activeAlerts` via
+  context).
+- `AlertsPopover.jsx` reads pre-formatted server values; no more
+  client-side metric-extraction logic.
+
+### Migration
+
+- Old client-side rules in localStorage are abandoned on upgrade.
+  The server seeds the same defaults (CPU/mem/disk > 90%) on first
+  start, so users who never customized see no behavior change.
+  Anyone with custom rules will need to re-create them once.
+
+### Fixed
+
+- Webhook payload `text` field correctly formats `valueFmt` /
+  `thresholdFmt` (the alert-engine fire event was previously missing
+  these and the formatter rendered them as `undefined`).
+
 ## [0.10.0] — 2026-05-10
 
 External metric ingestion via API keys. Headless agents can now POST
@@ -547,6 +614,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.11.0]: #0110--2026-05-10
 [0.10.0]: #0100--2026-05-10
 [0.9.0]: #090--2026-05-10
 [0.8.1]: #081--2026-05-10

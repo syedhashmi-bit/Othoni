@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useApp } from '../App.jsx';
+import { api } from '../api';
 import {
-  METRICS,
-  newRuleId,
-  defaultRules,
   notifyEnabled as readNotifyEnabled,
   setNotifyEnabled,
   formatDuration,
@@ -18,10 +15,21 @@ const DURATIONS = [
   { ms: 30 * 60_000, label: '30 min' },
 ];
 
-function RuleRow({ rule, state, onChange, onDelete }) {
-  const meta = METRICS[rule.metric];
-  const live = state?.lastValue;
+const FORMATS = [
+  { value: 'generic', label: 'Generic JSON' },
+  { value: 'slack',   label: 'Slack' },
+  { value: 'discord', label: 'Discord' },
+];
+
+function newClientId() { return Math.random().toString(36).slice(2, 10); }
+
+function unitFor(metric, metrics) {
+  return metrics.find((m) => m.key === metric)?.unit || '';
+}
+
+function RuleRow({ rule, active, metrics, onChange, onDelete }) {
   const sevColor = rule.severity === 'crit' ? 'var(--crit)' : 'var(--warn)';
+  const isFiring = !!active;
   return (
     <tr style={{ opacity: rule.enabled ? 1 : 0.55 }}>
       <td>
@@ -48,9 +56,7 @@ function RuleRow({ rule, state, onChange, onDelete }) {
           onChange={(e) => onChange({ ...rule, metric: e.target.value })}
           className="select"
         >
-          {Object.entries(METRICS).map(([k, m]) => (
-            <option key={k} value={k}>{m.label}</option>
-          ))}
+          {metrics.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
         </select>
       </td>
       <td>
@@ -68,12 +74,12 @@ function RuleRow({ rule, state, onChange, onDelete }) {
         <input
           type="number"
           value={rule.threshold}
-          step={meta?.unit === 'B/s' ? 100000 : meta?.unit === '%' ? 1 : 0.1}
+          step={unitFor(rule.metric, metrics) === 'B/s' ? 100000 : unitFor(rule.metric, metrics) === '%' ? 1 : 0.1}
           onChange={(e) => onChange({ ...rule, threshold: parseFloat(e.target.value) || 0 })}
           className="input mono"
           style={{ width: 110 }}
         />
-        <span className="dim" style={{ marginLeft: 6, fontSize: 12 }}>{meta?.unit}</span>
+        <span className="dim" style={{ marginLeft: 6, fontSize: 12 }}>{unitFor(rule.metric, metrics)}</span>
       </td>
       <td>
         <select
@@ -81,9 +87,7 @@ function RuleRow({ rule, state, onChange, onDelete }) {
           onChange={(e) => onChange({ ...rule, durationMs: parseInt(e.target.value, 10) })}
           className="select"
         >
-          {DURATIONS.map((d) => (
-            <option key={d.ms} value={d.ms}>{d.label}</option>
-          ))}
+          {DURATIONS.map((d) => <option key={d.ms} value={d.ms}>{d.label}</option>)}
         </select>
       </td>
       <td>
@@ -98,17 +102,13 @@ function RuleRow({ rule, state, onChange, onDelete }) {
         </select>
       </td>
       <td className="mono" style={{ minWidth: 110 }}>
-        {live != null ? (
-          <span style={{ color: state?.firing ? sevColor : 'var(--text-muted)' }}>
-            {meta.format(live)}
-          </span>
+        {isFiring ? (
+          <>
+            <span style={{ color: sevColor }}>{active.valueFmt}</span>
+            <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>firing · {formatDuration(active.sustainedFor)}</div>
+          </>
         ) : (
           <span className="dim">—</span>
-        )}
-        {state?.firing && (
-          <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-            firing · {formatDuration(Date.now() - state.firstBreachAt)}
-          </div>
         )}
       </td>
       <td>
@@ -126,19 +126,245 @@ function RuleRow({ rule, state, onChange, onDelete }) {
   );
 }
 
+function WebhooksCard() {
+  const [list, setList] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ label: '', url: '', format: 'generic' });
+  const [err, setErr] = useState(null);
+  const [testing, setTesting] = useState(null); // id being tested
+  const [testResult, setTestResult] = useState({}); // { [id]: { ok, error } }
+
+  function refresh() {
+    api.webhooks.list().then((r) => setList(r.webhooks || [])).catch((e) => setErr(e.message));
+  }
+  useEffect(() => { refresh(); }, []);
+
+  async function create(e) {
+    e?.preventDefault();
+    setErr(null);
+    if (!form.label.trim() || !form.url.trim()) return;
+    try {
+      await api.webhooks.create(form);
+      setForm({ label: '', url: '', format: 'generic' });
+      setAdding(false);
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    }
+  }
+
+  async function toggle(w) {
+    try { await api.webhooks.update(w.id, { enabled: !w.enabled }); refresh(); }
+    catch (e) { setErr(e.message); }
+  }
+  async function remove(w) {
+    if (!confirm(`Remove webhook "${w.label}"?`)) return;
+    try { await api.webhooks.revoke(w.id); refresh(); }
+    catch (e) { setErr(e.message); }
+  }
+  async function test(w) {
+    setTesting(w.id);
+    try {
+      const r = await api.webhooks.test(w.id);
+      setTestResult((s) => ({ ...s, [w.id]: r }));
+    } catch (e) {
+      setTestResult((s) => ({ ...s, [w.id]: { ok: false, error: e.message } }));
+    } finally {
+      setTesting(null);
+      // The dispatch updates lastFiredAt / lastError on the server, refresh
+      // so the Last fired column reflects it.
+      setTimeout(refresh, 200);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Webhooks</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Fired by the server when an alert transitions to firing — works
+            even when no browser is open. Slack and Discord both accept the
+            same JSON POST shape via incoming-webhook URLs.
+          </div>
+        </div>
+        {!adding && (
+          <button
+            type="button"
+            className="btn compact"
+            onClick={() => setAdding(true)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <IconPlus /> Add webhook
+          </button>
+        )}
+      </div>
+
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      {adding && (
+        <form onSubmit={create} className="toolbar" style={{ marginTop: 14 }}>
+          <input
+            type="text"
+            placeholder="Label (e.g. ops-slack)"
+            value={form.label}
+            maxLength={80}
+            onChange={(e) => setForm({ ...form, label: e.target.value })}
+            className="input"
+            style={{ width: 180 }}
+          />
+          <input
+            type="url"
+            placeholder="https://hooks.slack.com/services/..."
+            value={form.url}
+            onChange={(e) => setForm({ ...form, url: e.target.value })}
+            className="input grow mono"
+          />
+          <select
+            value={form.format}
+            onChange={(e) => setForm({ ...form, format: e.target.value })}
+            className="select"
+          >
+            {FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+          </select>
+          <button type="submit" className="btn compact">Save</button>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => { setAdding(false); setForm({ label: '', url: '', format: 'generic' }); }}
+          >
+            Cancel
+          </button>
+        </form>
+      )}
+
+      {list != null && list.length === 0 && !adding && (
+        <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
+          No webhook destinations yet. Click <strong>Add webhook</strong> to wire up Slack, Discord, or any HTTP endpoint.
+        </div>
+      )}
+
+      {list != null && list.length > 0 && (
+        <div className="table-wrap" style={{ marginTop: 14 }}>
+          <table className="t">
+            <thead>
+              <tr>
+                <th style={{ width: 40 }}>On</th>
+                <th>Label</th>
+                <th>Host</th>
+                <th>Format</th>
+                <th>Last fired</th>
+                <th>Status</th>
+                <th style={{ width: 130 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((w) => {
+                const tr = testResult[w.id];
+                return (
+                  <tr key={w.id} style={{ opacity: w.enabled ? 1 : 0.55 }}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={w.enabled}
+                        onChange={() => toggle(w)}
+                        aria-label="Enable webhook"
+                      />
+                    </td>
+                    <td>{w.label}</td>
+                    <td className="mono dim" style={{ fontSize: 12 }}>{w.host}</td>
+                    <td className="muted">{w.format}</td>
+                    <td className="muted" style={{ fontSize: 12 }}>
+                      {w.lastFiredAt ? new Date(w.lastFiredAt).toLocaleString([], { hour12: false }) : 'never'}
+                    </td>
+                    <td>
+                      {testing === w.id ? (
+                        <span className="chip"><span className="dot" />testing…</span>
+                      ) : tr ? (
+                        <span className={`chip ${tr.ok ? 'ok' : 'crit'}`}>
+                          <span className="dot" />{tr.ok ? 'test ok' : (tr.error || 'failed')}
+                        </span>
+                      ) : w.lastError ? (
+                        <span className="chip crit"><span className="dot" />{w.lastError}</span>
+                      ) : w.lastFiredAt ? (
+                        <span className="chip ok"><span className="dot" />ok</span>
+                      ) : (
+                        <span className="chip"><span className="dot" />idle</span>
+                      )}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn tiny"
+                        onClick={() => test(w)}
+                        disabled={testing === w.id}
+                        style={{ marginRight: 6 }}
+                      >
+                        Test
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={() => remove(w)}
+                        title="Remove webhook"
+                        aria-label="Remove webhook"
+                      >
+                        <IconTrash />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Alerts() {
-  const { rules, setRules, alertState } = useApp();
+  const [rules, setRules] = useState(null);
+  const [active, setActive] = useState([]);
+  const [metrics, setMetrics] = useState([]);
+  const [err, setErr] = useState(null);
   const [notify, setNotify] = useState(readNotifyEnabled());
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
-  useEffect(() => { setNotify(readNotifyEnabled()); }, []);
+  function loadAll() {
+    Promise.all([api.alerts.rules(), api.alerts.active(), api.alerts.metrics()])
+      .then(([r, a, m]) => {
+        setRules(r.rules || []);
+        setActive(a.active || []);
+        setMetrics(m.metrics || []);
+        setDirty(false);
+      })
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(() => { loadAll(); }, []);
 
-  function update(id, next) { setRules(rules.map((r) => (r.id === id ? next : r))); }
-  function remove(id) { setRules(rules.filter((r) => r.id !== id)); }
+  // Refresh the "active" view every 5s so the Now column is roughly live.
+  useEffect(() => {
+    const id = setInterval(() => {
+      api.alerts.active().then((a) => setActive(a.active || [])).catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  function update(id, next) {
+    setRules(rules.map((r) => (r.id === id ? next : r)));
+    setDirty(true);
+  }
+  function remove(id) {
+    setRules(rules.filter((r) => r.id !== id));
+    setDirty(true);
+  }
   function add() {
     setRules([
-      ...rules,
+      ...(rules || []),
       {
-        id: newRuleId(),
+        id: newClientId(),
         enabled: true,
         metric: 'cpu',
         comparator: 'gt',
@@ -148,23 +374,34 @@ export default function Alerts() {
         label: 'New rule',
       },
     ]);
+    setDirty(true);
   }
-  function seedDefaults() {
-    if (rules.length && !confirm('Replace existing rules with the defaults?')) return;
-    setRules(defaultRules());
+  async function save() {
+    setSaving(true);
+    setErr(null);
+    try {
+      const r = await api.alerts.setRules(rules);
+      setRules(r.rules || []);
+      setDirty(false);
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setSaving(false);
+    }
   }
   async function toggleNotify() {
     const ok = await setNotifyEnabled(!notify);
     setNotify(ok);
   }
 
+  const activeById = Object.fromEntries(active.map((a) => [a.id, a]));
+
   return (
     <div className="page-fade-in">
       <h1 className="page-title">Alerts</h1>
       <p className="subtitle">
-        Threshold rules evaluated against the live overview every 10s. Rules
-        and firing state are stored in this browser only — they don't sync
-        across devices.
+        Threshold rules + webhook destinations evaluated server-side every
+        10s. Edits are buffered locally until you click <strong>Save rules</strong>.
       </p>
 
       <div className="toolbar">
@@ -176,8 +413,14 @@ export default function Alerts() {
         >
           <IconPlus /> Add rule
         </button>
-        <button type="button" className="btn ghost" onClick={seedDefaults}>
-          Seed defaults
+        <button
+          type="button"
+          className="btn compact"
+          onClick={save}
+          disabled={!dirty || saving}
+          style={{ background: dirty ? 'var(--accent)' : 'var(--bg-elevated)', color: dirty ? 'white' : 'var(--text-muted)' }}
+        >
+          {saving ? 'Saving…' : dirty ? 'Save rules' : 'Saved'}
         </button>
         <label
           className="pushright"
@@ -195,11 +438,13 @@ export default function Alerts() {
         </label>
       </div>
 
-      {rules.length === 0 ? (
+      {err && <div className="error">{err}</div>}
+
+      {rules == null ? (
+        <div className="loading">Loading rules…</div>
+      ) : rules.length === 0 ? (
         <div className="card empty" style={{ padding: 32 }}>
-          No rules yet. Click <strong>Add rule</strong> to create one, or
-          {' '}<strong>Seed defaults</strong> for a starter set
-          (CPU / memory / disk all &gt; 90%).
+          No rules yet. Click <strong>Add rule</strong> to create one.
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -223,7 +468,8 @@ export default function Alerts() {
                   <RuleRow
                     key={r.id}
                     rule={r}
-                    state={alertState[r.id]}
+                    active={activeById[r.id]}
+                    metrics={metrics}
                     onChange={(next) => update(r.id, next)}
                     onDelete={() => remove(r.id)}
                   />
@@ -233,6 +479,10 @@ export default function Alerts() {
           </div>
         </div>
       )}
+
+      <div className="spacer-md" />
+
+      <WebhooksCard />
     </div>
   );
 }

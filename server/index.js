@@ -15,6 +15,8 @@ const { loginLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
 const history = require('./history');
+const alerts = require('./alerts');
+const webhooks = require('./webhooks');
 const logger = require('./logger');
 
 const PORT = parseInt(process.env.PORT || '8088', 10);
@@ -100,10 +102,14 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, HOST, () => {
   logger.info(`othoni v${VERSION} listening on http://${HOST}:${PORT}`);
   history.start();
+  // Wire the alert engine to fire enabled webhooks on each rule transition.
+  alerts.setDispatcher((event) => webhooks.dispatch(event));
+  alerts.start();
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.once(sig, () => {
+    alerts.stop();
     history.stop();
     process.exit(0);
   });

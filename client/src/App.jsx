@@ -1,11 +1,8 @@
-import React, { useEffect, useState, useRef, useCallback, createContext, useContext } from 'react';
+import React, { useEffect, useState, useRef, createContext, useContext } from 'react';
 import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import { api } from './api';
 import { useLocalSetting } from './hooks';
-import {
-  loadRules, saveRules, defaultRules, evaluate, activeAlerts as projectActive,
-  notifyFire,
-} from './alerts';
+import { notifyFire } from './alerts';
 import { AlertBadge, AlertsPopover } from './AlertsPopover.jsx';
 
 import Login from './pages/Login.jsx';
@@ -119,29 +116,13 @@ function Shell({ user, onLogout, children, refreshMs, activeAlerts }) {
   );
 }
 
-// Polls /api/overview every 10s and runs the alerts engine. Owns rules
-// (persisted to localStorage) + per-rule firing state (in-memory only).
-// Exposes { rules, setRules, alertState, activeAlerts } via App context.
-function useAlertsEngine(active) {
-  const [rules, setRulesState] = useState(() => {
-    const stored = loadRules();
-    if (stored && stored.length) return stored;
-    const seeded = defaultRules();
-    saveRules(seeded);
-    return seeded;
-  });
-  const [alertState, setAlertState] = useState({});
-  const stateRef = useRef({});
-  const rulesRef = useRef(rules);
-
-  const setRules = useCallback((next) => {
-    const arr = typeof next === 'function' ? next(rulesRef.current) : next;
-    rulesRef.current = arr;
-    setRulesState(arr);
-    saveRules(arr);
-  }, []);
-
-  useEffect(() => { rulesRef.current = rules; }, [rules]);
+// Thin client poller — the alert engine itself moved to the server in
+// v0.11.0. We just fetch /api/alerts/active every 10s, fire browser
+// notifications on rules that newly transitioned to firing, and expose
+// `activeAlerts` via context so the topbar bell + popover can render.
+function useServerAlerts(active) {
+  const [activeAlerts, setActiveAlerts] = useState([]);
+  const knownIds = useRef(new Set());
 
   useEffect(() => {
     if (!active) return undefined;
@@ -150,14 +131,25 @@ function useAlertsEngine(active) {
 
     const tick = async () => {
       try {
-        const overview = await api.overview();
+        const r = await api.alerts.active();
         if (stopped) return;
-        const { state, fires } = evaluate(stateRef.current, rulesRef.current, overview);
-        stateRef.current = state;
-        setAlertState(state);
-        for (const { rule, value } of fires) notifyFire(rule, value);
+        const list = r.active || [];
+        // Fire a browser notification for any alert id we haven't seen
+        // before in this session.
+        for (const a of list) {
+          if (!knownIds.current.has(a.id)) {
+            knownIds.current.add(a.id);
+            notifyFire(a);
+          }
+        }
+        // Forget ids that have resolved so a fresh fire later re-notifies.
+        const stillActive = new Set(list.map((a) => a.id));
+        for (const id of knownIds.current) {
+          if (!stillActive.has(id)) knownIds.current.delete(id);
+        }
+        setActiveAlerts(list);
       } catch {
-        /* ignore one-off failures — next tick will retry */
+        /* one-off failure — next tick will retry */
       }
     };
 
@@ -179,16 +171,14 @@ function useAlertsEngine(active) {
     };
   }, [active]);
 
-  const active_alerts = projectActive(rules, alertState);
-
-  return { rules, setRules, alertState, activeAlerts: active_alerts };
+  return { activeAlerts };
 }
 
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = unknown, null = logged out
   const [refreshMs, setRefreshMs] = useLocalSetting('othoni.refreshMs', 5000);
   const navigate = useNavigate();
-  const alerts = useAlertsEngine(!!user);
+  const alerts = useServerAlerts(!!user);
 
   // Check session on mount
   useEffect(() => {
