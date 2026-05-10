@@ -1,0 +1,30 @@
+{
+  "name": "othoni",
+  "version": "0.10.0",
+  "private": true,
+  "description": "Self-hosted VPS monitoring dashboard",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "NODE_ENV=development node server/index.js",
+    "client:install": "npm --prefix client install",
+    "client:build": "npm --prefix client run build",
+    "client:dev": "npm --prefix client run dev",
+    "build": "npm run client:install && npm run client:build",
+    "totp:setup": "node scripts/totp-setup.js",
+    "postinstall": "npm --prefix client install --no-audit --no-fund || true"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "systeminformation": "^5.23.5"
+  }
+}

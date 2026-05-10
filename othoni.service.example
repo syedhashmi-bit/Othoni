@@ -1,0 +1,48 @@
+# Example systemd service for othoni.
+#
+# 1. Copy this file:
+#      sudo cp /var/www/othoni/othoni.service.example /etc/systemd/system/othoni.service
+#
+# 2. Adjust User=, WorkingDirectory= and EnvironmentFile= if you installed in a
+#    different location.
+#
+# 3. Reload, enable, start:
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable --now othoni
+#
+# 4. Tail logs:
+#      sudo journalctl -u othoni -f
+
+[Unit]
+Description=othoni VPS monitoring dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/othoni
+EnvironmentFile=/var/www/othoni/.env
+ExecStart=/usr/bin/node /var/www/othoni/server/index.js
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# Hardening (loosen if your collectors need more access)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# stdout/stderr go to journald
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
