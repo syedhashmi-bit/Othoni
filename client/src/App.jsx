@@ -19,12 +19,101 @@ import Logs from './pages/Logs.jsx';
 import Settings from './pages/Settings.jsx';
 import History from './pages/History.jsx';
 import { Logo } from './Logo.jsx';
+import { Cheatsheet } from './Cheatsheet.jsx';
 import {
   IconDashboard, IconHistory, IconStorage, IconProcesses,
   IconDocker, IconServices, IconNetwork, IconConnections, IconAlerts,
   IconChecks, IconLogs, IconSettings,
   IconClock, IconSignOut,
 } from './Icons.jsx';
+
+// Two-key navigation chords: press `g` then one of these.
+const G_CHORDS = {
+  d: '/',
+  h: '/history',
+  s: '/storage',
+  p: '/processes',
+  k: '/docker',
+  v: '/services',
+  n: '/network',
+  c: '/connections',
+  a: '/alerts',
+  e: '/checks',
+  l: '/logs',
+  ',': '/settings',
+};
+const CHORD_TIMEOUT_MS = 1500;
+
+// Don't intercept keys while the user is typing in a form field. Also bail
+// when any modifier is pressed so browser/OS shortcuts pass through cleanly.
+function shouldIgnoreShortcut(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return true;
+  const el = e.target;
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+// Owns the chord state machine + cheatsheet visibility. Mounted once at the
+// app shell so listeners can be installed/torn down on login / logout.
+function useKeyboardShortcuts() {
+  const navigate = useNavigate();
+  const [cheatsheetOpen, setCheatsheetOpen] = useState(false);
+  const pending = useRef(null);    // 'g' when a chord prefix is active
+  const timer = useRef(null);
+
+  useEffect(() => {
+    function clearPending() {
+      pending.current = null;
+      if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    }
+    function onKey(e) {
+      if (shouldIgnoreShortcut(e)) {
+        if (pending.current) clearPending();
+        return;
+      }
+      // Esc closes the cheatsheet (handled in Cheatsheet too, but covering
+      // here means it also dismisses any pending chord cleanly).
+      if (e.key === 'Escape') {
+        clearPending();
+        if (cheatsheetOpen) setCheatsheetOpen(false);
+        return;
+      }
+      // ? toggles the cheatsheet. On most layouts ? is shift+/, so check both.
+      if ((e.key === '?' || (e.key === '/' && e.shiftKey)) && !pending.current) {
+        e.preventDefault();
+        setCheatsheetOpen((v) => !v);
+        return;
+      }
+      // Chord prefix.
+      if (pending.current === null && (e.key === 'g' || e.key === 'G')) {
+        e.preventDefault();
+        pending.current = 'g';
+        timer.current = setTimeout(clearPending, CHORD_TIMEOUT_MS);
+        return;
+      }
+      // Chord completion.
+      if (pending.current === 'g') {
+        const k = e.key.toLowerCase();
+        const dest = G_CHORDS[k];
+        if (dest) {
+          e.preventDefault();
+          navigate(dest);
+        }
+        clearPending();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      clearPending();
+    };
+  }, [navigate, cheatsheetOpen]);
+
+  return { cheatsheetOpen, setCheatsheetOpen };
+}
 
 const AppCtx = createContext(null);
 export const useApp = () => useContext(AppCtx);
@@ -67,7 +156,7 @@ function LiveIndicator({ refreshMs }) {
   );
 }
 
-function Shell({ user, onLogout, children, refreshMs, activeAlerts }) {
+function Shell({ user, onLogout, children, refreshMs, activeAlerts, onShortcutsClick }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   return (
     <div className="app">
@@ -105,6 +194,16 @@ function Shell({ user, onLogout, children, refreshMs, activeAlerts }) {
           <AlertBadge activeAlerts={activeAlerts} onClick={() => setPopoverOpen((v) => !v)} />
           <LiveIndicator refreshMs={refreshMs} />
           <ServerClock />
+          <button
+            type="button"
+            className="topbar-bell"
+            onClick={onShortcutsClick}
+            title="Keyboard shortcuts (?)"
+            aria-label="Show keyboard shortcuts"
+            style={{ fontSize: 13, fontWeight: 600 }}
+          >
+            ?
+          </button>
         </div>
         {popoverOpen && (
           <AlertsPopover
@@ -228,23 +327,40 @@ export default function App() {
 
   return (
     <AppCtx.Provider value={{ user, refreshMs, setRefreshMs, onLogout: handleLogout, ...alerts }}>
-      <Shell user={user} onLogout={handleLogout} refreshMs={refreshMs} activeAlerts={alerts.activeAlerts}>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/history" element={<History />} />
-          <Route path="/storage" element={<Storage />} />
-          <Route path="/processes" element={<Processes />} />
-          <Route path="/docker" element={<Docker />} />
-          <Route path="/services" element={<Services />} />
-          <Route path="/network" element={<Network />} />
-          <Route path="/connections" element={<Connections />} />
-          <Route path="/alerts" element={<Alerts />} />
-          <Route path="/checks" element={<Checks />} />
-          <Route path="/logs" element={<Logs />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Shell>
+      <AuthedAppBody refreshMs={refreshMs} alerts={alerts} user={user} handleLogout={handleLogout} />
     </AppCtx.Provider>
+  );
+}
+
+// Split out so `useKeyboardShortcuts` (which calls `useNavigate`) only runs
+// inside the Shell — the unauthenticated branch never mounts the router
+// content and shouldn't install global key listeners.
+function AuthedAppBody({ refreshMs, alerts, user, handleLogout }) {
+  const { cheatsheetOpen, setCheatsheetOpen } = useKeyboardShortcuts();
+  return (
+    <Shell
+      user={user}
+      onLogout={handleLogout}
+      refreshMs={refreshMs}
+      activeAlerts={alerts.activeAlerts}
+      onShortcutsClick={() => setCheatsheetOpen((v) => !v)}
+    >
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/history" element={<History />} />
+        <Route path="/storage" element={<Storage />} />
+        <Route path="/processes" element={<Processes />} />
+        <Route path="/docker" element={<Docker />} />
+        <Route path="/services" element={<Services />} />
+        <Route path="/network" element={<Network />} />
+        <Route path="/connections" element={<Connections />} />
+        <Route path="/alerts" element={<Alerts />} />
+        <Route path="/checks" element={<Checks />} />
+        <Route path="/logs" element={<Logs />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <Cheatsheet open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />
+    </Shell>
   );
 }

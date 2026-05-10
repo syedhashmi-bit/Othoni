@@ -8,6 +8,42 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.17.0] — 2026-05-10
+
+Keyboard shortcuts. Two-key navigation chords (`g` then a letter) plus
+`?` to toggle a cheatsheet overlay.
+
+### Added
+
+- **Two-key nav chords** — `g d` Dashboard, `g h` History, `g s` Storage,
+  `g p` Processes, `g k` Docker (kontainer), `g v` Services, `g n`
+  Network, `g c` Connections, `g a` Alerts, `g e` Checks, `g l` Logs,
+  `g ,` Settings. 1.5s timeout on the prefix; chord state cleared if
+  the next keystroke isn't a known target.
+- **`?` toggles a cheatsheet overlay** — pure-JSX modal in
+  `client/src/Cheatsheet.jsx` with backdrop blur, listing every chord
+  + the help shortcut. Click backdrop or press Esc to dismiss.
+- **`?` button in the topbar** next to the live indicator — same as
+  pressing `?`, gives discoverability for non-keyboard users.
+- **`Esc`** clears any pending chord and closes the cheatsheet.
+
+### Changed
+
+- `package.json` bumped to `0.17.0`.
+- `client/src/App.jsx` — new `useKeyboardShortcuts()` hook owns the
+  chord state machine + cheatsheet open/close; mounted only inside the
+  authenticated `Shell` (the login screen doesn't install global key
+  listeners). New `<Cheatsheet>` import + render.
+
+### Notes
+
+- Shortcuts are suppressed while focus is in `<input>` / `<textarea>`
+  / `<select>` / contenteditable elements, so typing in filter boxes
+  isn't intercepted.
+- Any modifier key (ctrl/meta/alt) lets the keystroke pass through
+  untouched — browser/OS shortcuts continue to work normally.
+- `?` is shift+/ on most layouts; both forms are accepted.
+
 ## [0.16.0] — 2026-05-10
 
 Logs follow-ups. Five upgrades to the Logs page so it's a usable digging
@@ -873,6 +909,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.17.0]: #0170--2026-05-10
 [0.16.0]: #0160--2026-05-10
 [0.15.0]: #0150--2026-05-10
 [0.14.0]: #0140--2026-05-10

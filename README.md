@@ -70,6 +70,8 @@
 - Settings page for tuning the refresh interval per browser
 - Polished dark UI: nav icons, pulsing live indicator, server clock,
   card hover lift, gradient bars, skeleton loaders, page fade-up
+- **Keyboard shortcuts** — two-key chords (`g d`, `g h`, etc.) to jump
+  between pages, `?` for the cheatsheet
 
 ## Stack
 
