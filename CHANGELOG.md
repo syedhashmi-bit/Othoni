@@ -8,6 +8,48 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.22.0] — 2026-05-10
+
+Optional Prometheus exporter. Off by default — additive only, doesn't
+affect existing users.
+
+### Added
+
+- **`server/prom-export.js`** — pure-JS exposition builder
+  (text-based format, no library). Emits build info, CPU
+  (aggregate + per-core + load averages), memory (regions in bytes
+  + percent), swap, filesystem (per-mount usage % + bytes),
+  per-device disk I/O, per-interface network throughput + counters,
+  TCP socket counts by state, currently-firing alerts, and synthetic
+  check up/down/latency/consecutive-failures. ~30 metric families
+  total.
+- **`GET /metrics`** route, mounted before the cookie-auth wall.
+  Auth: `Authorization: Bearer <OTHONI_PROMETHEUS_TOKEN>`,
+  constant-time compare. Returns:
+  - **404** when `OTHONI_PROMETHEUS_TOKEN` is unset (the endpoint
+    isn't advertised at all in that case);
+  - **401** when missing or wrong;
+  - **200** with the standard `text/plain; version=0.0.4` content
+    type otherwise.
+- **`OTHONI_PROMETHEUS_TOKEN` env var** in `.env.example` with a
+  random-string-generation hint.
+
+### Changed
+
+- `package.json` bumped to `0.22.0`.
+- `server/index.js` mounts the new `/metrics` route alongside the
+  existing `/api/metrics` ingestion route — both before the
+  cookie-auth wall.
+
+### Notes
+
+- Verified end-to-end on the live host: 401 without/with wrong
+  token; 200 with full exposition (build_info, cpu, memory,
+  filesystem, disk I/O, network, connections, alerts, checks) on
+  the right token; 404 once the env var is removed.
+- No dependency on Prometheus itself — this is just a scrape
+  endpoint. The in-process SQLite store remains the primary history.
+
 ## [0.21.0] — 2026-05-10
 
 Auth hardening — scrypt-based password hashing, no new dependencies.
@@ -1054,6 +1096,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.22.0]: #0220--2026-05-10
 [0.21.0]: #0210--2026-05-10
 [0.20.0]: #0200--2026-05-10
 [0.19.0]: #0190--2026-05-10

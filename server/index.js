@@ -14,6 +14,7 @@ const { auth, login, logout, me, totpEnabled } = require('./auth');
 const { loginLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
+const promExport = require('./prom-export');
 const history = require('./history');
 const processHistory = require('./process-history');
 const alerts = require('./alerts');
@@ -71,6 +72,11 @@ app.get('/api/auth/me', auth, me);
 // must be mounted before the `app.use('/api', auth, ...)` wall below or it
 // will inherit cookie auth and the headless-agent flow won't work.
 app.use('/api/metrics', metricsRouter);
+
+// Optional Prometheus exporter at /metrics. Off unless OTHONI_PROMETHEUS_TOKEN
+// is set; uses its own Bearer-token check (separate from the dashboard
+// session). Mounted before the cookie-auth wall for the same reason.
+app.get('/metrics', (req, res) => promExport.handleRequest(req, res));
 
 // Protected API routes
 app.use('/api', auth, apiRouter);

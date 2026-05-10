@@ -127,6 +127,7 @@ $EDITOR .env
 | `OTHONI_RETENTION_MS`   | `86400000`   | how long to keep samples (default 24 h)     |
 | `OTHONI_LOGS_ENABLED`   | unset        | set `true` to enable `/api/logs` + Logs page |
 | `OTHONI_TOTP_SECRET`    | unset        | base32 secret to require a TOTP code on login (see `npm run totp:setup`) |
+| `OTHONI_PROMETHEUS_TOKEN` | unset      | Bearer token for the optional `/metrics` Prometheus exporter (off when unset) |
 | `NODE_ENV`              | `production` | `production` on a VPS                       |
 
 ## Run in development
@@ -332,11 +333,29 @@ othoni/
 └── package.json
 ```
 
+## Optional Prometheus exporter
+
+Set `OTHONI_PROMETHEUS_TOKEN` in `.env` and restart the service. Then point
+your Prometheus job at the dashboard:
+
+```yaml
+- job_name: othoni
+  scheme: https
+  static_configs:
+    - targets: ['othoni.example.com']
+  authorization:
+    type: Bearer
+    credentials_file: /etc/prometheus/othoni.token
+```
+
+The exporter is off when the env var is unset (`/metrics` returns 404 in
+that state, so the endpoint isn't even advertised). Generate a random token
+with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+
 ## Roadmap (not built yet)
 
 - One-line installer: `curl …/install.sh | bash`
 - HTTPS terminator behind a reverse proxy out of the box
-- Optional Prometheus `/metrics` exporter
 - Per-process kill / service restart actions (opt-in, requires elevated perms)
 
 See `ROADMAP.md` for details and `CHANGELOG.md` for what's already shipped.
