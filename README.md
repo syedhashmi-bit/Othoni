@@ -43,6 +43,9 @@
   on a 10s tick — alerts fire even when no browser is open
 - **Webhook destinations** — Slack, Discord, or generic JSON POST
   on every alert fire. Per-destination test button, retry-on-failure
+- **Synthetic checks** — periodic HTTP / TCP / ICMP probes recorded
+  into the same history store as built-in metrics. Consecutive
+  failures dispatch to your webhooks
 - **System log feed** (opt-in) — Logs page reads from
   `journalctl --output=json` with priority / since / unit / limit
   filters and an auto-tail toggle. Off by default — set
@@ -193,6 +196,11 @@ authenticated session.
 | PATCH  | `/api/webhooks/:id` | Toggle / rename                   |
 | POST   | `/api/webhooks/:id/test` | Fire a synthetic test event  |
 | DELETE | `/api/webhooks/:id` | Remove a webhook                  |
+| GET    | `/api/checks`       | List synthetic checks + state     |
+| POST   | `/api/checks`       | Add an HTTP / TCP / ping check    |
+| PATCH  | `/api/checks/:id`   | Toggle / rename / re-tune         |
+| POST   | `/api/checks/:id/run` | Run a check immediately         |
+| DELETE | `/api/checks/:id`   | Remove a check                    |
 | GET    | `/api/history/metrics` | Distinct metric names in the store (`?prefix=`) |
 | POST   | `/api/metrics`      | **API key auth.** Push `custom.<name>` metrics |
 | GET    | `/api/processes`    | Top processes (`?sortBy=cpu      memory&limit=20`) |

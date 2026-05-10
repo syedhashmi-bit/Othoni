@@ -8,6 +8,52 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.12.0] — 2026-05-10
+
+Synthetic checks — periodic HTTP / TCP / ICMP probes that record into the
+same history store and dispatch to webhooks on consecutive failures.
+
+### Added
+
+- **`server/checks.js`** — per-check scheduler (one `setInterval` per
+  enabled check, 10s minimum / 24h maximum interval) with three
+  executors:
+  - **HTTP** — Node's built-in `fetch` with AbortController timeout;
+    body is drained so connections close cleanly. Up = `res.ok`.
+  - **TCP** — `net.connect()` with timeout; up = connect, down =
+    error / timeout (with the `ECONNREFUSED`/`EHOSTUNREACH` code
+    surfaced as `lastError`).
+  - **Ping** — shells out to `/usr/bin/ping -c 1 -W <s>` via
+    `execFile` (no shell, no string interpolation).
+- **Two metric series per check per run** — `check.<id>.up` (1 or 0)
+  and `check.<id>.latency_ms` (number) inserted via the new
+  `history.insertSample(name, value)` trusted-internal helper.
+  Validated against a new `check.<id>.{up,latency_ms}` regex pattern.
+- **Built-in alerting** — each check has `alertAfterFailures` (default
+  0 = never alert) and `alertSeverity`. When `consecutiveFailures` ==
+  `alertAfterFailures`, the check dispatches an `alert.fire`-shaped
+  event to the same webhook destinations as threshold rules. Recovery
+  silently resets the counter (no "back up" notification — too noisy
+  by default).
+- **`/api/checks`** CRUD + **`POST /api/checks/:id/run`** to fire a
+  one-shot probe immediately ("Run now" button on the page).
+- **Checks page** at `/checks` — 4 summary tiles (total / up / down /
+  pending), table with enable toggle / inline state chip (with latency
+  for up, failure count + error code for down) / Run-now / delete.
+  Add form supports all three types with sensible defaults.
+- **`<IconChecks>`** — pulse-line SVG, added to sidebar nav.
+
+### Changed
+
+- `package.json` bumped to `0.12.0`.
+- `server/index.js` — checks engine started after alerts engine; both
+  share the same `webhooks.dispatch` reference. SIGTERM stops checks
+  before alerts before history.
+- `server/history.js` — added `CHECK_METRIC_PATTERN`, exported
+  `insertSample` helper.
+- Sidebar nav order: Dashboard, History, Storage, Processes, Docker,
+  Services, Network, Connections, Alerts, **Checks**, Logs, Settings.
+
 ## [0.11.0] — 2026-05-10
 
 Server-side alert engine + webhook destinations. Alerts now fire even
@@ -614,6 +660,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.12.0]: #0120--2026-05-10
 [0.11.0]: #0110--2026-05-10
 [0.10.0]: #0100--2026-05-10
 [0.9.0]: #090--2026-05-10

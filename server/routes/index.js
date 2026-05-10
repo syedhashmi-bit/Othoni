@@ -17,6 +17,7 @@ const { getLogs, isEnabled: isLogsEnabled } = require('../collectors/logs');
 const apiKeys = require('../api-keys');
 const alerts = require('../alerts');
 const webhooks = require('../webhooks');
+const checks = require('../checks');
 const history = require('../history');
 
 const router = express.Router();
@@ -190,6 +191,43 @@ router.post('/webhooks/:id/test', async (req, res) => {
   const result = await webhooks.testWebhook(req.params.id);
   if (result.error === 'not_found') return res.status(404).json({ error: 'not_found' });
   res.json(result);
+});
+
+// ---------- synthetic checks ----------
+
+router.get('/checks', (req, res) => {
+  res.json({ checks: checks.listChecks() });
+});
+
+router.post('/checks', (req, res) => {
+  try {
+    const c = checks.createCheck(req.body || {});
+    res.json({ check: c });
+  } catch (e) {
+    if (['invalid_label', 'invalid_type', 'invalid_target'].includes(e.code)) {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    logger.error('checks create failed:', e.message);
+    res.status(500).json({ error: 'checks_failed' });
+  }
+});
+
+router.patch('/checks/:id', (req, res) => {
+  const updated = checks.updateCheck(req.params.id, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'not_found' });
+  res.json({ check: updated });
+});
+
+router.delete('/checks/:id', (req, res) => {
+  const ok = checks.removeCheck(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true });
+});
+
+router.post('/checks/:id/run', async (req, res) => {
+  const c = await checks.runNow(req.params.id);
+  if (!c) return res.status(404).json({ error: 'not_found' });
+  res.json({ check: c });
 });
 
 // Combined snapshot for the dashboard so the UI can refresh in one round-trip.

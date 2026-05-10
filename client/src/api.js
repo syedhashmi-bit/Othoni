@@ -84,4 +84,15 @@ export const api = {
     revoke:  (id) => request(`/api/webhooks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     test:    (id) => request(`/api/webhooks/${encodeURIComponent(id)}/test`, { method: 'POST' }),
   },
+  checks: {
+    list:    () => request('/api/checks'),
+    create:  (payload) => request('/api/checks', {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+    update:  (id, patch) => request(`/api/checks/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify(patch),
+    }),
+    remove:  (id) => request(`/api/checks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    runNow:  (id) => request(`/api/checks/${encodeURIComponent(id)}/run`, { method: 'POST' }),
+  },
 };

@@ -228,3 +228,12 @@ export function IconLogs(props) {
     </svg>
   );
 }
+
+// Pulse line — synthetic checks page (uptime / probe heartbeat feel)
+export function IconChecks(props) {
+  return (
+    <svg {...baseProps} {...props}>
+      <path d="M3 12h3l2-6 4 12 2-6h7" />
+    </svg>
+  );
+}

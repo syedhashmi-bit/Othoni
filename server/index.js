@@ -17,6 +17,7 @@ const metricsRouter = require('./routes/metrics');
 const history = require('./history');
 const alerts = require('./alerts');
 const webhooks = require('./webhooks');
+const checks = require('./checks');
 const logger = require('./logger');
 
 const PORT = parseInt(process.env.PORT || '8088', 10);
@@ -105,10 +106,15 @@ app.listen(PORT, HOST, () => {
   // Wire the alert engine to fire enabled webhooks on each rule transition.
   alerts.setDispatcher((event) => webhooks.dispatch(event));
   alerts.start();
+  // Synthetic checks share the same webhook dispatcher — a check that goes
+  // down N times in a row dispatches an "alert.fire"-shaped event.
+  checks.setDispatcher((event) => webhooks.dispatch(event));
+  checks.start();
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.once(sig, () => {
+    checks.stop();
     alerts.stop();
     history.stop();
     process.exit(0);

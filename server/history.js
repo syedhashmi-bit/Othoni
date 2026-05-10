@@ -60,11 +60,16 @@ const METRICS = {
 // patterns rather than the static map.
 const STATIC_METRICS = new Set(Object.keys(METRICS));
 const CUSTOM_METRIC_PATTERN = /^custom\.[A-Za-z0-9._-]{1,128}$/;
+// Synthetic checks emit two series per check: `check.<id>.up` (1 or 0) and
+// `check.<id>.latency_ms` (number). Internally generated, not exposed via
+// /api/metrics ingestion.
+const CHECK_METRIC_PATTERN = /^check\.[A-Za-z0-9_-]{1,64}\.(up|latency_ms)$/;
 const DYNAMIC_METRIC_PATTERNS = [
   /^cpu\.core\.\d+$/,
   /^net\.iface\.[A-Za-z0-9_.-]+\.(rx|tx)$/,
   /^disk\.dev\.[A-Za-z0-9_-]+\.(read|write)$/,
   CUSTOM_METRIC_PATTERN,
+  CHECK_METRIC_PATTERN,
 ];
 function isValidMetric(name) {
   if (STATIC_METRICS.has(name)) return true;
@@ -309,6 +314,24 @@ function listMetrics({ prefix } = {}) {
   return rows.map((r) => r.metric);
 }
 
+// Trusted internal-only insert. Validates against the broader `isValidMetric`
+// (so it accepts cpu.core.*, check.*, etc.) instead of just the custom-only
+// pattern. Used by server/checks.js to push synthetic-check samples.
+function insertSample(metric, value, t = Date.now()) {
+  if (!isValidMetric(metric)) {
+    const e = new Error(`unknown metric: ${metric}`);
+    e.code = 'unknown_metric';
+    throw e;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    const e = new Error('value must be a finite number');
+    e.code = 'invalid_value';
+    throw e;
+  }
+  open();
+  insertStmt().run(metric, Number.isFinite(t) ? Math.floor(t) : Date.now(), value);
+}
+
 module.exports = {
   start,
   stop,
@@ -317,5 +340,6 @@ module.exports = {
   isCustomMetric,
   insertCustom,
   insertCustomBatch,
+  insertSample,
   listMetrics,
 };

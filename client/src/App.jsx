@@ -14,6 +14,7 @@ import Services from './pages/Services.jsx';
 import Network from './pages/Network.jsx';
 import Connections from './pages/Connections.jsx';
 import Alerts from './pages/Alerts.jsx';
+import Checks from './pages/Checks.jsx';
 import Logs from './pages/Logs.jsx';
 import Settings from './pages/Settings.jsx';
 import History from './pages/History.jsx';
@@ -21,7 +22,7 @@ import { Logo } from './Logo.jsx';
 import {
   IconDashboard, IconHistory, IconStorage, IconProcesses,
   IconDocker, IconServices, IconNetwork, IconConnections, IconAlerts,
-  IconLogs, IconSettings,
+  IconChecks, IconLogs, IconSettings,
   IconClock, IconSignOut,
 } from './Icons.jsx';
 
@@ -38,6 +39,7 @@ const NAV = [
   { to: '/network', label: 'Network', Icon: IconNetwork },
   { to: '/connections', label: 'Connections', Icon: IconConnections },
   { to: '/alerts', label: 'Alerts', Icon: IconAlerts },
+  { to: '/checks', label: 'Checks', Icon: IconChecks },
   { to: '/logs', label: 'Logs', Icon: IconLogs },
   { to: '/settings', label: 'Settings', Icon: IconSettings },
 ];
@@ -237,6 +239,7 @@ export default function App() {
           <Route path="/network" element={<Network />} />
           <Route path="/connections" element={<Connections />} />
           <Route path="/alerts" element={<Alerts />} />
+          <Route path="/checks" element={<Checks />} />
           <Route path="/logs" element={<Logs />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
