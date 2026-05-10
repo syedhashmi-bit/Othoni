@@ -56,6 +56,126 @@ function StateChip({ state, count }) {
   );
 }
 
+// Tiny unstyled chip for state breakdowns inside top-talker rows. We render
+// many of these per row, so they need to be more compact than the standard
+// .chip with its dot + uppercase label.
+function MiniStateChip({ state, count }) {
+  const cls = chipVariantForState(state);
+  return (
+    <span
+      className={`chip ${cls}`}
+      style={{ padding: '2px 6px', fontSize: 11, gap: 4 }}
+      title={`${state}: ${count}`}
+    >
+      <span style={{ color: 'var(--text-muted)', textTransform: 'lowercase' }}>{state.toLowerCase()}</span>
+      <strong>{count}</strong>
+    </span>
+  );
+}
+
+function TopLocalPortsTable({ rows }) {
+  if (!rows || rows.length === 0) {
+    return (
+      <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
+        No active connections to group right now.
+      </div>
+    );
+  }
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div className="table-wrap" style={{ border: 'none' }}>
+        <table className="t">
+          <thead>
+            <tr>
+              <th style={{ width: 90 }}>Port</th>
+              <th style={{ width: 110 }}>Service</th>
+              <th style={{ width: 80 }}>Conns</th>
+              <th>States</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r.proto}-${r.port}`}>
+                <td className="mono"><strong>{r.port}</strong></td>
+                <td className="muted">{PORT_NAMES[r.port] || '—'}</td>
+                <td className="mono">{r.total}</td>
+                <td>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {Object.entries(r.states).map(([s, n]) => (
+                      <MiniStateChip key={s} state={s.toUpperCase()} count={n} />
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TopRemoteAddressesTable({ rows }) {
+  if (!rows || rows.length === 0) {
+    return (
+      <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
+        No remote addresses to group right now.
+      </div>
+    );
+  }
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div className="table-wrap" style={{ border: 'none' }}>
+        <table className="t">
+          <thead>
+            <tr>
+              <th>Remote IP</th>
+              <th style={{ width: 80 }}>Conns</th>
+              <th>To our ports</th>
+              <th>States</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.ip}>
+                <td
+                  className="mono"
+                  style={{ color: isLoopback(r.ip) ? 'var(--text-dim)' : 'var(--text)' }}
+                >
+                  {r.ip}
+                </td>
+                <td className="mono">{r.total}</td>
+                <td>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {(r.ports || []).map((p) => (
+                      <span key={p.port} className="mono" style={{ fontSize: 12 }}>
+                        <strong>{p.port}</strong>
+                        {PORT_NAMES[p.port] && (
+                          <span style={{ color: 'var(--text-dim)', marginLeft: 4 }}>
+                            {PORT_NAMES[p.port]}
+                          </span>
+                        )}
+                        <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>×{p.n}</span>
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {Object.entries(r.states).map(([s, n]) => (
+                      <MiniStateChip key={s} state={s.toUpperCase()} count={n} />
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function StatTile({ label, value, variant }) {
   return (
     <div className={`stat-tile ${variant || ''}`}>
@@ -173,6 +293,22 @@ export default function Connections() {
           </table>
         </div>
       </div>
+
+      <div className="section-title">
+        Top local ports
+        <span style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+          which of your services has the most concurrent connections — concentration on a single port (e.g. 22) is often the first sign of a brute-force / scrape attempt
+        </span>
+      </div>
+      <TopLocalPortsTable rows={data?.topLocalPorts} />
+
+      <div className="section-title">
+        Top remote addresses
+        <span style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+          which remote IPs have the most connections to you — single-source concentration here is a different signal (a chatty client, scraper, or single attacker)
+        </span>
+      </div>
+      <TopRemoteAddressesTable rows={data?.topRemoteAddresses} />
 
       <div className="section-title">
         Active TCP connections

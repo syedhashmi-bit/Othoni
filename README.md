@@ -36,7 +36,9 @@
 - systemd service status for common units
 - Per-interface network counters and live RX/TX speed
 - TCP/UDP socket list — listening ports + active TCP connections (with
-  state breakdown) parsed straight from `/proc/net/{tcp,tcp6,udp,udp6}`
+  state breakdown) parsed straight from `/proc/net/{tcp,tcp6,udp,udp6}`,
+  plus **top-N talkers** (by local port and by remote IP) so SSH
+  brute-force / scrape patterns surface immediately
 - **Brushable zoom** on every History chart — drag-select to zoom in,
   click "× reset zoom" to clear
 - **Threshold alerting** — define rules ("CPU > 90% sustained 5 min")

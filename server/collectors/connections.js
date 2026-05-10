@@ -144,6 +144,40 @@ async function getConnections() {
     stateCounts[c.state] = (stateCounts[c.state] || 0) + 1;
   }
 
+  // ---- Top talkers ----
+  // Computed from the FULL activeAll set (not the capped `active` slice) so
+  // grouping isn't skewed when a host has more than ACTIVE_LIMIT connections.
+  // The intent is to make SSH brute-force / scrape patterns obvious at a glance:
+  //   - topLocalPorts: which of OUR ports has the most connections (e.g. 22)
+  //   - topRemoteAddresses: which remote IP is hammering us (concentrated source)
+  const topLocalPorts = aggregateBy(
+    activeAll,
+    (c) => c.local.port,
+    (c, agg) => {
+      agg.port  = c.local.port;
+      agg.proto = c.protocol.replace(/6$/, '');
+    }
+  );
+  const topRemoteAddresses = aggregateBy(
+    activeAll,
+    (c) => c.remote.ip,
+    (c, agg) => {
+      agg.ip = c.remote.ip;
+      // Top remote ports per IP (which services on the talker is hitting which
+      // of our ports — for an SSH brute-forcer the only port will be 22).
+      const k = `${c.local.port}`;
+      agg._localPorts = agg._localPorts || {};
+      agg._localPorts[k] = (agg._localPorts[k] || 0) + 1;
+    }
+  ).map((row) => {
+    const ports = Object.entries(row._localPorts || {})
+      .map(([port, n]) => ({ port: Number(port), n }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 4);
+    delete row._localPorts;
+    return { ...row, ports };
+  });
+
   return {
     summary: {
       tcp4: all.filter((c) => c.protocol === 'tcp').length,
@@ -159,7 +193,42 @@ async function getConnections() {
     active,
     activeTotal: activeAll.length,
     truncated: activeAll.length > ACTIVE_LIMIT,
+    topLocalPorts,
+    topRemoteAddresses,
   };
+}
+
+// Generic top-N aggregator. `keyFn` returns the group key per row; `mergeFn`
+// gets the row + the (mutable) accumulator and writes any extra fields beyond
+// the auto-counted total + per-state breakdown. Returns the top 10 by total,
+// with state counts trimmed to the top 4 for compact rendering.
+const TOP_N = 10;
+const TOP_STATES_PER_ROW = 4;
+function aggregateBy(rows, keyFn, mergeFn) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = keyFn(r);
+    if (k == null) continue;
+    let agg = m.get(k);
+    if (!agg) {
+      agg = { total: 0, states: {} };
+      m.set(k, agg);
+    }
+    agg.total++;
+    agg.states[r.state] = (agg.states[r.state] || 0) + 1;
+    mergeFn(r, agg);
+  }
+  return Array.from(m.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, TOP_N)
+    .map((agg) => {
+      const sorted = Object.entries(agg.states).sort((a, b) => b[1] - a[1]);
+      const top = sorted.slice(0, TOP_STATES_PER_ROW);
+      const other = sorted.slice(TOP_STATES_PER_ROW).reduce((s, [, n]) => s + n, 0);
+      const states = Object.fromEntries(top);
+      if (other > 0) states.other = other;
+      return { ...agg, states };
+    });
 }
 
 module.exports = { getConnections };

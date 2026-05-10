@@ -8,6 +8,50 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.15.0] — 2026-05-10
+
+Per-port "top talkers" on the Connections page. Surfaces SSH brute-force /
+scrape patterns by grouping active TCP connections two ways: by local port
+(which of our services is concentrated) and by remote IP (which talker is
+concentrated).
+
+### Added
+
+- **`server/collectors/connections.js` aggregates** — two new fields on
+  the `/api/connections` response:
+  - `topLocalPorts`: top 10 local ports by total connection count, with
+    state breakdown per port. Useful for spotting "many connections to
+    port 22" (SSH brute force) at a glance.
+  - `topRemoteAddresses`: top 10 remote IPs by total connection count,
+    with state breakdown AND the top 4 of-our-ports they're hitting per
+    IP. Useful for spotting single-source attackers / heavy clients.
+- **Generic `aggregateBy()` helper** in the collector — does the
+  group-by + sort-by-total + state-rollup work for both top-N tables in
+  one place. Trims state breakdown to the top 4 states per row with an
+  `other` bucket so wide rows don't blow the layout.
+- **Two new sections on the Connections page** — "Top local ports" and
+  "Top remote addresses", each rendered as a compact table with inline
+  state chips. Slot in between Listening ports and Active TCP
+  connections so the page reads "what's bound → where's the load →
+  raw list".
+- **`<MiniStateChip>`** — denser variant of the existing `<StateChip>`
+  for the talkers tables (lots of chips per row, needs to be tighter).
+
+### Changed
+
+- `package.json` bumped to `0.15.0`.
+- The aggregates are computed from the **full** untrimmed
+  active-connection list, not the 1000-row capped slice that the
+  detailed table reads — so the talker counts don't get skewed when a
+  host has more than 1000 active connections.
+
+### Notes
+
+- This is a read-only view of the running socket table; no new
+  persistence and no historical view. The signal is "right now, where
+  is the load concentrated?" — pair it with the existing connection
+  history charts (sampled into SQLite) for trends over time.
+
 ## [0.14.0] — 2026-05-10
 
 Alert history. Rule fires are now persisted to a new `alert_fires` table and
@@ -771,6 +815,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.15.0]: #0150--2026-05-10
 [0.14.0]: #0140--2026-05-10
 [0.13.0]: #0130--2026-05-10
 [0.12.0]: #0120--2026-05-10
