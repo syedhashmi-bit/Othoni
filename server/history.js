@@ -128,6 +128,19 @@ function open() {
     );
     CREATE INDEX IF NOT EXISTS idx_proc_samples_t      ON process_samples(t);
     CREATE INDEX IF NOT EXISTS idx_proc_samples_name_t ON process_samples(name, t);
+
+    CREATE TABLE IF NOT EXISTS alert_fires (
+      t            INTEGER NOT NULL,
+      rule_id      TEXT    NOT NULL,
+      metric       TEXT    NOT NULL,
+      severity     TEXT    NOT NULL,
+      label        TEXT    NOT NULL,
+      value        REAL,
+      threshold    REAL,
+      sustained_ms INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_alert_fires_t       ON alert_fires(t);
+    CREATE INDEX IF NOT EXISTS idx_alert_fires_rule_t  ON alert_fires(rule_id, t);
   `);
   return db;
 }
@@ -207,11 +220,14 @@ async function takeSample() {
 
 function cleanup() {
   const cutoff = Date.now() - RETENTION_MS;
-  const info = open().prepare('DELETE FROM samples WHERE t < ?').run(cutoff);
+  const info  = open().prepare('DELETE FROM samples         WHERE t < ?').run(cutoff);
   const pinfo = open().prepare('DELETE FROM process_samples WHERE t < ?').run(cutoff);
-  const total = info.changes + pinfo.changes;
+  const ainfo = open().prepare('DELETE FROM alert_fires     WHERE t < ?').run(cutoff);
+  const total = info.changes + pinfo.changes + ainfo.changes;
   if (total > 0) {
-    logger.debug(`history: pruned ${info.changes} samples + ${pinfo.changes} process_samples`);
+    logger.debug(
+      `history: pruned ${info.changes} samples + ${pinfo.changes} process_samples + ${ainfo.changes} alert_fires`
+    );
   }
 }
 

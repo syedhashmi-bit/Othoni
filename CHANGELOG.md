@@ -8,6 +8,61 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.14.0] — 2026-05-10
+
+Alert history. Rule fires are now persisted to a new `alert_fires` table and
+surfaced in two places on the Alerts page: a "Fires (24h)" column with a
+density histogram per rule, and a recent-fires timeline below the rules.
+
+### Added
+
+- **New SQLite table** `alert_fires(t, rule_id, metric, severity, label,
+  value, threshold, sustained_ms)` with indexes on `(t)` and
+  `(rule_id, t)`. Created in `server/history.js`'s schema bootstrap and
+  pruned at the existing 24h retention.
+- **`server/alerts.js` persistence** — when a rule transitions from
+  non-firing to firing, the fire is inserted into `alert_fires` in the
+  same tick as the webhook dispatch. Label and severity are
+  denormalized so historical rows still render correctly after rule
+  edits or deletes.
+- **`server/alerts.js` query helpers** — `getStats({ range, buckets })`
+  returns per-rule `{ fires, lastFiredAt, lastSeverity, points }` for
+  all rules that fired in the range (so deleted rules are visible).
+  `listFires({ range, limit })` returns a denormalized timeline with
+  pre-formatted `valueFmt` / `thresholdFmt`.
+- **`GET /api/alerts/stats?range=24h`** — single round-trip, returns
+  stats for every rule. Used by the Alerts page so the rules table
+  doesn't fan out to one request per row.
+- **`GET /api/alerts/history?range=24h&limit=100`** — recent-fires
+  timeline. Limit capped server-side at 500.
+- **"Fires (24h)" column on the rules table** — count + a tiny pure-SVG
+  bar histogram showing fire density across the range, color-graded by
+  severity.
+- **Recent fires card on the Alerts page** — below the rules table,
+  range chips (1h / 6h / 24h), one row per fire with relative time,
+  rule label, severity chip, value · threshold, and sustained duration.
+
+### Changed
+
+- `package.json` bumped to `0.14.0`.
+- `server/history.js` — `alert_fires` schema added to `open()` next to
+  the existing `samples` and `process_samples`; `cleanup()` prunes all
+  three.
+- `server/alerts.js` — imports `./history` for the shared DB handle.
+- `server/routes/index.js` — new `/api/alerts/stats` and
+  `/api/alerts/history` routes alongside the existing alerts endpoints.
+- `client/src/api.js` — new `api.alerts.stats(range)` and
+  `api.alerts.history({ range, limit })` helpers.
+- `client/src/pages/Alerts.jsx` — adds the Fires column, the
+  `<DensityBars>` SVG primitive (inline, ~30 lines, follows the
+  no-chart-library convention), and the `<RecentFiresCard>` section.
+
+### Notes
+
+- Existing fires accrued before this release are not reconstructible —
+  the alert engine ran in-memory until v0.14.0. After upgrade, fires
+  populate naturally over the first 24 hours.
+
 ## [0.13.0] — 2026-05-10
 
 Process trends — periodically captures the heaviest processes and surfaces a
@@ -716,6 +771,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.14.0]: #0140--2026-05-10
 [0.13.0]: #0130--2026-05-10
 [0.12.0]: #0120--2026-05-10
 [0.11.0]: #0110--2026-05-10

@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const logger = require('./logger');
+const history = require('./history');
 
 const { getCpu } = require('./collectors/cpu');
 const { getMemory } = require('./collectors/memory');
@@ -188,12 +189,41 @@ async function tick() {
   }
 
   activeCache = projectActive();
-  if (fires.length && typeof dispatcher === 'function') {
-    for (const f of fires) {
-      try { dispatcher(f); }
-      catch (e) { logger.warn(`alerts: dispatcher threw: ${e.message}`); }
+  if (fires.length) {
+    // Persist to alert_fires for the history view. Denormalize label/severity
+    // so historical rows still render correctly after rule edits/deletes.
+    try { recordFires(now, fires); }
+    catch (e) { logger.warn(`alerts: persist fires failed: ${e.message}`); }
+    if (typeof dispatcher === 'function') {
+      for (const f of fires) {
+        try { dispatcher(f); }
+        catch (e) { logger.warn(`alerts: dispatcher threw: ${e.message}`); }
+      }
     }
   }
+}
+
+function recordFires(t, fires) {
+  const db = history.getDb();
+  const stmt = db.prepare(
+    `INSERT INTO alert_fires (t, rule_id, metric, severity, label, value, threshold, sustained_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const tx = db.transaction((rows) => {
+    for (const f of rows) {
+      stmt.run(
+        t,
+        f.rule.id,
+        f.rule.metric,
+        f.rule.severity,
+        f.rule.label || '',
+        f.value,
+        f.rule.threshold,
+        f.sustainedFor
+      );
+    }
+  });
+  tx(fires);
 }
 
 function projectActive() {
@@ -226,6 +256,88 @@ function getActive() { return projectActive(); }
 
 function setDispatcher(fn) { dispatcher = fn; }
 
+// ---------- alert history ----------
+
+const HISTORY_RANGES = {
+  '1h':  60 * 60 * 1000,
+  '6h':  6  * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+};
+
+// Per-rule stats over the requested range, plus a small density histogram
+// (count of fires per fixed-width bucket) suitable for a sparkline. Returns
+// stats for ALL rules that have fired in the range — including rules that
+// have since been deleted, so the UI can show "(deleted) Foo" rows. The
+// rules-table render layer joins this against the current rule list.
+function getStats({ range = '24h', buckets = 24 } = {}) {
+  const span = HISTORY_RANGES[range] || HISTORY_RANGES['24h'];
+  const now  = Date.now();
+  const from = now - span;
+  const db   = history.getDb();
+
+  const totals = db.prepare(
+    `SELECT rule_id,
+            COUNT(*) AS fires,
+            MAX(t)   AS lastFiredAt,
+            MAX(severity) AS lastSeverity
+       FROM alert_fires
+      WHERE t >= ?
+      GROUP BY rule_id`
+  ).all(from);
+
+  const bucketMs = Math.max(60_000, Math.floor(span / Math.max(4, buckets)));
+  const sparkStmt = db.prepare(
+    `SELECT (t / ?) * ? AS t, COUNT(*) AS v
+       FROM alert_fires
+      WHERE rule_id = ? AND t >= ?
+      GROUP BY (t / ?)
+      ORDER BY t ASC`
+  );
+
+  const byRule = {};
+  for (const row of totals) {
+    const points = sparkStmt.all(bucketMs, bucketMs, row.rule_id, from, bucketMs);
+    byRule[row.rule_id] = {
+      fires:        row.fires,
+      lastFiredAt:  row.lastFiredAt,
+      lastSeverity: row.lastSeverity,
+      points,
+    };
+  }
+
+  return { range, from, to: now, bucketMs, byRule };
+}
+
+// Recent fires timeline. Includes denormalized label/severity so rows still
+// render after rule deletions. `limit` capped server-side.
+function listFires({ range = '24h', limit = 100 } = {}) {
+  const span = HISTORY_RANGES[range] || HISTORY_RANGES['24h'];
+  const now  = Date.now();
+  const from = now - span;
+  const cap  = Math.min(500, Math.max(1, limit | 0 || 100));
+  const rows = history.getDb().prepare(
+    `SELECT t, rule_id AS ruleId, metric, severity, label, value, threshold, sustained_ms AS sustainedMs
+       FROM alert_fires
+      WHERE t >= ?
+      ORDER BY t DESC
+      LIMIT ?`
+  ).all(from, cap);
+
+  // Build value/threshold formatters using the current METRICS map. If the
+  // metric is no longer in the map (unlikely but possible) fall back to raw.
+  return {
+    range, from, to: now, count: rows.length,
+    fires: rows.map((r) => {
+      const meta = METRICS[r.metric];
+      return {
+        ...r,
+        valueFmt:     meta && r.value     != null ? meta.format(r.value)     : (r.value     != null ? String(r.value)     : null),
+        thresholdFmt: meta && r.threshold != null ? meta.format(r.threshold) : (r.threshold != null ? String(r.threshold) : null),
+      };
+    }),
+  };
+}
+
 function start() {
   load();
   // Run the first tick shortly after startup so the active list is populated
@@ -251,6 +363,7 @@ module.exports = {
   start, stop, reset,
   getRules, setRules,
   getActive,
+  getStats, listFires,
   setDispatcher,
   listMetrics,
   // exported for tests / introspection

@@ -42,7 +42,9 @@
 - **Threshold alerting** — define rules ("CPU > 90% sustained 5 min")
   on the Alerts page; a notification dot in the topbar shows count and
   severity, click for the active-alerts popover. Server-side evaluator
-  on a 10s tick — alerts fire even when no browser is open
+  on a 10s tick — alerts fire even when no browser is open. Rule fires
+  are persisted; the rules table shows a 24h density histogram per rule
+  and there's a "Recent fires" timeline below it
 - **Webhook destinations** — Slack, Discord, or generic JSON POST
   on every alert fire. Per-destination test button, retry-on-failure
 - **Synthetic checks** — periodic HTTP / TCP / ICMP probes recorded
@@ -194,6 +196,8 @@ authenticated session.
 | PUT    | `/api/alerts/rules` | Replace the entire rules list     |
 | GET    | `/api/alerts/active` | Currently-firing alerts (pre-formatted) |
 | GET    | `/api/alerts/metrics` | Available metric keys + units   |
+| GET    | `/api/alerts/stats` | Per-rule fire counts + density histogram |
+| GET    | `/api/alerts/history` | Recent rule-fire timeline (denormalized) |
 | GET    | `/api/webhooks`     | List webhook destinations         |
 | POST   | `/api/webhooks`     | Add a webhook (label, url, format) |
 | PATCH  | `/api/webhooks/:id` | Toggle / rename                   |

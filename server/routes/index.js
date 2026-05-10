@@ -166,6 +166,22 @@ router.get('/alerts/metrics', (req, res) => {
   res.json({ metrics: alerts.listMetrics() });
 });
 
+// Per-rule stats over a range (default 24h) with a small density histogram
+// per rule. Used by the Alerts page to render "Fires (24h)" + a sparkline
+// on each rule row without needing one request per rule.
+router.get('/alerts/stats', (req, res) => {
+  const range = String(req.query.range || '24h');
+  res.json(alerts.getStats({ range }));
+});
+
+// Recent-fires timeline. Returns denormalized rows so deleted rules still
+// render correctly.
+router.get('/alerts/history', (req, res) => {
+  const range = String(req.query.range || '24h');
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit || '100', 10) || 100));
+  res.json(alerts.listFires({ range, limit }));
+});
+
 // ---------- webhooks ----------
 
 router.get('/webhooks', (req, res) => {

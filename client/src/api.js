@@ -76,6 +76,9 @@ export const api = {
     }),
     active:  () => request('/api/alerts/active'),
     metrics: () => request('/api/alerts/metrics'),
+    stats:   (range = '24h') => request(`/api/alerts/stats?range=${encodeURIComponent(range)}`),
+    history: ({ range = '24h', limit = 100 } = {}) =>
+      request(`/api/alerts/history?range=${encodeURIComponent(range)}&limit=${limit}`),
   },
   webhooks: {
     list:    () => request('/api/webhooks'),

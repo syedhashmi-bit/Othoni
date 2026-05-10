@@ -7,6 +7,58 @@ import {
 } from '../alerts';
 import { IconPlus, IconTrash } from '../Icons.jsx';
 
+const HISTORY_RANGES = [
+  { value: '1h',  label: '1h' },
+  { value: '6h',  label: '6h' },
+  { value: '24h', label: '24h' },
+];
+
+function relativeTime(ms) {
+  if (!ms) return 'never';
+  const d = Date.now() - ms;
+  if (d < 1000) return 'just now';
+  if (d < 60_000) return `${Math.round(d / 1000)}s ago`;
+  if (d < 3_600_000) return `${Math.round(d / 60_000)}m ago`;
+  if (d < 86_400_000) return `${Math.round(d / 3_600_000)}h ago`;
+  return `${Math.round(d / 86_400_000)}d ago`;
+}
+
+// Tiny bar histogram for per-rule fire density. ~24 buckets across the range,
+// pure SVG, color follows severity. Keeps the table row compact.
+function DensityBars({ points = [], from, to, severity = 'warn', width = 90, height = 22 }) {
+  if (!points.length || !from || !to || to <= from) {
+    return (
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+        <line x1="0" y1={height - 1} x2={width} y2={height - 1} stroke="var(--border)" strokeWidth="1" />
+      </svg>
+    );
+  }
+  const max = points.reduce((m, p) => (p.v > m ? p.v : m), 1);
+  const span = to - from;
+  const barW = Math.max(1.5, width / Math.max(8, points.length * 1.4));
+  const color = severity === 'crit' ? 'var(--crit)' : 'var(--warn)';
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ display: 'block' }}>
+      <line x1="0" y1={height - 0.5} x2={width} y2={height - 0.5} stroke="var(--border)" strokeWidth="0.5" />
+      {points.map((p, i) => {
+        const x = ((p.t - from) / span) * width;
+        const h = Math.max(2, (p.v / max) * (height - 2));
+        return (
+          <rect
+            key={i}
+            x={x - barW / 2}
+            y={height - h}
+            width={barW}
+            height={h}
+            fill={color}
+            opacity="0.85"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 const DURATIONS = [
   { ms: 0, label: 'immediate' },
   { ms: 60_000, label: '1 min' },
@@ -27,7 +79,7 @@ function unitFor(metric, metrics) {
   return metrics.find((m) => m.key === metric)?.unit || '';
 }
 
-function RuleRow({ rule, active, metrics, onChange, onDelete }) {
+function RuleRow({ rule, active, metrics, stats, statsRange, onChange, onDelete }) {
   const sevColor = rule.severity === 'crit' ? 'var(--crit)' : 'var(--warn)';
   const isFiring = !!active;
   return (
@@ -111,6 +163,24 @@ function RuleRow({ rule, active, metrics, onChange, onDelete }) {
           <span className="dim">—</span>
         )}
       </td>
+      <td style={{ minWidth: 130 }}>
+        {stats && stats.fires > 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <DensityBars
+              points={stats.points}
+              from={statsRange?.from}
+              to={statsRange?.to}
+              severity={stats.lastSeverity || rule.severity}
+            />
+            <div style={{ lineHeight: 1.1 }}>
+              <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{stats.fires}×</div>
+              <div className="dim" style={{ fontSize: 11 }}>{relativeTime(stats.lastFiredAt)}</div>
+            </div>
+          </div>
+        ) : (
+          <span className="dim">—</span>
+        )}
+      </td>
       <td>
         <button
           type="button"
@@ -123,6 +193,104 @@ function RuleRow({ rule, active, metrics, onChange, onDelete }) {
         </button>
       </td>
     </tr>
+  );
+}
+
+function RecentFiresCard() {
+  const [range, setRange] = useState('24h');
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+
+  function refresh() {
+    api.alerts.history({ range, limit: 50 })
+      .then(setData)
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 30_000);
+    return () => clearInterval(id);
+  }, [range]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Recent fires</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Each row is one rule transition from non-firing to firing. Stored
+            server-side; pruned with the 24h sample retention.
+          </div>
+        </div>
+        <div className="toolbar" style={{ margin: 0 }}>
+          {HISTORY_RANGES.map((r) => (
+            <button
+              key={r.value}
+              type="button"
+              className={`btn tiny ${range === r.value ? 'active' : ''}`}
+              onClick={() => setRange(r.value)}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      {data && data.fires.length === 0 && (
+        <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
+          No fires in the last {range}. Either things are quiet, or the rules
+          haven't been tested by real load yet.
+        </div>
+      )}
+
+      {data && data.fires.length > 0 && (
+        <div className="table-wrap" style={{ marginTop: 14 }}>
+          <table className="t">
+            <thead>
+              <tr>
+                <th style={{ width: 140 }}>When</th>
+                <th>Rule</th>
+                <th>Severity</th>
+                <th>Value · threshold</th>
+                <th>Sustained</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.fires.map((f, i) => (
+                <tr key={`${f.t}-${f.ruleId}-${i}`}>
+                  <td className="muted" style={{ fontSize: 12 }}>
+                    {relativeTime(f.t)}
+                    <div className="dim" style={{ fontSize: 11 }}>
+                      {new Date(f.t).toLocaleTimeString([], { hour12: false })}
+                    </div>
+                  </td>
+                  <td>
+                    <div>{f.label || <span className="dim">(unnamed)</span>}</div>
+                    <div className="dim mono" style={{ fontSize: 11 }}>{f.metric}</div>
+                  </td>
+                  <td>
+                    <span className={`chip ${f.severity === 'crit' ? 'crit' : 'warn'}`}>
+                      <span className="dot" />
+                      {f.severity}
+                    </span>
+                  </td>
+                  <td className="mono" style={{ fontSize: 13 }}>
+                    {f.valueFmt ?? '—'}
+                    <span className="dim" style={{ margin: '0 4px' }}>·</span>
+                    <span className="dim">{f.thresholdFmt ?? '—'}</span>
+                  </td>
+                  <td className="mono muted" style={{ fontSize: 12 }}>
+                    {formatDuration(f.sustainedMs || 0)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -327,6 +495,7 @@ export default function Alerts() {
   const [rules, setRules] = useState(null);
   const [active, setActive] = useState([]);
   const [metrics, setMetrics] = useState([]);
+  const [stats, setStats] = useState(null); // { range, from, to, bucketMs, byRule: { id: { fires, lastFiredAt, points } } }
   const [err, setErr] = useState(null);
   const [notify, setNotify] = useState(readNotifyEnabled());
   const [saving, setSaving] = useState(false);
@@ -349,6 +518,15 @@ export default function Alerts() {
     const id = setInterval(() => {
       api.alerts.active().then((a) => setActive(a.active || [])).catch(() => {});
     }, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  // 24h fire density per rule. Refresh on a slower cadence — the data only
+  // changes on rule transitions, which are rare relative to the live state.
+  useEffect(() => {
+    function refresh() { api.alerts.stats('24h').then(setStats).catch(() => {}); }
+    refresh();
+    const id = setInterval(refresh, 30_000);
     return () => clearInterval(id);
   }, []);
 
@@ -460,6 +638,7 @@ export default function Alerts() {
                   <th>Sustained</th>
                   <th>Severity</th>
                   <th>Now</th>
+                  <th>Fires (24h)</th>
                   <th style={{ width: 50 }}></th>
                 </tr>
               </thead>
@@ -470,6 +649,8 @@ export default function Alerts() {
                     rule={r}
                     active={activeById[r.id]}
                     metrics={metrics}
+                    stats={stats?.byRule?.[r.id]}
+                    statsRange={stats ? { from: stats.from, to: stats.to } : null}
                     onChange={(next) => update(r.id, next)}
                     onDelete={() => remove(r.id)}
                   />
@@ -479,6 +660,10 @@ export default function Alerts() {
           </div>
         </div>
       )}
+
+      <div className="spacer-md" />
+
+      <RecentFiresCard />
 
       <div className="spacer-md" />
 
