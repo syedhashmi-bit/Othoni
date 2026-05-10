@@ -8,6 +8,44 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.20.0] — 2026-05-10
+
+Per-interface and per-device sparklines on the live pages. The History page
+already had these as time-series; now Network and Storage carry the same
+trend signal inline so you don't have to switch pages to spot a spike.
+
+### Added
+
+- **Per-interface sparklines on the Network page** — two new columns
+  (RX trend / TX trend), each with a small `<Sparkline>` driven by
+  the existing `net.iface.<name>.{rx,tx}` history. 15-minute window;
+  trends refresh every 30s independent of the live counter poll
+  (sparkline barely changes per tick anyway).
+- **Per-device disk I/O section on the Storage page** — new "Per-device
+  I/O" grid below the filesystem cards, one card per physical block
+  device with read + write sparklines (`disk.dev.<name>.{read,write}`)
+  and live rate readouts. Same 15m window / 30s trend cadence.
+- **`useIfaceTrends` / `useDiskTrends` hooks** — both fan out to N
+  parallel `/api/history` fetches via `Promise.all`, keying on the
+  joined name list so React doesn't re-fire on shape-equal updates.
+
+### Changed
+
+- `package.json` bumped to `0.20.0`.
+- `client/src/pages/Network.jsx` — table grows two sparkline columns;
+  loopback row still shows just the rate (no trend, since loopback
+  is filtered out of historical sampling).
+- `client/src/pages/Storage.jsx` — adds the per-device section + a
+  second `usePoller` for `/api/diskio`.
+
+### Notes
+
+- This is the last item from the v0.13.0–v0.20.0 ROADMAP "Next up"
+  block as it stood at the start of the session. Eight releases
+  shipped end-to-end this session; the public roadmap now has only
+  larger / explicitly-deferred items left (one-line installer, auth
+  hardening, optional Prometheus exporter, action endpoints).
+
 ## [0.19.0] — 2026-05-10
 
 Dashboard density toggle. Tighten card padding, table rows, and section
@@ -976,6 +1014,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.20.0]: #0200--2026-05-10
 [0.19.0]: #0190--2026-05-10
 [0.18.0]: #0180--2026-05-10
 [0.17.0]: #0170--2026-05-10
