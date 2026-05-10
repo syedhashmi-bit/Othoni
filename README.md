@@ -89,7 +89,29 @@
 - Linux server (Ubuntu/Debian/RHEL)
 - Node.js 18+ and npm
 
-## Install
+## Install — one-liner
+
+For a fresh VPS, the included installer handles Node setup, repo clone,
+build, `.env` generation (with a scrypt-hashed admin password and a
+random JWT secret), and the systemd unit:
+
+```bash
+# interactive (prompts for an admin password):
+curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh | sudo bash
+
+# unattended (CI / image build):
+curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh \
+  | sudo OTHONI_ADMIN_PASSWORD='strong-password' bash
+
+# upgrade an existing install (re-running is idempotent):
+sudo bash /var/www/othoni/install.sh
+```
+
+Defaults: install at `/var/www/othoni`, listen on `127.0.0.1:8088`. Front
+with nginx + TLS — see `nginx-othoni.conf.example` in the repo. Tunable
+via env vars; see the comment block at the top of `install.sh`.
+
+## Install — manual
 
 ```bash
 git clone <your-fork-or-tarball> /var/www/othoni
@@ -379,8 +401,9 @@ with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
 ## Roadmap (not built yet)
 
-- One-line installer: `curl …/install.sh | bash`
-- HTTPS terminator behind a reverse proxy out of the box
 - Per-process kill / service restart actions (opt-in, requires elevated perms)
+- Auth: optional read-only second user
+- Multi-host: per-host views in the dashboard (today everything lands in one
+  flat namespace; v0.23.0 added per-host attribution at the metric-name level)
 
 See `ROADMAP.md` for details and `CHANGELOG.md` for what's already shipped.

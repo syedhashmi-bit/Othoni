@@ -8,6 +8,48 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.24.0] — 2026-05-10
+
+One-line installer + nginx config example. Closes the "fresh VPS to live
+dashboard" gap that was a deferred ROADMAP item since v0.1.0.
+
+### Added
+
+- **`install.sh`** at the repo root. Idempotent — fresh-installs from
+  the GitHub repo OR upgrades an existing checkout (re-running is
+  safe). Walks: root check, NodeSource Node 20 install if `node` < 18,
+  `git clone` (or `git pull --ff-only`), `npm install && npm run build`,
+  `.env` generation on first run only (random JWT secret +
+  scrypt-hashed admin password via the v0.21.0 helper), systemd unit
+  install + enable, smoke-test against `/api/health`, banner.
+  Tunable via env vars: `OTHONI_INSTALL_DIR`, `OTHONI_REPO_URL`,
+  `OTHONI_BRANCH`, `OTHONI_PORT`, `OTHONI_HOST`, `OTHONI_ADMIN_USER`,
+  `OTHONI_ADMIN_PASSWORD` (omit for an interactive prompt; falls back
+  to a random password printed at the end if stdin isn't a TTY).
+- **`nginx-othoni.conf.example`** — drop-in nginx server block with
+  HTTP→HTTPS redirect, TLS placeholders ready for `certbot --nginx`,
+  `proxy_pass` to `127.0.0.1:8088`, the `X-Forwarded-*` headers that
+  the existing `app.set('trust proxy', 1)` expects, and sensible
+  hardening (`server_tokens off`, `Cache-Control no-store`, modern
+  TLS protocols, conservative timeouts).
+- **README install section split into "one-liner" and "manual"** —
+  fresh-VPS path is now a single curl-pipe-bash. Roadmap section
+  pruned to the items still genuinely deferred.
+
+### Changed
+
+- `package.json` bumped to `0.24.0`.
+
+### Notes
+
+- The installer's `.env` generation uses `npm run hash-password` (the
+  v0.21.0 helper) under the hood — so fresh installs default to a
+  hashed password, not the plaintext form. Plaintext fallback in
+  `auth.js` remains for users who follow the manual install path.
+- The "data is not lost on redeploy" guarantee from CONTEXT.md still
+  holds: the upgrade flow doesn't touch `data/` or `.env`, so
+  historical samples + alert rules + API keys all survive.
+
 ## [0.23.0] — 2026-05-10
 
 Multi-host source attribution on `custom.*` metrics. Multiple agents can now
@@ -1135,6 +1177,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.24.0]: #0240--2026-05-10
 [0.23.0]: #0230--2026-05-10
 [0.22.0]: #0220--2026-05-10
 [0.21.0]: #0210--2026-05-10
