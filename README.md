@@ -1,16 +1,19 @@
-# othoni
+<p align="center">
+  <img src="assets/logo.svg" alt="othoni" width="128" height="128" />
+</p>
 
-A self-hosted VPS monitoring dashboard. Single Node.js process, React UI,
-no database, no agent. Drop it on a VPS and view live CPU / RAM / disk /
-network / process / Docker / systemd state at a glance.
+<h1 align="center">othoni</h1>
 
-```
-+--------------------------+
-|  CPU  RAM  DISK  NET     |
-|  Storage / Processes     |
-|  Docker / Services       |
-+--------------------------+
-```
+<p align="center">
+  Self-hosted VPS monitoring dashboard. One Node.js process, one React UI,
+  one SQLite file. No agent, no Prometheus, no chart libraries.
+</p>
+
+<p align="center">
+  <em>Drop it on a VPS &mdash; see live CPU / RAM / disk / network / process /
+  Docker / systemd state, 24h history, threshold alerts, and externally-pushed
+  custom metrics, all behind a login.</em>
+</p>
 
 ---
 

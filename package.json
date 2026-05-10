@@ -2,6 +2,7 @@
   "name": "othoni",
   "version": "0.10.0",
   "private": true,
+  "license": "MIT",
   "description": "Self-hosted VPS monitoring dashboard",
   "main": "server/index.js",
   "scripts": {

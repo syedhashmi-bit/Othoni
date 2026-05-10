@@ -14,3 +14,10 @@ data/
 # public repo by deliberate choice; the project-level skill lives only
 # on this dev box.
 .claude/
+
+# Working docs kept local (orientation snapshot, in-flight planning,
+# release-by-release feature checklist). The public-facing docs are
+# README + CHANGELOG.
+CONTEXT.md
+PROGRESS.md
+ROADMAP.md
