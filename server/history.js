@@ -141,6 +141,17 @@ function open() {
     );
     CREATE INDEX IF NOT EXISTS idx_alert_fires_t       ON alert_fires(t);
     CREATE INDEX IF NOT EXISTS idx_alert_fires_rule_t  ON alert_fires(rule_id, t);
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      t        INTEGER NOT NULL,
+      actor    TEXT,
+      action   TEXT    NOT NULL,
+      target   TEXT,
+      ip       TEXT,
+      metadata TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_log_t        ON audit_log(t);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_action_t ON audit_log(action, t);
   `);
   return db;
 }
@@ -223,10 +234,11 @@ function cleanup() {
   const info  = open().prepare('DELETE FROM samples         WHERE t < ?').run(cutoff);
   const pinfo = open().prepare('DELETE FROM process_samples WHERE t < ?').run(cutoff);
   const ainfo = open().prepare('DELETE FROM alert_fires     WHERE t < ?').run(cutoff);
-  const total = info.changes + pinfo.changes + ainfo.changes;
+  const lginfo = open().prepare('DELETE FROM audit_log      WHERE t < ?').run(cutoff);
+  const total = info.changes + pinfo.changes + ainfo.changes + lginfo.changes;
   if (total > 0) {
     logger.debug(
-      `history: pruned ${info.changes} samples + ${pinfo.changes} process_samples + ${ainfo.changes} alert_fires`
+      `history: pruned ${info.changes} samples + ${pinfo.changes} process_samples + ${ainfo.changes} alert_fires + ${lginfo.changes} audit_log`
     );
   }
 }

@@ -249,6 +249,8 @@ authenticated session.
 | GET    | `/api/history`      | Time-series for one metric (`?metric=cpu&range=1h`) |
 | GET    | `/api/settings`     | Server-side settings              |
 | GET    | `/api/db/stats`     | SQLite store footprint + per-table + per-metric counts |
+| GET    | `/api/audit`        | Audit-log events (`?range=`, `?action=`, `?limit=`) |
+| GET    | `/api/audit/actions`| Whitelist of audited action names |
 
 `/api/history` accepts these metrics:
 

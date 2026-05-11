@@ -218,6 +218,146 @@ function StorageCard() {
   );
 }
 
+const AUDIT_ACTION_LABELS = {
+  'login.ok':       { label: 'login ok',      tone: 'ok' },
+  'login.fail':     { label: 'login fail',    tone: 'crit' },
+  'logout':         { label: 'logout',        tone: 'dim' },
+  'apikey.create':  { label: 'apikey create', tone: 'accent' },
+  'apikey.revoke':  { label: 'apikey revoke', tone: 'warn' },
+  'rules.update':   { label: 'rules update',  tone: 'accent' },
+  'webhook.create': { label: 'webhook +',     tone: 'accent' },
+  'webhook.update': { label: 'webhook ~',     tone: 'dim' },
+  'webhook.delete': { label: 'webhook −',     tone: 'warn' },
+  'webhook.test':   { label: 'webhook test',  tone: 'dim' },
+  'check.create':   { label: 'check +',       tone: 'accent' },
+  'check.update':   { label: 'check ~',       tone: 'dim' },
+  'check.delete':   { label: 'check −',       tone: 'warn' },
+  'check.run':      { label: 'check run',     tone: 'dim' },
+};
+
+function AuditLogCard() {
+  const [data, setData] = useState(null);
+  const [range, setRange] = useState('24h');
+  const [filter, setFilter] = useState('');
+  const [err, setErr] = useState(null);
+
+  function refresh() {
+    api.audit({ range, action: filter || null, limit: 200 })
+      .then(setData)
+      .catch((e) => setErr(e.message));
+  }
+
+  useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [range, filter]);
+
+  const events = data?.events || [];
+  const counts = data?.counts || [];
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Audit log</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Logins, API key gen/revoke, alert rule edits, webhook + check
+            edits. Pruned at the same retention as samples.
+          </div>
+        </div>
+        <button type="button" className="btn tiny" onClick={refresh}>refresh</button>
+      </div>
+
+      <div className="toolbar" style={{ marginTop: 12, marginBottom: 8 }}>
+        {['1h', '6h', '24h'].map((r) => (
+          <button
+            key={r}
+            type="button"
+            className={`btn ghost ${range === r ? 'active' : ''}`}
+            onClick={() => setRange(r)}
+          >
+            {r}
+          </button>
+        ))}
+        <select
+          className="select"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          style={{ marginLeft: 'auto', minWidth: 180 }}
+        >
+          <option value="">all actions</option>
+          {Object.keys(AUDIT_ACTION_LABELS).map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+      </div>
+
+      {counts.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+          {counts.map((c) => {
+            const meta = AUDIT_ACTION_LABELS[c.action];
+            return (
+              <span
+                key={c.action}
+                className={`chip ${meta?.tone || ''}`}
+                style={{ fontSize: 11, cursor: 'pointer' }}
+                onClick={() => setFilter(filter === c.action ? '' : c.action)}
+                title={`filter on ${c.action}`}
+              >
+                {meta?.label || c.action} · {c.n}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {err && <div className="error">{err}</div>}
+
+      {data && events.length === 0 && (
+        <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
+          No audit events in this range
+          {filter ? ` for "${filter}"` : ''}.
+        </div>
+      )}
+
+      {events.length > 0 && (
+        <div className="table-wrap">
+          <table className="t">
+            <thead>
+              <tr>
+                <th style={{ width: 140 }}>When</th>
+                <th>Action</th>
+                <th>Actor</th>
+                <th>Target</th>
+                <th>IP</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((e, i) => {
+                const meta = AUDIT_ACTION_LABELS[e.action] || { label: e.action, tone: 'dim' };
+                return (
+                  <tr key={`${e.t}-${i}`}>
+                    <td className="muted" style={{ fontSize: 12 }}>{formatRelative(e.t)}</td>
+                    <td>
+                      <span className={`chip ${meta.tone}`} style={{ fontSize: 11 }}>
+                        {meta.label}
+                      </span>
+                    </td>
+                    <td className="mono" style={{ fontSize: 12 }}>{e.actor || '—'}</td>
+                    <td className="mono dim" style={{ fontSize: 12 }}>{e.target || '—'}</td>
+                    <td className="mono dim" style={{ fontSize: 12 }}>{e.ip || '—'}</td>
+                    <td className="mono dim" style={{ fontSize: 11 }}>
+                      {e.metadata ? JSON.stringify(e.metadata) : ''}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ApiKeysCard() {
   const [keys, setKeys] = useState(null);
   const [label, setLabel] = useState('');
@@ -494,6 +634,10 @@ export default function Settings() {
       <div className="spacer-md" />
 
       <ApiKeysCard />
+
+      <div className="spacer-md" />
+
+      <AuditLogCard />
     </div>
   );
 }

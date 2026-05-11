@@ -8,6 +8,62 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.27.0] — 2026-05-11
+
+Audit log of admin actions. Captures who did what and when for the
+14 admin-facing actions (logins, API key gen/revoke, rule edits,
+webhook + check edits). Investigation surface that wasn't there
+before.
+
+### Added
+
+- **`server/audit.js`** — append-only audit module. Whitelisted
+  action names (typo upstream surfaces as a `warn` rather than
+  silently writing nonsense). `log({ actor, action, target, ip,
+  metadata })` never throws into the caller — a broken insert
+  logs and moves on so audit can't break the action being
+  audited. `query({ range, action, limit })` returns
+  newest-first events plus per-action counts so the UI can render
+  a breakdown in one round-trip.
+- **`audit_log` table** in the shared SQLite store. Indexed on
+  `(t)` and `(action, t)`. Pruned at the existing 24h retention
+  sweep alongside `samples` / `process_samples` / `alert_fires`.
+- **`GET /api/audit?range=&action=&limit=`** + **`GET
+  /api/audit/actions`** for the dropdown.
+- **Audit log card on Settings** — range chips (1h / 6h / 24h),
+  per-action count chips that double as filter toggles, an action
+  dropdown for explicit filtering, and a newest-first event
+  table with actor / target / IP / metadata columns.
+- **Audit hooks wired** on: `login.ok`, `login.fail` (captures
+  the username attempted and whether TOTP was in effect),
+  `logout`, `apikey.create`, `apikey.revoke`, `rules.update`
+  (records rule count), `webhook.create`, `webhook.update`
+  (records which fields changed), `webhook.delete`,
+  `webhook.test` (records success + HTTP status), `check.create`,
+  `check.update`, `check.delete`, `check.run` (records up/down).
+
+### Changed
+
+- `package.json` bumped to `0.27.0`.
+- `server/history.js` — bootstraps the `audit_log` table on first
+  open; `cleanup()` extended to prune it.
+- `server/auth.js` — login success/failure/logout now write an
+  audit event in addition to the existing `logger.warn` for
+  failed logins.
+
+### Notes
+
+- Failed-login auditing is rate-limit-bounded — the existing
+  login limiter (10/15min/IP) responds 429 before reaching the
+  route handler, so audit can't be used as an amplifier.
+- We deliberately do **not** audit `POST /api/metrics` (external
+  agents push every 30s — that's a data path, not an admin
+  action). Same logic excludes the high-volume read endpoints.
+- Metadata is JSON-encoded so we can capture per-action context
+  (which rule fields changed, whether a webhook test returned
+  2xx, the username attempted on a failed login) without
+  re-shaping the table.
+
 ## [0.26.0] — 2026-05-11
 
 Storage card on Settings. Operational visibility into what the
@@ -1279,6 +1335,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.27.0]: #0270--2026-05-11
 [0.26.0]: #0260--2026-05-11
 [0.25.0]: #0250--2026-05-11
 [0.24.0]: #0240--2026-05-10

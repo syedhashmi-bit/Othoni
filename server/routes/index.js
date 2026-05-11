@@ -21,6 +21,7 @@ const checks = require('../checks');
 const history = require('../history');
 const processHistory = require('../process-history');
 const dbStats = require('../db-stats');
+const audit = require('../audit');
 
 const router = express.Router();
 
@@ -130,6 +131,12 @@ router.post('/keys', (req, res) => {
   }
   try {
     const created = apiKeys.generateKey(label.trim());
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'apikey.create',
+      target: created.id,
+      metadata: { label: created.label, fingerprint: created.fingerprint },
+    });
     res.json({ key: created });
   } catch (e) {
     if (e.code === 'invalid_label') {
@@ -143,6 +150,11 @@ router.post('/keys', (req, res) => {
 router.delete('/keys/:id', (req, res) => {
   const ok = apiKeys.revokeKey(req.params.id);
   if (!ok) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'apikey.revoke',
+    target: req.params.id,
+  });
   res.json({ ok: true });
 });
 
@@ -155,6 +167,11 @@ router.get('/alerts/rules', (req, res) => {
 router.put('/alerts/rules', (req, res) => {
   try {
     const next = alerts.setRules(req.body && req.body.rules);
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'rules.update',
+      metadata: { count: next.length },
+    });
     res.json({ rules: next });
   } catch (e) {
     if (e.code === 'invalid_request') {
@@ -202,6 +219,12 @@ router.post('/webhooks', (req, res) => {
       url:    req.body && req.body.url,
       format: req.body && req.body.format,
     });
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'webhook.create',
+      target: created.id,
+      metadata: { label: created.label, format: created.format },
+    });
     res.json({ webhook: created });
   } catch (e) {
     if (e.code === 'invalid_label' || e.code === 'invalid_url') {
@@ -215,18 +238,35 @@ router.post('/webhooks', (req, res) => {
 router.patch('/webhooks/:id', (req, res) => {
   const updated = webhooks.updateWebhook(req.params.id, req.body || {});
   if (!updated) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'webhook.update',
+    target: req.params.id,
+    metadata: Object.keys(req.body || {}),
+  });
   res.json({ webhook: updated });
 });
 
 router.delete('/webhooks/:id', (req, res) => {
   const ok = webhooks.revokeWebhook(req.params.id);
   if (!ok) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'webhook.delete',
+    target: req.params.id,
+  });
   res.json({ ok: true });
 });
 
 router.post('/webhooks/:id/test', async (req, res) => {
   const result = await webhooks.testWebhook(req.params.id);
   if (result.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'webhook.test',
+    target: req.params.id,
+    metadata: { ok: !!result.ok, status: result.status || null },
+  });
   res.json(result);
 });
 
@@ -239,6 +279,12 @@ router.get('/checks', (req, res) => {
 router.post('/checks', (req, res) => {
   try {
     const c = checks.createCheck(req.body || {});
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'check.create',
+      target: c.id,
+      metadata: { label: c.label, type: c.type, target: c.target },
+    });
     res.json({ check: c });
   } catch (e) {
     if (['invalid_label', 'invalid_type', 'invalid_target'].includes(e.code)) {
@@ -252,18 +298,35 @@ router.post('/checks', (req, res) => {
 router.patch('/checks/:id', (req, res) => {
   const updated = checks.updateCheck(req.params.id, req.body || {});
   if (!updated) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'check.update',
+    target: req.params.id,
+    metadata: Object.keys(req.body || {}),
+  });
   res.json({ check: updated });
 });
 
 router.delete('/checks/:id', (req, res) => {
   const ok = checks.removeCheck(req.params.id);
   if (!ok) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'check.delete',
+    target: req.params.id,
+  });
   res.json({ ok: true });
 });
 
 router.post('/checks/:id/run', async (req, res) => {
   const c = await checks.runNow(req.params.id);
   if (!c) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'check.run',
+    target: req.params.id,
+    metadata: { up: c.lastResult?.up ?? null },
+  });
   res.json({ check: c });
 });
 
@@ -282,6 +345,22 @@ router.get(
     return { system, cpu, memory, disks, network, diskio };
   })
 );
+
+// ---------- audit log ----------
+
+// Recent admin-action audit events. Sorted newest first, capped at `limit`
+// (default 200, max 1000). Optional `action=` filter for drill-down.
+router.get('/audit', (req, res) => {
+  const range = String(req.query.range || '24h');
+  const action = req.query.action ? String(req.query.action) : null;
+  const limit = parseInt(req.query.limit || '200', 10) || 200;
+  res.json(audit.query({ range, action, limit }));
+});
+
+// List of valid action names for the filter dropdown.
+router.get('/audit/actions', (req, res) => {
+  res.json({ actions: audit.listActions() });
+});
 
 // Settings (server-side bits the UI may want to display)
 router.get('/settings', (req, res) => {

@@ -2,6 +2,7 @@
 
 const jwt = require('jsonwebtoken');
 const logger = require('./logger');
+const audit = require('./audit');
 const { verifyTotp } = require('./totp');
 const { verifyPassword, isHash } = require('./password-hash');
 
@@ -88,6 +89,12 @@ function login(req, res) {
   }
   if (!userOk || !passOk || !totpOk) {
     logger.warn(`failed login for "${username}" from ${req.ip}`);
+    audit.log({
+      actor: typeof username === 'string' ? username : null,
+      action: 'login.fail',
+      ip: req.ip || null,
+      metadata: { totp: totpEnabled() },
+    });
     return res.status(401).json({ error: 'invalid_credentials' });
   }
   const token = sign({ sub: username });
@@ -98,10 +105,21 @@ function login(req, res) {
     maxAge: 12 * 60 * 60 * 1000,
     path: '/',
   });
+  audit.log({
+    actor: username,
+    action: 'login.ok',
+    ip: req.ip || null,
+    metadata: { totp: totpEnabled() },
+  });
   res.json({ ok: true, user: { username } });
 }
 
-function logout(_req, res) {
+function logout(req, res) {
+  audit.log({
+    actor: req.user?.username || null,
+    action: 'logout',
+    ip: req.ip || null,
+  });
   res.clearCookie(COOKIE_NAME, { path: '/' });
   res.json({ ok: true });
 }

@@ -58,6 +58,12 @@ export const api = {
   services: () => request('/api/services'),
   settings: () => request('/api/settings'),
   dbStats: () => request('/api/db/stats'),
+  audit: ({ range = '24h', action = null, limit = 200 } = {}) => {
+    const qs = new URLSearchParams({ range, limit: String(limit) });
+    if (action) qs.set('action', action);
+    return request(`/api/audit?${qs.toString()}`);
+  },
+  auditActions: () => request('/api/audit/actions'),
   history: (metric, range = '1h') =>
     request(`/api/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`),
   historyMetrics: (prefix) =>
