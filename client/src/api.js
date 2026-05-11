@@ -38,10 +38,10 @@ export const api = {
   hosts: () => request('/api/hosts'),
   actions: {
     list: () => request('/api/actions'),
-    run: ({ kind, target, dryRun = false }) =>
+    run: ({ kind, target, params, dryRun = false }) =>
       request('/api/actions/run', {
         method: 'POST',
-        body: JSON.stringify({ kind, target, dryRun }),
+        body: JSON.stringify({ kind, target, params, dryRun }),
       }),
   },
   system: () => request('/api/system'),

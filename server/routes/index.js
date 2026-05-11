@@ -374,13 +374,14 @@ router.post('/actions/run', async (req, res) => {
     const result = await actions.runAction({
       kind: body.kind,
       target: body.target,
+      params: body.params || {},
       actor: req.user && req.user.username,
       ip: req.ip || null,
       dryRun: !!body.dryRun,
     });
     res.json({ result });
   } catch (e) {
-    if (e.code === 'unknown_kind' || e.code === 'invalid_target') {
+    if (e.code === 'unknown_kind' || e.code === 'invalid_target' || e.code === 'invalid_params') {
       return res.status(400).json({ error: e.code, message: e.message });
     }
     if (e.code === 'busy') {

@@ -80,7 +80,7 @@ function isRunning(actor) {
   return running.has(actorKey(actor));
 }
 
-async function runAction({ kind, target, actor, ip, dryRun = false } = {}) {
+async function runAction({ kind, target, actor, ip, dryRun = false, params = {} } = {}) {
   if (!ENABLED) {
     const err = new Error('actions are disabled (set OTHONI_ACTIONS_ENABLED=true and restart)');
     err.code = 'actions_disabled';
@@ -95,6 +95,11 @@ async function runAction({ kind, target, actor, ip, dryRun = false } = {}) {
   if (cfg.targetValidator && !cfg.targetValidator(target)) {
     const err = new Error(`invalid target for ${kind}: ${target}`);
     err.code = 'invalid_target';
+    throw err;
+  }
+  if (cfg.paramsValidator && !cfg.paramsValidator(params || {})) {
+    const err = new Error(`invalid params for ${kind}: ${JSON.stringify(params)}`);
+    err.code = 'invalid_params';
     throw err;
   }
 
@@ -113,7 +118,7 @@ async function runAction({ kind, target, actor, ip, dryRun = false } = {}) {
       action: auditName,
       target: target || null,
       ip: ip || null,
-      metadata: { dryRun: true },
+      metadata: { dryRun: true, params: params || {} },
     });
     return {
       ok: true,
@@ -129,7 +134,7 @@ async function runAction({ kind, target, actor, ip, dryRun = false } = {}) {
   const startedAt = Date.now();
   let result;
   try {
-    result = await cfg.run({ target, actor, ip });
+    result = await cfg.run({ target, actor, ip, params });
     // Normalize the shape — runners can omit fields and we fill in.
     result = {
       ok: !!result.ok,
@@ -160,6 +165,7 @@ async function runAction({ kind, target, actor, ip, dryRun = false } = {}) {
       ok: result.ok,
       exitCode: result.exitCode,
       durationMs: result.durationMs,
+      params: params || {},
       stdoutSnippet: result.stdout.slice(0, AUDIT_SNIPPET_BYTES),
       stderrSnippet: result.stderr.slice(0, AUDIT_SNIPPET_BYTES),
     },
@@ -277,6 +283,103 @@ register('docker.restart', {
   requiresConfirmation: true,
   targetValidator: makeContainerTargetValidator(),
   async run({ target }) { return runDocker('restart', target); },
+});
+
+// ---------- process.signal ----------
+// Send a signal to a process by PID. Allowed signals are a small safe
+// set (no SIGSTOP / SIGCONT — process freeze isn't something the
+// dashboard should help with). Defaults to TERM. KILL requires the UI
+// to make a stronger confirmation gesture, but the framework treats
+// both identically — operator consent is upstream.
+//
+// Self-protection layers, applied at validation time before any signal
+// is sent:
+//   - Refuses PID 1 (init / systemd-as-pid1) outright.
+//   - Refuses the dashboard's own PID (process.pid).
+//   - Refuses any process whose /proc/<pid>/comm matches the regex in
+//     OTHONI_PROCESS_GUARD. Defaults to ^(systemd|init|sshd|nginx)$ —
+//     killing any of those breaks ingress to othoni. Operators can
+//     override or remove via env.
+
+const fs = require('fs');
+
+const SAFE_SIGNALS = new Set(['TERM', 'INT', 'HUP', 'USR1', 'USR2', 'KILL']);
+const SELF_PID = process.pid;
+const PROCESS_GUARD_RE = (() => {
+  const raw = process.env.OTHONI_PROCESS_GUARD;
+  if (raw === '' || raw === 'none') return null;
+  try {
+    return new RegExp(raw || '^(systemd|init|sshd|nginx)$');
+  } catch (e) {
+    logger.warn(`actions: bad OTHONI_PROCESS_GUARD regex (${e.message}); using default`);
+    return /^(systemd|init|sshd|nginx)$/;
+  }
+})();
+
+function readProcComm(pid) {
+  try {
+    return fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+function validateProcessTarget(t) {
+  if (typeof t !== 'string') return false;
+  if (!/^[1-9][0-9]{0,6}$/.test(t)) return false;     // 1..9999999
+  const pid = parseInt(t, 10);
+  if (pid === 1) return false;
+  if (pid === SELF_PID) return false;
+  // Reject when /proc/<pid> doesn't exist — the process is gone or
+  // wasn't ours to find. UI gets a clean error rather than an
+  // unhelpful ESRCH.
+  const comm = readProcComm(pid);
+  if (comm == null) return false;
+  if (PROCESS_GUARD_RE && PROCESS_GUARD_RE.test(comm)) return false;
+  return true;
+}
+
+function validateProcessParams(p) {
+  if (p == null || typeof p !== 'object') return true; // empty → TERM default
+  if (p.signal == null) return true;
+  if (typeof p.signal !== 'string') return false;
+  return SAFE_SIGNALS.has(p.signal);
+}
+
+register('process.signal', {
+  description: 'Send a signal to a process by PID. params.signal defaults to TERM (also accepts INT/HUP/USR1/USR2/KILL).',
+  auditName: 'action.process.signal',
+  requiresConfirmation: true,
+  targetValidator: validateProcessTarget,
+  paramsValidator: validateProcessParams,
+  async run({ target, params }) {
+    const startedAt = Date.now();
+    const pid = parseInt(target, 10);
+    // SAFE_SIGNALS holds the bare short names ("TERM", "KILL", ...) — the
+    // operator-facing shape. Node's process.kill expects "SIGTERM" etc.,
+    // so translate at the boundary.
+    const shortSignal = (params && params.signal) || 'TERM';
+    const sigName = shortSignal.startsWith('SIG') ? shortSignal : `SIG${shortSignal}`;
+    try {
+      process.kill(pid, sigName);
+      const comm = readProcComm(pid);  // may have just exited
+      return {
+        ok: true,
+        exitCode: 0,
+        stdout: `sent ${sigName} to PID ${pid}${comm ? ` (${comm})` : ''}`,
+        stderr: '',
+        durationMs: Date.now() - startedAt,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        exitCode: e.code === 'ESRCH' ? 3 : (e.code === 'EPERM' ? 1 : 1),
+        stdout: '',
+        stderr: e.message || String(e),
+        durationMs: Date.now() - startedAt,
+      };
+    }
+  },
 });
 
 // Surface the resolved whitelist on the kinds listing so the UI can

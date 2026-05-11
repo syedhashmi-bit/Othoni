@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { usePoller } from '../hooks';
 import { useApp } from '../App.jsx';
@@ -138,19 +138,178 @@ function TrendsCard({ sortBy }) {
   );
 }
 
+// Per-row TERM / KILL controls for the processes table. TERM ("signal")
+// is a one-click → confirm-strip flow. KILL ("force kill") requires the
+// operator to retype the process name into a text field before the
+// confirm button enables — irreversible-destructive operations should
+// be deliberate. Both audit-log via the v0.34.0 process.signal kind.
+function SignalControl({ proc, canRun, onActed }) {
+  const [phase, setPhase] = useState('idle'); // idle | confirm-term | confirm-kill | running | done
+  const [typed, setTyped] = useState('');
+  const [running, setRunning] = useState(null); // 'TERM' | 'KILL'
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState(null);
+
+  if (!canRun) return null;
+
+  function reset() {
+    setPhase('idle');
+    setTyped('');
+    setResult(null);
+    setErr(null);
+  }
+
+  async function go(signal) {
+    setRunning(signal);
+    setPhase('running');
+    setErr(null);
+    try {
+      const r = await api.actions.run({
+        kind: 'process.signal',
+        target: String(proc.pid),
+        params: { signal },
+      });
+      setResult({ signal, ...r.result });
+    } catch (e) {
+      setErr({ signal, message: e.body?.message || e.message });
+    } finally {
+      setRunning(null);
+      setPhase('done');
+      if (onActed) onActed();
+    }
+  }
+
+  if (phase === 'running') {
+    return <span className="muted" style={{ fontSize: 11 }}>{running}…</span>;
+  }
+
+  if (phase === 'done') {
+    const isOk = !err && result?.ok;
+    return (
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+        <span className={`chip ${isOk ? 'ok' : 'crit'}`} style={{ fontSize: 11 }}>
+          <span className="dot" />
+          {err
+            ? `${err.signal} failed`
+            : isOk
+              ? `${result.signal} sent`
+              : `${result.signal} exit ${result.exitCode}`}
+        </span>
+        <button type="button" className="btn ghost" onClick={reset} style={{ padding: '1px 6px', fontSize: 11 }}>
+          dismiss
+        </button>
+        {(err?.message || (!isOk && result?.stderr)) && (
+          <span className="mono crit" style={{ fontSize: 11 }}>
+            {(err?.message || result.stderr).split('\n')[0]}
+          </span>
+        )}
+      </span>
+    );
+  }
+
+  if (phase === 'confirm-term') {
+    return (
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+        <span className="muted" style={{ fontSize: 11 }}>
+          SIGTERM PID {proc.pid} ({proc.name})?
+        </span>
+        <button type="button" className="btn tiny" onClick={() => go('TERM')}>
+          confirm
+        </button>
+        <button type="button" className="btn ghost" onClick={reset} style={{ padding: '1px 6px', fontSize: 11 }}>
+          cancel
+        </button>
+      </span>
+    );
+  }
+
+  if (phase === 'confirm-kill') {
+    const armed = typed.trim() === proc.name;
+    return (
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span className="crit" style={{ fontSize: 11 }}>
+          SIGKILL is irreversible. Type{' '}
+          <code style={{ fontSize: 11 }}>{proc.name}</code> to confirm:
+        </span>
+        <input
+          type="text"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          className="input mono"
+          style={{ padding: '1px 6px', width: 140, fontSize: 11 }}
+          placeholder={proc.name}
+          autoFocus
+        />
+        <button
+          type="button"
+          className="btn tiny"
+          disabled={!armed}
+          onClick={() => go('KILL')}
+        >
+          kill
+        </button>
+        <button type="button" className="btn ghost" onClick={reset} style={{ padding: '1px 6px', fontSize: 11 }}>
+          cancel
+        </button>
+      </span>
+    );
+  }
+
+  // idle
+  return (
+    <span style={{ display: 'inline-flex', gap: 4 }}>
+      <button
+        type="button"
+        className="btn tiny"
+        onClick={() => setPhase('confirm-term')}
+        title="Send SIGTERM (graceful)"
+      >
+        signal
+      </button>
+      <button
+        type="button"
+        className="btn tiny"
+        onClick={() => setPhase('confirm-kill')}
+        title="Send SIGKILL (irreversible — requires retyping the process name)"
+      >
+        kill
+      </button>
+    </span>
+  );
+}
+
 export default function Processes() {
   const { refreshMs } = useApp();
   const [sortBy, setSortBy] = useState('cpu');
-  const { data, loading, error } = usePoller(
+  const { data, loading, error, refresh } = usePoller(
     () => api.processes(sortBy, 20),
     refreshMs,
     [sortBy]
   );
 
+  const [actionsState, setActionsState] = useState(null);
+  useEffect(() => {
+    api.actions.list()
+      .then(setActionsState)
+      .catch(() => setActionsState({ enabled: false, kinds: [] }));
+  }, []);
+  const canSignal =
+    !!actionsState?.enabled &&
+    (actionsState.kinds || []).some((k) => k.kind === 'process.signal');
+
   return (
     <div className="page-fade-in">
       <h1 className="page-title">Processes</h1>
-      <p className="subtitle">Top 20 processes, sorted by {sortBy}.</p>
+      <p className="subtitle">
+        Top 20 processes, sorted by {sortBy}.
+        {canSignal && (
+          <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+            · Actions enabled — signal / kill available per row, audit-logged.
+            Self-protected: PID 1, the dashboard's own PID, and processes matched
+            by <code>OTHONI_PROCESS_GUARD</code> are refused.
+          </span>
+        )}
+      </p>
 
       <div className="toolbar">
         <button
@@ -184,6 +343,7 @@ export default function Processes() {
                   <th>MEM %</th>
                   <th>User</th>
                   <th>Command</th>
+                  {canSignal && <th style={{ width: 260 }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -197,6 +357,11 @@ export default function Processes() {
                     <td className="cmd" title={p.command}>
                       {p.command}
                     </td>
+                    {canSignal && (
+                      <td>
+                        <SignalControl proc={p} canRun={canSignal} onActed={refresh} />
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

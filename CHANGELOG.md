@@ -8,6 +8,77 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.34.0] — 2026-05-11
+
+Third concrete action: signal a process by PID. Completes the three
+operator-facing action kinds the original ROADMAP listed (systemd
+restart, Docker control, process signal). Also extends the action
+framework with a `params` field so kinds can take richer arguments
+than just `target`.
+
+### Added
+
+- **`process.signal` action kind.** Target is the PID as a string
+  (validated `^[1-9][0-9]{0,6}$`). The signal is in `params.signal`
+  — one of the safe set `{TERM, INT, HUP, USR1, USR2, KILL}`,
+  defaults to `TERM`. Real run is Node's `process.kill(pid,
+  'SIG'+signal)`. Three self-protection layers:
+  - **PID 1 refused outright** (init / systemd-as-pid1).
+  - **Dashboard's own PID refused outright** (so the dashboard can
+    never kill itself mid-action).
+  - **`OTHONI_PROCESS_GUARD` regex** against `/proc/<pid>/comm`.
+    Defaults to `^(systemd|init|sshd|nginx)$` — killing any of
+    those breaks ingress to othoni or core system services.
+    Operators can override or disable with `none`.
+- **`params` field on `runAction()`.** Action kinds can now declare
+  an optional `paramsValidator(params)` to gate-keep extras
+  alongside the existing `targetValidator`. Audit-log metadata
+  includes the params so the trail captures full action context
+  (e.g. `signal: "KILL"`).
+- **Per-row signal/kill controls on the Processes page.** Two
+  buttons per row:
+  - **signal** → one-click confirm strip → run, sends SIGTERM.
+  - **kill** → confirm strip requires **retyping the process name**
+    into a text field before the kill button enables.
+    Irreversible-destructive operations should be deliberate.
+- **`OTHONI_PROCESS_GUARD` env var.** Documented in `.env.example`.
+
+### Changed
+
+- `package.json` bumped to `0.34.0`.
+- `server/actions.js` — `runAction()` accepts and threads `params`;
+  audit-log metadata includes a `params` snapshot so a fire's full
+  invocation context is on the audit trail.
+- `server/routes/index.js` — `POST /api/actions/run` body now
+  accepts `params` alongside `kind` / `target` / `dryRun`.
+- `client/src/api.js` — `api.actions.run({ kind, target, params,
+  dryRun })`.
+
+### Fixed
+
+- **Bug caught during smoke testing**: Node's `process.kill()`
+  wants `'SIGTERM'`, not `'TERM'`. Translation happens at the
+  boundary inside the runner — the operator-facing API keeps the
+  bare names. Initial implementation passed the bare name through
+  unchanged and Node threw `Unknown signal: TERM`; fixed before
+  release.
+
+### Notes
+
+- Smoke-tested module-level end-to-end:
+  - All four validation paths reject correctly: PID 1, own PID,
+    bad target shape (`'abc'`, `'-1'`, `'99999999999'`, `''`,
+    `null`), nonexistent PID, bad signal name with valid target.
+  - Dry-run path returned standard shape.
+  - Real `TERM` on a freshly-spawned `sleep 60` → child exited
+    with `signal=SIGTERM`, runner reported
+    `sent SIGTERM to PID <pid> (sleep)`.
+  - Real `KILL` on another `sleep 60` → child died, runner
+    reported `sent SIGKILL to PID <pid> (sleep)` in 1 ms.
+- The "retype the process name" UX for KILL is intentional
+  friction — TERM is graceful and reversible (process can ignore);
+  KILL is irreversible at the kernel level.
+
 ## [0.33.0] — 2026-05-11
 
 Second concrete action: Docker container start / stop / restart.
@@ -1700,6 +1771,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.34.0]: #0340--2026-05-11
 [0.33.0]: #0330--2026-05-11
 [0.32.0]: #0320--2026-05-11
 [0.31.0]: #0310--2026-05-11
