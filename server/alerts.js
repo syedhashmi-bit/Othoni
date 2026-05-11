@@ -10,6 +10,7 @@ const path = require('path');
 const crypto = require('crypto');
 const logger = require('./logger');
 const history = require('./history');
+const actions = require('./actions');
 
 const { getCpu } = require('./collectors/cpu');
 const { getMemory } = require('./collectors/memory');
@@ -83,11 +84,19 @@ function listMetrics() {
 
 // ---------- rule CRUD ----------
 
-let rules = null;       // [{ id, enabled, metric, comparator, threshold, durationMs, severity, label }]
+let rules = null;       // [{ id, enabled, metric, comparator, threshold, durationMs, severity, label, onFire? }]
 let state = {};         // { ruleId: { firstBreachAt, firing, lastValue } }
 let activeCache = [];   // last-computed view-model
 let timer = null;
 let dispatcher = null;  // injected by index.js — function to call on fire
+
+// Per-rule cooldown for alert→action wire-up. Records the last time we
+// dispatched the rule's `onFire` action. We never run it twice within
+// max(durationMs, 60s) — a flapping alert mustn't loop-restart a
+// service. 60s floor keeps the floor sane even for "fire immediate"
+// rules where durationMs is 0.
+const ACTION_COOLDOWN_FLOOR_MS = 60_000;
+const lastActionFiredAt = new Map();  // ruleId → ms
 
 function isValidRule(r) {
   if (!r || typeof r !== 'object') return false;
@@ -103,6 +112,28 @@ function isValidRule(r) {
     if (typeof r.rateWindowMs !== 'number' || !Number.isFinite(r.rateWindowMs)) return false;
     if (r.rateWindowMs < MIN_RATE_WINDOW_MS || r.rateWindowMs > MAX_RATE_WINDOW_MS) return false;
   }
+  // onFire is optional — when present, must be a well-formed action ref.
+  // Validation is best-effort: we only check the shape + that the kind
+  // is registered. The target validator runs at fire time so a rule
+  // saved here continues to round-trip even if the operator later
+  // tightens the action whitelist.
+  if (r.onFire != null) {
+    if (!isValidOnFire(r.onFire)) return false;
+  }
+  return true;
+}
+
+function isValidOnFire(o) {
+  if (typeof o !== 'object' || o == null) return false;
+  if (typeof o.enabled !== 'boolean') return false;
+  if (typeof o.kind !== 'string') return false;
+  const kinds = actions.listKinds().map((k) => k.kind);
+  if (!kinds.includes(o.kind)) return false;
+  // target is required for every kind we ship today; we don't
+  // enumerate that here because the action registry is the source of
+  // truth. Empty string is invalid; missing is invalid.
+  if (typeof o.target !== 'string' || !o.target) return false;
+  if (o.params != null && typeof o.params !== 'object') return false;
   return true;
 }
 
@@ -159,9 +190,12 @@ function setRules(next) {
     return true;
   });
   rules = cleaned;
-  // Drop firing state for rules that no longer exist.
+  // Drop firing state + cooldown entries for rules that no longer exist.
   const keep = new Set(cleaned.map((r) => r.id));
   for (const id of Object.keys(state)) if (!keep.has(id)) delete state[id];
+  for (const id of Array.from(lastActionFiredAt.keys())) {
+    if (!keep.has(id)) lastActionFiredAt.delete(id);
+  }
   persist();
   return cleaned;
 }
@@ -277,6 +311,48 @@ async function tick() {
         catch (e) { logger.warn(`alerts: dispatcher threw: ${e.message}`); }
       }
     }
+    // Fire any wired actions. Fire-and-forget; the action framework
+    // handles audit-logging on its own. Cooldown is enforced per rule.
+    for (const f of fires) {
+      dispatchOnFire(f, now).catch((e) =>
+        logger.warn(`alerts: onFire for rule ${f.rule.id} threw: ${e.message}`)
+      );
+    }
+  }
+}
+
+async function dispatchOnFire(fireEvent, firedAt) {
+  const rule = fireEvent.rule;
+  const onFire = rule && rule.onFire;
+  if (!onFire || !onFire.enabled) return;
+
+  // Cooldown — never re-run within max(durationMs, 60s) of the prior
+  // dispatch for this rule. Prevents a flapping alert from looping a
+  // service restart.
+  const cooldownMs = Math.max(rule.durationMs || 0, ACTION_COOLDOWN_FLOOR_MS);
+  const lastAt = lastActionFiredAt.get(rule.id) || 0;
+  if (firedAt - lastAt < cooldownMs) {
+    logger.info(`alerts: onFire for rule ${rule.id} skipped (cooldown — ${Math.round((cooldownMs - (firedAt - lastAt)) / 1000)}s remaining)`);
+    return;
+  }
+
+  // Run via the framework. Actor encodes the rule id so the audit
+  // trail reads `alert:<ruleid>`, distinguishing alert-triggered
+  // invocations from interactive ones.
+  try {
+    lastActionFiredAt.set(rule.id, firedAt);
+    const result = await actions.runAction({
+      kind: onFire.kind,
+      target: onFire.target,
+      params: onFire.params || {},
+      actor: `alert:${rule.id}`,
+      ip: null,
+    });
+    logger.info(
+      `alerts: onFire for rule ${rule.id} → ${onFire.kind} ${onFire.target} → ok=${result.ok} exit=${result.exitCode}`
+    );
+  } catch (e) {
+    logger.warn(`alerts: onFire for rule ${rule.id} failed: ${e.code || ''} ${e.message}`);
   }
 }
 

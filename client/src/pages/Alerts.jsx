@@ -96,10 +96,121 @@ function unitFor(metric, metrics) {
   return metrics.find((m) => m.key === metric)?.unit || '';
 }
 
-function RuleRow({ rule, active, metrics, stats, statsRange, onChange, onDelete }) {
+function OnFireSummary({ onFire }) {
+  if (!onFire || !onFire.enabled) {
+    return <span className="muted" style={{ fontSize: 11 }}>no action</span>;
+  }
+  return (
+    <span className="chip accent" style={{ fontSize: 11 }}>
+      <span className="dot" />↪ {onFire.kind} {onFire.target}
+    </span>
+  );
+}
+
+function OnFireEditor({ onFire, actionsState, onChange }) {
+  const enabled = !!actionsState?.enabled;
+  const kinds = (actionsState?.kinds || []);
+  const conf = onFire || { enabled: false, kind: '', target: '' };
+
+  if (!enabled) {
+    return (
+      <div className="muted" style={{ fontSize: 12 }}>
+        Actions are disabled (<code>OTHONI_ACTIONS_ENABLED</code> unset).
+        When enabled, you can wire a rule's fire to a systemd / Docker /
+        process action, audit-logged and rate-limited per rule.
+      </div>
+    );
+  }
+
+  function update(patch) {
+    const next = { ...conf, ...patch };
+    onChange(next);
+  }
+
+  const allowedTargets = (kinds.find((k) => k.kind === conf.kind)?.allowedTargets) || null;
+
+  return (
+    <div style={{ fontSize: 12 }}>
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 12 }}>
+        <input
+          type="checkbox"
+          checked={!!conf.enabled}
+          onChange={(e) => update({ enabled: e.target.checked })}
+        />
+        Run an action when this rule fires
+      </label>
+      {conf.enabled && (
+        <>
+          <span style={{ marginRight: 6 }} className="muted">kind</span>
+          <select
+            className="select"
+            value={conf.kind || ''}
+            onChange={(e) => update({ kind: e.target.value, target: '' })}
+            style={{ marginRight: 12 }}
+          >
+            <option value="">— select —</option>
+            {kinds.map((k) => (
+              <option key={k.kind} value={k.kind}>{k.kind}</option>
+            ))}
+          </select>
+          <span style={{ marginRight: 6 }} className="muted">target</span>
+          {allowedTargets ? (
+            <select
+              className="select"
+              value={conf.target || ''}
+              onChange={(e) => update({ target: e.target.value })}
+            >
+              <option value="">— select —</option>
+              {allowedTargets.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              className="input mono"
+              value={conf.target || ''}
+              onChange={(e) => update({ target: e.target.value })}
+              placeholder={
+                conf.kind === 'process.signal'
+                  ? 'PID (e.g. 1234)'
+                  : conf.kind?.startsWith('docker.')
+                    ? 'container name or id'
+                    : 'target'
+              }
+              style={{ width: 220 }}
+            />
+          )}
+          {conf.kind === 'process.signal' && (
+            <>
+              <span style={{ marginLeft: 12, marginRight: 6 }} className="muted">signal</span>
+              <select
+                className="select"
+                value={conf.params?.signal || 'TERM'}
+                onChange={(e) => update({ params: { ...(conf.params || {}), signal: e.target.value } })}
+              >
+                {['TERM', 'INT', 'HUP', 'USR1', 'USR2', 'KILL'].map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </>
+          )}
+          <div className="dim" style={{ fontSize: 11, marginTop: 6 }}>
+            Cooldown: max(durationMs, 60s) between two dispatches per rule.
+            Audit-logged. Actor recorded as <code>alert:{'<id>'}</code>.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onChange, onDelete }) {
   const sevColor = rule.severity === 'crit' ? 'var(--crit)' : 'var(--warn)';
   const isFiring = !!active;
+  const [expanded, setExpanded] = React.useState(false);
   return (
+    <React.Fragment>
     <tr style={{ opacity: rule.enabled ? 1 : 0.55 }}>
       <td>
         <input
@@ -228,6 +339,45 @@ function RuleRow({ rule, active, metrics, stats, statsRange, onChange, onDelete 
         </button>
       </td>
     </tr>
+    <tr style={{ opacity: rule.enabled ? 1 : 0.55 }}>
+      <td colSpan={10} style={{ borderTop: 'none', paddingTop: 2, paddingBottom: 10 }}>
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          style={{
+            background: 'transparent',
+            border: 0,
+            padding: 0,
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            color: 'var(--text-muted)',
+            fontSize: 11,
+          }}
+        >
+          <span className="muted">on fire</span>
+          <OnFireSummary onFire={rule.onFire} />
+          <span style={{ fontSize: 10 }}>{expanded ? '▾' : '▸'}</span>
+        </button>
+        {expanded && (
+          <div style={{
+            marginTop: 8,
+            padding: 10,
+            background: 'var(--bg-card-2)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)',
+          }}>
+            <OnFireEditor
+              onFire={rule.onFire}
+              actionsState={actionsState}
+              onChange={(next) => onChange({ ...rule, onFire: next })}
+            />
+          </div>
+        )}
+      </td>
+    </tr>
+    </React.Fragment>
   );
 }
 
@@ -690,10 +840,20 @@ export default function Alerts() {
   const [active, setActive] = useState([]);
   const [metrics, setMetrics] = useState([]);
   const [stats, setStats] = useState(null); // { range, from, to, bucketMs, byRule: { id: { fires, lastFiredAt, points } } }
+  const [actionsState, setActionsState] = useState(null);
   const [err, setErr] = useState(null);
   const [notify, setNotify] = useState(readNotifyEnabled());
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+
+  // Action surface state — drives the "On fire" inline editor on each
+  // rule. Polled once on mount; toggling OTHONI_ACTIONS_ENABLED needs a
+  // service restart anyway.
+  useEffect(() => {
+    api.actions.list()
+      .then(setActionsState)
+      .catch(() => setActionsState({ enabled: false, kinds: [] }));
+  }, []);
 
   function loadAll() {
     Promise.all([api.alerts.rules(), api.alerts.active(), api.alerts.metrics()])
@@ -845,6 +1005,7 @@ export default function Alerts() {
                     metrics={metrics}
                     stats={stats?.byRule?.[r.id]}
                     statsRange={stats ? { from: stats.from, to: stats.to } : null}
+                    actionsState={actionsState}
                     onChange={(next) => update(r.id, next)}
                     onDelete={() => remove(r.id)}
                   />

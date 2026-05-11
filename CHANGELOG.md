@@ -8,6 +8,78 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.36.0] — 2026-05-11
+
+Alert → action wire-up. Closes Phase 1 (write surface). Alert rules
+can now opt into running an action when they fire — restart a service
+when CPU spikes, kill a runaway process when memory pressure
+sustains, etc. Cooldown-protected and audit-logged with the firing
+rule's id denormalized in the actor field.
+
+### Added
+
+- **Optional `onFire` field on alert rules.** Shape:
+  ```
+  onFire: {
+    enabled:  boolean,        // separate from rule.enabled — explicit opt-in
+    kind:     string,         // registered action kind (noop, systemd.restart, ...)
+    target:   string,         // unit / container / pid string
+    params?:  object,         // e.g. { signal: 'TERM' } for process.signal
+  }
+  ```
+  `isValidOnFire()` checks the shape + that the kind is registered.
+  Target validation runs at fire time via the action's existing
+  `targetValidator` — same gate as interactive runs.
+- **Per-rule cooldown.** `max(durationMs, 60s)` between two
+  dispatches of the same rule's `onFire`. A flapping rule can't
+  loop-restart a service.
+- **Dispatch in `tick()`'s fire path.** After `recordFires` and the
+  webhook dispatcher, fire-and-forget each rule's `onFire`. Logged
+  on dispatch and on cooldown skip.
+- **Actor encoding.** Alert-triggered runs land with
+  `actor: 'alert:<ruleid>'` in audit_log and action_history,
+  visible distinctly from interactive `actor: '<username>'` runs.
+- **`<OnFireSummary>` + `<OnFireEditor>` on the Alerts page rule
+  rows.** Each rule grows a small inline "on fire" toggle row
+  below the main editor row: collapsed by default with a summary
+  chip (`no action` or `↪ <kind> <target>`); click to expand to
+  the full editor (kind picker, target dropdown/text, signal
+  picker for `process.signal`). When actions are disabled,
+  renders an "enable `OTHONI_ACTIONS_ENABLED`" hint instead.
+- **Cooldown-state cleanup on rule delete.** `setRules()` drops
+  stale `lastActionFiredAt` entries for rules that no longer
+  exist, alongside the existing firing-state cleanup.
+
+### Changed
+
+- `package.json` bumped to `0.36.0`.
+- `server/alerts.js` — imports `actions`, extends `isValidRule()`
+  to accept `onFire`, adds `dispatchOnFire()` + cooldown map,
+  wires dispatch into the `tick()` fire path.
+- `client/src/pages/Alerts.jsx` — Alerts page fetches actions
+  state once on mount and threads it into RuleRow; RuleRow wraps
+  in a Fragment and adds a second `<tr>` for the on-fire toggle/
+  editor.
+
+### Notes
+
+- Smoke-tested end-to-end: created a rule with `cpu > 0` threshold
+  + `onFire: { kind: 'noop', target: '50ms' }`, forced a tick.
+  Server logged `onFire for rule onfire-smoketest → noop 50ms →
+  ok=true exit=0`; action_history row landed with
+  `actor='alert:onfire-smoketest'`. Forced a re-fire immediately —
+  cooldown kicked in (`skipped (cooldown — 60s remaining)`), no
+  new action_history row. Original rules restored, smoke-test
+  rows cleaned up.
+- The wire-up is fire-and-forget so a slow action can't stall
+  the 10s alert tick. The framework's per-actor concurrency lock
+  keys on the actor string — `alert:foo` and `alert:bar` are
+  independent slots so two rules firing the same tick don't
+  block each other.
+- Each rule's onFire is independent of webhook dispatch —
+  webhooks still fire as configured. Actions are additive, not a
+  replacement.
+
 ## [0.35.0] — 2026-05-11
 
 Dedicated action-history page. Every action invocation (real and
@@ -1835,6 +1907,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.36.0]: #0360--2026-05-11
 [0.35.0]: #0350--2026-05-11
 [0.34.0]: #0340--2026-05-11
 [0.33.0]: #0330--2026-05-11
