@@ -359,7 +359,7 @@ router.get('/actions', (req, res) => {
       kinds: [],
     });
   }
-  res.json({ enabled: true, kinds: actions.listKinds() });
+  res.json({ enabled: true, kinds: actions.listKindsWithDetail() });
 });
 
 router.post('/actions/run', async (req, res) => {

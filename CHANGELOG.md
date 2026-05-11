@@ -8,6 +8,67 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.32.0] — 2026-05-11
+
+First concrete action: systemd service restart. Whitelist-only,
+self-protected, audit-logged on every invocation. Services page
+grows an inline restart button per whitelisted unit (when the
+v0.31.0 actions flag is on).
+
+### Added
+
+- **`systemd.restart` action kind.** Registered via the v0.31.0
+  framework. `targetValidator` enforces three layers:
+  - DNS-style regex `^[A-Za-z0-9._@:\-]{1,128}$` (matches the
+    journalctl unit filter for consistency).
+  - Whitelist match — defaults to the same list of units the
+    Services page already monitors; `OTHONI_ACTION_UNIT_WHITELIST`
+    env var overrides (comma-separated).
+  - Self-unit guard — `OTHONI_SELF_UNIT` (default `othoni`) and its
+    `.service` form are refused outright, so the dashboard can't
+    kill its own response mid-action.
+  Real run uses `execFile('systemctl', ['restart', <unit>], { timeout: 30s })`
+  — no shell, no string interpolation. Exit code, stdout, stderr,
+  and duration are all surfaced to the caller.
+- **`listKindsWithDetail()`** alongside the existing `listKinds()`.
+  Returns the resolved whitelist as `allowedTargets` on the
+  `systemd.restart` entry so the UI can disable the button for
+  non-whitelisted units rather than letting the user click and
+  get a 400.
+- **`<RestartControl>` on the Services page.** Per-card, two-step
+  UX: click → inline confirm strip showing the exact `systemctl`
+  command + "audit-logged" disclosure → run → result chip with
+  duration on success or exit code + first line of stderr on
+  failure. Dismissable. Only renders when the actions surface is
+  enabled AND the unit is on the resolved whitelist AND status is
+  not "missing".
+- **`OTHONI_ACTION_UNIT_WHITELIST` env var.** Documented in
+  `.env.example`.
+- **`OTHONI_SELF_UNIT` env var.** Documented in `.env.example`.
+
+### Changed
+
+- `package.json` bumped to `0.32.0`.
+- `server/routes/index.js` — `/api/actions` now returns
+  `listKindsWithDetail()` so the UI gets the whitelist inline.
+
+### Notes
+
+- Smoke-tested at the module level with a synthetic whitelist
+  (`OTHONI_ACTION_UNIT_WHITELIST=othoni-fake-test-unit-xyz`):
+  - Validation rejects non-whitelisted units, shell-metachar
+    targets, and `othoni` / `othoni.service` (self-protect).
+  - Dry-run path returns the standard dry-run shape.
+  - Real exec ran in 14 ms and captured systemd's verbatim
+    "Failed to restart othoni-fake-test-unit-xyz.service: Unit ...
+    not found." stderr message into the audit log.
+- Deliberately did not smoke-test by restarting any real production
+  unit on the live VPS — the synthetic-unit failure path proves the
+  exec wiring end-to-end without disrupting anything.
+- The Services page polls `/api/actions` once on mount; toggling
+  `OTHONI_ACTIONS_ENABLED` requires a service restart anyway, so
+  there's no point re-polling.
+
 ## [0.31.0] — 2026-05-11
 
 Action framework + opt-in flag. Foundation for Phase 1 (write surface).
@@ -1586,6 +1647,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.32.0]: #0320--2026-05-11
 [0.31.0]: #0310--2026-05-11
 [0.30.0]: #0300--2026-05-11
 [0.29.0]: #0290--2026-05-11

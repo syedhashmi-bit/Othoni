@@ -168,6 +168,66 @@ async function runAction({ kind, target, actor, ip, dryRun = false } = {}) {
   return result;
 }
 
+// ---------- systemd.restart ----------
+// Restart a systemd unit. Whitelist-only — defaults to the same list
+// that the Services page already shows status for, so an operator who
+// has agreed to monitor a unit has implicitly opted in to letting it
+// be restarted from the dashboard. `OTHONI_ACTION_UNIT_WHITELIST` env
+// var overrides (comma-separated). Restarting the running othoni
+// service itself is refused outright — that'd kill the response
+// mid-flight. `OTHONI_SELF_UNIT` env var lets an operator who renamed
+// the unit point the guard at the right name.
+const { DEFAULT_SERVICES } = require('./collectors/services');
+const { run: execRun } = require('./collectors/exec');
+
+const UNIT_WHITELIST = (() => {
+  const v = process.env.OTHONI_ACTION_UNIT_WHITELIST;
+  if (!v) return new Set(DEFAULT_SERVICES);
+  return new Set(v.split(',').map((s) => s.trim()).filter(Boolean));
+})();
+
+const SELF_UNIT = process.env.OTHONI_SELF_UNIT || 'othoni';
+const SELF_UNITS = new Set([SELF_UNIT, `${SELF_UNIT}.service`]);
+
+const UNIT_NAME_RE = /^[A-Za-z0-9._@:\-]{1,128}$/;
+
+register('systemd.restart', {
+  description: 'Restart a systemd unit (whitelist-only).',
+  auditName: 'action.systemd.restart',
+  requiresConfirmation: true,
+  targetValidator: (t) => {
+    if (typeof t !== 'string') return false;
+    if (!UNIT_NAME_RE.test(t)) return false;
+    if (SELF_UNITS.has(t)) return false;
+    return UNIT_WHITELIST.has(t);
+  },
+  async run({ target }) {
+    const startedAt = Date.now();
+    const r = await execRun('systemctl', ['restart', target], { timeout: 30_000 });
+    return {
+      ok: r.ok,
+      exitCode: r.ok
+        ? 0
+        : (r.code === 'ETIMEDOUT' ? 124 : (typeof r.code === 'number' ? r.code : 1)),
+      stdout: r.stdout || '',
+      stderr: r.stderr || '',
+      durationMs: Date.now() - startedAt,
+    };
+  },
+});
+
+// Surface the resolved whitelist on the kinds listing so the UI can
+// disable the restart button for non-whitelisted units rather than
+// having the user click and get a 400.
+function listKindsWithDetail() {
+  return listKinds().map((k) => {
+    if (k.kind === 'systemd.restart') {
+      return { ...k, allowedTargets: Array.from(UNIT_WHITELIST).sort() };
+    }
+    return k;
+  });
+}
+
 // ---------- built-in: noop ----------
 // Framework smoke-test kind. Always succeeds; optional `target` like
 // "200ms" sleeps that long so the concurrency-lock path is exercisable.
@@ -192,4 +252,6 @@ register('noop', {
   },
 });
 
-module.exports = { runAction, listKinds, isEnabled, isRunning, register };
+module.exports = {
+  runAction, listKinds, listKindsWithDetail, isEnabled, isRunning, register,
+};
