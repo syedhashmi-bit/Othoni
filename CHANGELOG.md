@@ -8,6 +8,63 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.30.0] — 2026-05-11
+
+Per-host dashboard view. Closes the multi-host story started in v0.10.0
+(ingestion endpoint), v0.23.0 (host attribution), and v0.25.0 (bundled
+`agent.sh`). Hosts now have a dashboard surface of their own, not just
+a section on the History page.
+
+### Added
+
+- **`server/hosts.js`** — auto-discovers hosts from
+  `custom.<host>.*` metric names with at least one sample in the
+  last 10 minutes (stale hosts roll off naturally as the existing
+  24h retention sweep prunes their samples). For each host, fetches
+  the latest value of each known agent metric (cpu / mem / load1 /
+  disk_root / net_rx / net_tx) plus a `lastSeenAt`. Anything else
+  that came in under `custom.<host>.*` shows up in an `extras` map
+  so a custom agent's metrics aren't hidden.
+- **`GET /api/hosts`** — cookie-auth'd. Returns `{ hosts: [...] }`,
+  newest-first.
+- **`/hosts` page** — one card per host with the freshness chip
+  ("live" / "Ns ago" / "Nm ago" — color graded ok / warn / crit
+  past 1 min / 5 min) and a 2×3 grid of stat tiles: CPU, Memory,
+  Load (1m), Root disk, Net in, Net out. Each tile has the latest
+  value (color-coded by `statusClass` for percent metrics) plus a
+  15-minute sparkline from `custom.<host>.<leaf>` history. An
+  "Other custom metrics" sub-grid renders extras the bundled agent
+  doesn't push, so custom agents stay visible.
+- **"No hosts yet" empty state** — points users at Settings → API
+  keys + the README's `agent.sh` walkthrough.
+- **Sidebar nav entry** + **`g o` keyboard chord** + **Cheatsheet
+  entry** for the new page.
+- **`IconHosts`** — stacked-server SVG glyph matching the existing
+  Icon set.
+
+### Changed
+
+- `package.json` bumped to `0.30.0`.
+- `client/src/api.js` — adds `api.hosts()`.
+- `client/src/App.jsx` — nav entry, route, chord (`g o`),
+  `IconHosts` import.
+- `client/src/Cheatsheet.jsx` — chord listing updated.
+
+### Notes
+
+- Smoke-tested end-to-end: two simulated agents (`agent-1`,
+  `agent-2`) pushed via the bundled `agent.sh` over a 12-second
+  window. Both showed up in `/api/hosts`, sorted by `lastSeenAt`
+  (newest first), with all six agent metrics resolved per host
+  and matching sample timestamps. Test rows + API key cleaned up.
+- The sparkline tile fetches 15 m of history via the existing
+  `/api/history?metric=custom.<host>.<leaf>` endpoint — no new
+  history surface needed.
+- Each host's 6 tiles = 6 history requests on first paint. For
+  ~10 hosts that's 60 requests, which is fine on local network /
+  HTTP-2 but might warrant a batch endpoint if someone deploys
+  100+ agents. Defer until that's a real complaint.
+
 ## [0.29.0] — 2026-05-11
 
 Rate-of-change alert comparators. Catches "the disk is filling at
@@ -1466,6 +1523,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.30.0]: #0300--2026-05-11
 [0.29.0]: #0290--2026-05-11
 [0.28.0]: #0280--2026-05-11
 [0.27.0]: #0270--2026-05-11

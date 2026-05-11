@@ -23,6 +23,7 @@ const processHistory = require('../process-history');
 const dbStats = require('../db-stats');
 const audit = require('../audit');
 const webhookHistory = require('../webhook-history');
+const hosts = require('../hosts');
 
 const router = express.Router();
 
@@ -338,6 +339,11 @@ router.post('/checks/:id/run', async (req, res) => {
   });
   res.json({ check: c });
 });
+
+// Per-host snapshot. Auto-discovers hosts from `custom.<host>.*` metric
+// names (laid down by v0.23.0 host attribution + v0.25.0 agent.sh) and
+// returns the latest value of each known agent metric per host.
+router.get('/hosts', wrap('hosts', () => ({ hosts: hosts.getHosts() })));
 
 // Combined snapshot for the dashboard so the UI can refresh in one round-trip.
 router.get(

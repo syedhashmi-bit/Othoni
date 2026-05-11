@@ -10,6 +10,7 @@ const SECTIONS = [
     rows: [
       { keys: ['g', 'd'], label: 'Dashboard' },
       { keys: ['g', 'h'], label: 'History' },
+      { keys: ['g', 'o'], label: 'Hosts' },
       { keys: ['g', 's'], label: 'Storage' },
       { keys: ['g', 'p'], label: 'Processes' },
       { keys: ['g', 'k'], label: 'Docker' },

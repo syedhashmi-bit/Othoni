@@ -35,6 +35,7 @@ export const api = {
     }),
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   overview: () => request('/api/overview'),
+  hosts: () => request('/api/hosts'),
   system: () => request('/api/system'),
   cpu: () => request('/api/cpu'),
   memory: () => request('/api/memory'),

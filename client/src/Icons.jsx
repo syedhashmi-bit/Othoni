@@ -237,3 +237,17 @@ export function IconChecks(props) {
     </svg>
   );
 }
+
+// Stack of three servers — /hosts page (multi-host overview)
+export function IconHosts(props) {
+  return (
+    <svg {...baseProps} {...props}>
+      <rect x="3" y="4"  width="18" height="4" rx="1" />
+      <rect x="3" y="10" width="18" height="4" rx="1" />
+      <rect x="3" y="16" width="18" height="4" rx="1" />
+      <circle cx="7" cy="6"  r="0.6" fill="currentColor" />
+      <circle cx="7" cy="12" r="0.6" fill="currentColor" />
+      <circle cx="7" cy="18" r="0.6" fill="currentColor" />
+    </svg>
+  );
+}

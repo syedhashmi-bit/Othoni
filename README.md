@@ -252,6 +252,7 @@ authenticated session.
 | GET    | `/api/db/stats`     | SQLite store footprint + per-table + per-metric counts |
 | GET    | `/api/audit`        | Audit-log events (`?range=`, `?action=`, `?limit=`) |
 | GET    | `/api/audit/actions`| Whitelist of audited action names |
+| GET    | `/api/hosts`        | Auto-discovered hosts pushing `custom.<host>.*` metrics |
 
 `/api/history` accepts these metrics:
 

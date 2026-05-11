@@ -18,12 +18,13 @@ import Checks from './pages/Checks.jsx';
 import Logs from './pages/Logs.jsx';
 import Settings from './pages/Settings.jsx';
 import History from './pages/History.jsx';
+import Hosts from './pages/Hosts.jsx';
 import { Logo } from './Logo.jsx';
 import { Cheatsheet } from './Cheatsheet.jsx';
 import {
   IconDashboard, IconHistory, IconStorage, IconProcesses,
   IconDocker, IconServices, IconNetwork, IconConnections, IconAlerts,
-  IconChecks, IconLogs, IconSettings,
+  IconChecks, IconLogs, IconSettings, IconHosts,
   IconClock, IconSignOut,
 } from './Icons.jsx';
 
@@ -40,6 +41,7 @@ const G_CHORDS = {
   a: '/alerts',
   e: '/checks',
   l: '/logs',
+  o: '/hosts',
   ',': '/settings',
 };
 const CHORD_TIMEOUT_MS = 1500;
@@ -121,6 +123,7 @@ export const useApp = () => useContext(AppCtx);
 const NAV = [
   { to: '/', label: 'Dashboard', end: true, Icon: IconDashboard },
   { to: '/history', label: 'History', Icon: IconHistory },
+  { to: '/hosts', label: 'Hosts', Icon: IconHosts },
   { to: '/storage', label: 'Storage', Icon: IconStorage },
   { to: '/processes', label: 'Processes', Icon: IconProcesses },
   { to: '/docker', label: 'Docker', Icon: IconDocker },
@@ -361,6 +364,7 @@ function AuthedAppBody({ refreshMs, alerts, user, handleLogout }) {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/history" element={<History />} />
+        <Route path="/hosts" element={<Hosts />} />
         <Route path="/storage" element={<Storage />} />
         <Route path="/processes" element={<Processes />} />
         <Route path="/docker" element={<Docker />} />
