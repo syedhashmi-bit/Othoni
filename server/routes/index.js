@@ -20,6 +20,7 @@ const webhooks = require('../webhooks');
 const checks = require('../checks');
 const history = require('../history');
 const processHistory = require('../process-history');
+const dbStats = require('../db-stats');
 
 const router = express.Router();
 
@@ -97,6 +98,11 @@ router.get(
     return { metrics: history.listMetrics({ prefix }) };
   })
 );
+
+// On-disk SQLite store stats. Footprint on disk, retention/cadence
+// config, per-table row counts + oldest/newest, plus the top-N metric
+// names by row count. Powers the Storage card on Settings.
+router.get('/db/stats', wrap('db_stats', () => dbStats.getDbStats()));
 
 // Process trends. Returns the heaviest named processes in the requested
 // range, each with a small sparkline of the chosen metric. Used by the

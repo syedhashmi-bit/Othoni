@@ -8,6 +8,51 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.26.0] — 2026-05-11
+
+Storage card on Settings. Operational visibility into what the
+SQLite history store actually holds — total footprint, per-table
+counts, top metrics by row count.
+
+### Added
+
+- **`server/db-stats.js`** — `getDbStats()` helper returning:
+  on-disk footprint with a WAL/SHM breakdown; the sampler
+  cadence + retention config (read from env vars at module load);
+  per-table row counts + oldest/newest timestamps for `samples`,
+  `process_samples`, and `alert_fires`; distinct metric count;
+  and the top-N metric names by row count (default 20).
+  Pure SELECTs — no `VACUUM` / `DELETE` here so we never race the
+  sampler.
+- **`GET /api/db/stats`** — cookie-auth'd; thin wrapper around
+  `getDbStats()`.
+- **Storage card on Settings** — total size headline (sums the
+  `.db` + `-wal` + `-shm` files), 3-tile breakdown by file kind,
+  3-tile config row (`sample cadence`, `process cadence`,
+  `retention`), per-table summary table (rows + oldest/newest),
+  and a "Top metrics by row count" table with a thin bar
+  visualizing each row's share of the heaviest series. Refreshes
+  every 30s in the background.
+
+### Changed
+
+- `package.json` bumped to `0.26.0`.
+- `client/src/api.js` — adds `api.dbStats()`.
+- `client/src/pages/Settings.jsx` — new `<StorageCard />` mounted
+  between the existing 4-card grid and the API keys card.
+
+### Notes
+
+- Headline size is the sum of `othoni.db` + `othoni.db-wal` +
+  `othoni.db-shm`. WAL/SHM may temporarily inflate after heavy
+  writes; SQLite checkpoints them back into the main file
+  automatically.
+- "Top metrics" is sorted by row count, which surfaces variable-
+  cardinality metrics (per-iface network, per-disk I/O, per-core
+  CPU) and pushed `custom.*` series. Built-in composite gauges
+  share the same row count as each other (one row per sampler
+  tick), so they cluster near the top.
+
 ## [0.25.0] — 2026-05-11
 
 Bundled remote metrics agent. Closes the agent-side half of the
@@ -1234,6 +1279,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.26.0]: #0260--2026-05-11
 [0.25.0]: #0250--2026-05-11
 [0.24.0]: #0240--2026-05-10
 [0.23.0]: #0230--2026-05-10

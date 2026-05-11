@@ -248,6 +248,7 @@ authenticated session.
 | GET    | `/api/overview`     | Combined snapshot (used by dashboard) |
 | GET    | `/api/history`      | Time-series for one metric (`?metric=cpu&range=1h`) |
 | GET    | `/api/settings`     | Server-side settings              |
+| GET    | `/api/db/stats`     | SQLite store footprint + per-table + per-metric counts |
 
 `/api/history` accepts these metrics:
 

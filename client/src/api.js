@@ -57,6 +57,7 @@ export const api = {
   docker: () => request('/api/docker'),
   services: () => request('/api/services'),
   settings: () => request('/api/settings'),
+  dbStats: () => request('/api/db/stats'),
   history: (metric, range = '1h') =>
     request(`/api/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`),
   historyMetrics: (prefix) =>

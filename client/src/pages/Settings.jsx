@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useApp } from '../App.jsx';
 import { IconPlus, IconTrash } from '../Icons.jsx';
+import { formatBytes } from '../utils.js';
 
 const REFRESH_OPTIONS = [
   { label: '2 seconds', value: 2000 },
@@ -18,6 +19,203 @@ function formatRelative(ms) {
   if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
   return `${Math.round(diff / 86_400_000)}d ago`;
+}
+
+function formatHours(ms) {
+  if (!ms || ms <= 0) return '—';
+  const hours = ms / 3_600_000;
+  if (hours >= 24) {
+    const days = hours / 24;
+    return `${days >= 10 ? Math.round(days) : days.toFixed(1)}d`;
+  }
+  if (hours >= 1) return `${hours.toFixed(1)}h`;
+  return `${Math.round(ms / 60_000)}m`;
+}
+
+function formatAbsTime(ms) {
+  if (!ms) return '—';
+  return new Date(ms).toLocaleString();
+}
+
+function StorageCard() {
+  const [stats, setStats] = useState(null);
+  const [err, setErr] = useState(null);
+
+  function refresh() {
+    api.dbStats()
+      .then(setStats)
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(() => {
+    refresh();
+    // Cheap query; refresh every 30s so the row counts stay roughly current
+    // without thrashing — the sample interval is 5s but the user doesn't
+    // need to watch counts tick up live.
+    const id = setInterval(refresh, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (err) {
+    return (
+      <div className="card">
+        <div className="card-header"><div className="card-title">Storage</div></div>
+        <div className="error">{err}</div>
+      </div>
+    );
+  }
+  if (!stats) {
+    return (
+      <div className="card">
+        <div className="card-header"><div className="card-title">Storage</div></div>
+        <div className="muted" style={{ fontSize: 13 }}>Loading…</div>
+      </div>
+    );
+  }
+
+  const { tables, sizeBreakdown, config, byMetricTop } = stats;
+  const maxTopCount = byMetricTop.reduce((m, r) => Math.max(m, r.count), 0) || 1;
+  const samplesSpanMs = tables.samples.newestAt && tables.samples.oldestAt
+    ? tables.samples.newestAt - tables.samples.oldestAt
+    : 0;
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Storage</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            On-disk SQLite history store. Pruned automatically — see the
+            <code style={{ marginLeft: 4 }}>OTHONI_RETENTION_MS</code> env var.
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div className="card-value" style={{ fontSize: 24 }}>
+            {formatBytes(stats.sizeBytes)}
+          </div>
+          <div className="muted" style={{ fontSize: 11 }}>total on disk</div>
+        </div>
+      </div>
+
+      <div className="grid cols-3" style={{ marginTop: 14, gap: 10 }}>
+        <div className="stat-tile">
+          <div className="muted" style={{ fontSize: 11 }}>db</div>
+          <div className="mono">{formatBytes(sizeBreakdown.main || 0)}</div>
+        </div>
+        <div className="stat-tile">
+          <div className="muted" style={{ fontSize: 11 }}>wal</div>
+          <div className="mono">{formatBytes(sizeBreakdown.wal || 0)}</div>
+        </div>
+        <div className="stat-tile">
+          <div className="muted" style={{ fontSize: 11 }}>shm</div>
+          <div className="mono">{formatBytes(sizeBreakdown.shm || 0)}</div>
+        </div>
+      </div>
+
+      <div className="grid cols-3" style={{ marginTop: 14, gap: 10 }}>
+        <div className="stat-tile">
+          <div className="muted" style={{ fontSize: 11 }}>sample cadence</div>
+          <div className="mono">{Math.round(config.sampleIntervalMs / 1000)}s</div>
+        </div>
+        <div className="stat-tile">
+          <div className="muted" style={{ fontSize: 11 }}>process cadence</div>
+          <div className="mono">{Math.round(config.processSampleIntervalMs / 1000)}s</div>
+        </div>
+        <div className="stat-tile">
+          <div className="muted" style={{ fontSize: 11 }}>retention</div>
+          <div className="mono">{formatHours(config.retentionMs)}</div>
+        </div>
+      </div>
+
+      <div className="table-wrap" style={{ marginTop: 18 }}>
+        <table className="t">
+          <thead>
+            <tr>
+              <th>Table</th>
+              <th style={{ textAlign: 'right' }}>Rows</th>
+              <th>Oldest</th>
+              <th>Newest</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="mono">samples</td>
+              <td className="mono" style={{ textAlign: 'right' }}>
+                {tables.samples.count.toLocaleString()}
+              </td>
+              <td className="muted" style={{ fontSize: 12 }}>{formatAbsTime(tables.samples.oldestAt)}</td>
+              <td className="muted" style={{ fontSize: 12 }}>{formatAbsTime(tables.samples.newestAt)}</td>
+            </tr>
+            <tr>
+              <td className="mono">process_samples</td>
+              <td className="mono" style={{ textAlign: 'right' }}>
+                {tables.process_samples.count.toLocaleString()}
+              </td>
+              <td className="muted" style={{ fontSize: 12 }}>{formatAbsTime(tables.process_samples.oldestAt)}</td>
+              <td className="muted" style={{ fontSize: 12 }}>{formatAbsTime(tables.process_samples.newestAt)}</td>
+            </tr>
+            <tr>
+              <td className="mono">alert_fires</td>
+              <td className="mono" style={{ textAlign: 'right' }}>
+                {tables.alert_fires.count.toLocaleString()}
+              </td>
+              <td className="muted" style={{ fontSize: 12 }}>{formatAbsTime(tables.alert_fires.oldestAt)}</td>
+              <td className="muted" style={{ fontSize: 12 }}>{formatAbsTime(tables.alert_fires.newestAt)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="section-title" style={{ marginTop: 18, marginBottom: 6 }}>
+        Top metrics by row count
+      </div>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+        {stats.distinctMetrics.toLocaleString()} distinct series total
+        {samplesSpanMs ? ` · spanning ${formatHours(samplesSpanMs)}` : ''}.
+      </div>
+      {byMetricTop.length === 0 ? (
+        <div className="empty" style={{ padding: '14px 0', fontSize: 13 }}>
+          No samples in the store yet.
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table className="t">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th style={{ width: '50%' }}></th>
+                <th style={{ textAlign: 'right' }}>Rows</th>
+              </tr>
+            </thead>
+            <tbody>
+              {byMetricTop.map((r) => (
+                <tr key={r.metric}>
+                  <td className="mono" style={{ fontSize: 12 }}>{r.metric}</td>
+                  <td>
+                    <div style={{
+                      height: 6,
+                      borderRadius: 3,
+                      background: 'var(--bg-card-2)',
+                      overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${Math.max(2, Math.round((r.count / maxTopCount) * 100))}%`,
+                        background: 'var(--accent)',
+                        opacity: 0.75,
+                      }} />
+                    </div>
+                  </td>
+                  <td className="mono" style={{ textAlign: 'right', fontSize: 12 }}>
+                    {r.count.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ApiKeysCard() {
@@ -288,6 +486,10 @@ export default function Settings() {
           </dl>
         </div>
       </div>
+
+      <div className="spacer-md" />
+
+      <StorageCard />
 
       <div className="spacer-md" />
 
