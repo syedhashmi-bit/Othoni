@@ -8,6 +8,59 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.33.0] — 2026-05-11
+
+Second concrete action: Docker container start / stop / restart.
+Same pattern as v0.32.0's `systemd.restart` — three new action kinds
+registered via the v0.31.0 framework, all opt-in via
+`OTHONI_ACTIONS_ENABLED`, all audit-logged.
+
+### Added
+
+- **`docker.start`, `docker.stop`, `docker.restart` action kinds.**
+  Target is a container name or ID; validated against the docker
+  daemon's allowed character set (`^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$`)
+  so bad input is rejected before reaching `execFile`. No whitelist
+  — Docker containers are dynamic; consent comes from the
+  `OTHONI_ACTIONS_ENABLED` flag + the state-aware UI surface.
+- **`OTHONI_SELF_CONTAINER` env var.** When set, refuses to act on a
+  container with that name. For deployments running othoni itself
+  inside Docker.
+- **State-aware controls on the Docker page.** Per-container action
+  cell renders only the verbs that make sense for the current state:
+  - `running` → `stop`, `restart`
+  - `paused` → `restart`
+  - `restarting` → nothing (let it settle)
+  - else (exited / dead / created) → `start`
+  Two-step UX matches the systemd version: button → confirm strip
+  showing the verb + target → run → result chip with duration on
+  success or exit code + first line of stderr on failure.
+- **Post-action refresh.** After a successful action the container
+  list re-polls so the State pill flips immediately.
+
+### Changed
+
+- `package.json` bumped to `0.33.0`.
+- `client/src/pages/Docker.jsx` — grows an "Actions" column when
+  the actions surface is enabled.
+
+### Notes
+
+- Smoke-tested module-level:
+  - All five bad-shape targets (`'evil; rm'`, `'!@#bad'`, `''`,
+    `null`, `12345`) rejected with `invalid_target` before any
+    exec.
+  - Dry-run path returned the standard shape.
+  - Real exec against a synthetic name on this host (where docker
+    isn't installed) returned `ok=false exit=1 stderr="spawn docker
+    ENOENT"` in 7 ms — proves the exec wiring + error propagation
+    without disrupting anything.
+- The host running the smoke test doesn't have Docker installed, so
+  the real-start path couldn't be exercised against a live daemon.
+  When testing on a host with Docker, the operator can run
+  start/stop/restart on real containers — every invocation is
+  audit-logged.
+
 ## [0.32.0] — 2026-05-11
 
 First concrete action: systemd service restart. Whitelist-only,
@@ -1647,6 +1700,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.33.0]: #0330--2026-05-11
 [0.32.0]: #0320--2026-05-11
 [0.31.0]: #0310--2026-05-11
 [0.30.0]: #0300--2026-05-11

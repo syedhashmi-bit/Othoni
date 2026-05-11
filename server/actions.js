@@ -216,6 +216,69 @@ register('systemd.restart', {
   },
 });
 
+// ---------- docker.start / stop / restart ----------
+// Docker containers are dynamic so a fixed whitelist doesn't fit. The
+// operator's OTHONI_ACTIONS_ENABLED opt-in covers consent at the surface
+// level; per-container consent comes from the UI button placement (only
+// state-valid actions get rendered). Self-protect via
+// OTHONI_SELF_CONTAINER env var (e.g. when running the dashboard
+// itself in Docker — defaults unset).
+
+// Docker container name/id regex matches the docker daemon's rules
+// (alphanumeric, underscore, hyphen, period — 64-char id or up to
+// 255-char name). Bare-minimum sanitization since the value goes to
+// execFile (no shell), but rejecting bad input early gives clearer
+// errors.
+const CONTAINER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/;
+const SELF_CONTAINER = (process.env.OTHONI_SELF_CONTAINER || '').trim();
+
+function makeContainerTargetValidator() {
+  return (t) => {
+    if (typeof t !== 'string') return false;
+    if (!CONTAINER_NAME_RE.test(t)) return false;
+    if (SELF_CONTAINER && (t === SELF_CONTAINER)) return false;
+    return true;
+  };
+}
+
+async function runDocker(verb, target) {
+  const startedAt = Date.now();
+  const r = await execRun('docker', [verb, target], { timeout: 30_000 });
+  return {
+    ok: r.ok,
+    exitCode: r.ok
+      ? 0
+      : (r.code === 'ETIMEDOUT' ? 124 : (typeof r.code === 'number' ? r.code : 1)),
+    stdout: r.stdout || '',
+    stderr: r.stderr || '',
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+register('docker.start', {
+  description: 'Start a stopped Docker container.',
+  auditName: 'action.docker.start',
+  requiresConfirmation: true,
+  targetValidator: makeContainerTargetValidator(),
+  async run({ target }) { return runDocker('start', target); },
+});
+
+register('docker.stop', {
+  description: 'Stop a running Docker container (SIGTERM, then SIGKILL after 10s).',
+  auditName: 'action.docker.stop',
+  requiresConfirmation: true,
+  targetValidator: makeContainerTargetValidator(),
+  async run({ target }) { return runDocker('stop', target); },
+});
+
+register('docker.restart', {
+  description: 'Restart a Docker container.',
+  auditName: 'action.docker.restart',
+  requiresConfirmation: true,
+  targetValidator: makeContainerTargetValidator(),
+  async run({ target }) { return runDocker('restart', target); },
+});
+
 // Surface the resolved whitelist on the kinds listing so the UI can
 // disable the restart button for non-whitelisted units rather than
 // having the user click and get a 400.
