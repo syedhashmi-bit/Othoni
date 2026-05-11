@@ -25,6 +25,7 @@ const audit = require('../audit');
 const webhookHistory = require('../webhook-history');
 const hosts = require('../hosts');
 const actions = require('../actions');
+const actionHistory = require('../action-history');
 
 const router = express.Router();
 
@@ -360,6 +361,24 @@ router.get('/actions', (req, res) => {
     });
   }
   res.json({ enabled: true, kinds: actions.listKindsWithDetail() });
+});
+
+// Per-action durable history. Pulls from the action_history table
+// (richer than the audit_log snippet view; full stdout/stderr up to
+// the 8 KB cap from the framework). Returned even when actions are
+// disabled — old rows may still be of interest.
+router.get('/actions/history', (req, res) => {
+  const range = String(req.query.range || '24h');
+  const kind = req.query.kind ? String(req.query.kind) : null;
+  const actor = req.query.actor ? String(req.query.actor) : null;
+  const outcome = req.query.outcome ? String(req.query.outcome) : null;
+  const limit = parseInt(req.query.limit || '100', 10) || 100;
+  res.json(actionHistory.query({ range, kind, actor, outcome, limit }));
+});
+
+router.get('/actions/history/actors', (req, res) => {
+  const range = String(req.query.range || '24h');
+  res.json({ actors: actionHistory.listActors({ range }) });
 });
 
 router.post('/actions/run', async (req, res) => {

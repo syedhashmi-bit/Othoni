@@ -19,6 +19,7 @@ const SECTIONS = [
       { keys: ['g', 'c'], label: 'Connections' },
       { keys: ['g', 'a'], label: 'Alerts' },
       { keys: ['g', 'e'], label: 'Checks' },
+      { keys: ['g', 'r'], label: 'Actions (runs)' },
       { keys: ['g', 'l'], label: 'Logs' },
       { keys: ['g', ','], label: 'Settings' },
     ],

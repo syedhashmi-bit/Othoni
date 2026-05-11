@@ -8,6 +8,70 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.35.0] — 2026-05-11
+
+Dedicated action-history page. Every action invocation (real and
+dry-run) is now persisted to a new `action_history` table with the
+full stdout / stderr captured (up to 8 KB per stream from the v0.31
+framework cap). New `/actions` page renders the history with range
+chips, kind / actor / outcome filters, per-kind aggregate count
+chips, and inline-expandable detail rows.
+
+### Added
+
+- **`server/action-history.js`** — append-only durable record of
+  every action invocation. Stores actor / kind / target / ip / ok /
+  exit code / duration / dryRun / stdout / stderr / params. The
+  audit_log entry stays as the slim "who/what/when" view with a
+  200-byte snippet; action_history is the rich record for the
+  dedicated page.
+- **`action_history` SQLite table.** Bootstrapped on first open;
+  pruned at the existing 24h retention sweep. Indexed on `(t)`,
+  `(kind, t)`, `(actor, t)`.
+- **Dual-write from `runAction`.** Both the audit_log and
+  action_history rows land in the same tick — dry-runs are recorded
+  with `dry_run=1`.
+- **`GET /api/actions/history?range=&kind=&actor=&outcome=&limit=`** —
+  returns events newest-first + per-kind aggregates `{ n, okN, failN,
+  avgDurationMs }` so the UI can render a breakdown in one
+  round-trip. Cookie-auth'd.
+- **`GET /api/actions/history/actors?range=`** — distinct actors
+  for the filter dropdown.
+- **`/actions` page.** Range chips (1h / 6h / 24h), kind filter,
+  actor filter, outcome filter, per-kind aggregate chips that
+  double as filter toggles, and a click-to-expand detail panel
+  per row showing full stdout / stderr / params in monospace
+  scrollable panels (max-height 200px each).
+- **Sidebar nav entry** between Checks and Logs, **`g r` chord**
+  (mnemonic: "runs"), **cheatsheet entry**, and **`IconActions`**
+  glyph (lightning bolt).
+
+### Changed
+
+- `package.json` bumped to `0.35.0`.
+- `server/actions.js` — `runAction()` now writes both an audit_log
+  row (slim, snippet) and an action_history row (full output) on
+  every invocation, including dry-runs.
+- `server/history.js` — bootstraps the new `action_history` table;
+  `cleanup()` extended to prune it.
+- `client/src/api.js` — adds `api.actions.history(...)` and
+  `api.actions.historyActors(...)`.
+- `client/src/App.jsx` — nav entry + route + chord (`g r`) +
+  `IconActions` import.
+- `client/src/Cheatsheet.jsx` — chord listing.
+
+### Notes
+
+- Smoke-tested end-to-end: ran a `noop` dry-run, a `noop` real,
+  and a `process.signal` real (against a spawned `sleep 60`).
+  All three persisted to `action_history`. Per-kind counts +
+  avg duration aggregated correctly. Actor filter, outcome
+  filter, distinct-actors lookup all returned the expected
+  results. Test rows cleaned up.
+- The dual-write doubles the storage cost per action (slim audit
+  row + rich history row) — still trivial since the table is
+  pruned at 24h and concrete actions are inherently low-volume.
+
 ## [0.34.0] — 2026-05-11
 
 Third concrete action: signal a process by PID. Completes the three
@@ -1771,6 +1835,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.35.0]: #0350--2026-05-11
 [0.34.0]: #0340--2026-05-11
 [0.33.0]: #0330--2026-05-11
 [0.32.0]: #0320--2026-05-11

@@ -165,6 +165,24 @@ function open() {
     );
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_t    ON webhook_deliveries(t);
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_id_t ON webhook_deliveries(webhook_id, t);
+
+    CREATE TABLE IF NOT EXISTS action_history (
+      t           INTEGER NOT NULL,
+      actor       TEXT,
+      kind        TEXT    NOT NULL,
+      target      TEXT,
+      ip          TEXT,
+      ok          INTEGER NOT NULL,
+      exit_code   INTEGER,
+      duration_ms INTEGER,
+      dry_run     INTEGER NOT NULL DEFAULT 0,
+      stdout      TEXT,
+      stderr      TEXT,
+      params      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_action_history_t       ON action_history(t);
+    CREATE INDEX IF NOT EXISTS idx_action_history_kind_t  ON action_history(kind, t);
+    CREATE INDEX IF NOT EXISTS idx_action_history_actor_t ON action_history(actor, t);
   `);
   migrate(db);
   return db;
@@ -260,15 +278,16 @@ async function takeSample() {
 
 function cleanup() {
   const cutoff = Date.now() - RETENTION_MS;
-  const info   = open().prepare('DELETE FROM samples            WHERE t < ?').run(cutoff);
-  const pinfo  = open().prepare('DELETE FROM process_samples    WHERE t < ?').run(cutoff);
-  const ainfo  = open().prepare('DELETE FROM alert_fires        WHERE t < ?').run(cutoff);
-  const lginfo = open().prepare('DELETE FROM audit_log          WHERE t < ?').run(cutoff);
-  const winfo  = open().prepare('DELETE FROM webhook_deliveries WHERE t < ?').run(cutoff);
-  const total = info.changes + pinfo.changes + ainfo.changes + lginfo.changes + winfo.changes;
+  const info    = open().prepare('DELETE FROM samples            WHERE t < ?').run(cutoff);
+  const pinfo   = open().prepare('DELETE FROM process_samples    WHERE t < ?').run(cutoff);
+  const ainfo   = open().prepare('DELETE FROM alert_fires        WHERE t < ?').run(cutoff);
+  const lginfo  = open().prepare('DELETE FROM audit_log          WHERE t < ?').run(cutoff);
+  const winfo   = open().prepare('DELETE FROM webhook_deliveries WHERE t < ?').run(cutoff);
+  const actinfo = open().prepare('DELETE FROM action_history     WHERE t < ?').run(cutoff);
+  const total = info.changes + pinfo.changes + ainfo.changes + lginfo.changes + winfo.changes + actinfo.changes;
   if (total > 0) {
     logger.debug(
-      `history: pruned ${info.changes} samples + ${pinfo.changes} process_samples + ${ainfo.changes} alert_fires + ${lginfo.changes} audit_log + ${winfo.changes} webhook_deliveries`
+      `history: pruned ${info.changes} samples + ${pinfo.changes} process_samples + ${ainfo.changes} alert_fires + ${lginfo.changes} audit_log + ${winfo.changes} webhook_deliveries + ${actinfo.changes} action_history`
     );
   }
 }

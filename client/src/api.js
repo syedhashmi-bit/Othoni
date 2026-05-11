@@ -43,6 +43,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ kind, target, params, dryRun }),
       }),
+    history: ({ range = '24h', kind = null, actor = null, outcome = null, limit = 100 } = {}) => {
+      const qs = new URLSearchParams({ range, limit: String(limit) });
+      if (kind) qs.set('kind', kind);
+      if (actor) qs.set('actor', actor);
+      if (outcome) qs.set('outcome', outcome);
+      return request(`/api/actions/history?${qs.toString()}`);
+    },
+    historyActors: ({ range = '24h' } = {}) =>
+      request(`/api/actions/history/actors?range=${encodeURIComponent(range)}`),
   },
   system: () => request('/api/system'),
   cpu: () => request('/api/cpu'),

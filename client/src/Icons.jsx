@@ -238,6 +238,15 @@ export function IconChecks(props) {
   );
 }
 
+// Lightning bolt — /actions page (run history of write surface)
+export function IconActions(props) {
+  return (
+    <svg {...baseProps} {...props}>
+      <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
+    </svg>
+  );
+}
+
 // Stack of three servers — /hosts page (multi-host overview)
 export function IconHosts(props) {
   return (

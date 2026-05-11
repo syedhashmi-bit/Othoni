@@ -256,6 +256,8 @@ authenticated session.
 | GET    | `/api/hosts`        | Auto-discovered hosts pushing `custom.<host>.*` metrics |
 | GET    | `/api/actions`      | Opt-in action surface state + registered kinds (`enabled:false` when off) |
 | POST   | `/api/actions/run`  | Run an action (404 when `OTHONI_ACTIONS_ENABLED` is unset) |
+| GET    | `/api/actions/history` | Action invocation history with full stdout/stderr |
+| GET    | `/api/actions/history/actors` | Distinct actors for the history page actor filter |
 
 `/api/history` accepts these metrics:
 

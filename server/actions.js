@@ -16,6 +16,7 @@
 
 const logger = require('./logger');
 const audit = require('./audit');
+const actionHistory = require('./action-history');
 
 // Read at module-load so changing the env requires a restart — that's
 // intentional. An operator should never be able to flip actions on for
@@ -120,6 +121,19 @@ async function runAction({ kind, target, actor, ip, dryRun = false, params = {} 
       ip: ip || null,
       metadata: { dryRun: true, params: params || {} },
     });
+    actionHistory.record({
+      actor: actor || null,
+      kind,
+      target: target || null,
+      ip: ip || null,
+      ok: true,
+      exitCode: 0,
+      durationMs: 0,
+      dryRun: true,
+      stdout: '(dry run — no action taken)',
+      stderr: '',
+      params: params || {},
+    });
     return {
       ok: true,
       exitCode: 0,
@@ -169,6 +183,20 @@ async function runAction({ kind, target, actor, ip, dryRun = false, params = {} 
       stdoutSnippet: result.stdout.slice(0, AUDIT_SNIPPET_BYTES),
       stderrSnippet: result.stderr.slice(0, AUDIT_SNIPPET_BYTES),
     },
+  });
+  // Durable record in action_history with full (up to 8 KB) stdout/stderr.
+  actionHistory.record({
+    actor: actor || null,
+    kind,
+    target: target || null,
+    ip: ip || null,
+    ok: result.ok,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    dryRun: false,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    params: params || {},
   });
 
   return result;
