@@ -24,6 +24,7 @@ const dbStats = require('../db-stats');
 const audit = require('../audit');
 const webhookHistory = require('../webhook-history');
 const hosts = require('../hosts');
+const actions = require('../actions');
 
 const router = express.Router();
 
@@ -344,6 +345,54 @@ router.post('/checks/:id/run', async (req, res) => {
 // names (laid down by v0.23.0 host attribution + v0.25.0 agent.sh) and
 // returns the latest value of each known agent metric per host.
 router.get('/hosts', wrap('hosts', () => ({ hosts: hosts.getHosts() })));
+
+// ---------- actions ----------
+// Off by default. When disabled, GET returns 200 with enabled:false so
+// the UI can render the "enable me" hint (mirrors /api/logs pattern);
+// POST returns 404.
+
+router.get('/actions', (req, res) => {
+  if (!actions.isEnabled()) {
+    return res.json({
+      enabled: false,
+      reason: 'OTHONI_ACTIONS_ENABLED is not set',
+      kinds: [],
+    });
+  }
+  res.json({ enabled: true, kinds: actions.listKinds() });
+});
+
+router.post('/actions/run', async (req, res) => {
+  if (!actions.isEnabled()) {
+    return res.status(404).json({ error: 'not_found' });
+  }
+  const body = req.body || {};
+  if (typeof body.kind !== 'string') {
+    return res.status(400).json({ error: 'invalid_request', message: 'kind is required' });
+  }
+  try {
+    const result = await actions.runAction({
+      kind: body.kind,
+      target: body.target,
+      actor: req.user && req.user.username,
+      ip: req.ip || null,
+      dryRun: !!body.dryRun,
+    });
+    res.json({ result });
+  } catch (e) {
+    if (e.code === 'unknown_kind' || e.code === 'invalid_target') {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    if (e.code === 'busy') {
+      return res.status(409).json({ error: 'busy', message: e.message });
+    }
+    if (e.code === 'actions_disabled') {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    logger.error('actions run failed:', e.message);
+    res.status(500).json({ error: 'action_failed', message: e.message });
+  }
+});
 
 // Combined snapshot for the dashboard so the UI can refresh in one round-trip.
 router.get(

@@ -29,6 +29,14 @@ const VALID_ACTIONS = new Set([
   'check.update',
   'check.delete',
   'check.run',
+  // Phase 1 action endpoints. Pre-reserved here so audit doesn't
+  // warn about unknown action names when v0.32–v0.34 wire them in.
+  'action.noop',
+  'action.systemd.restart',
+  'action.docker.start',
+  'action.docker.stop',
+  'action.docker.restart',
+  'action.process.signal',
 ]);
 
 let insertStmt = null;

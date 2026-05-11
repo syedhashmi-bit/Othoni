@@ -150,6 +150,7 @@ $EDITOR .env
 | `OTHONI_LOGS_ENABLED`   | unset        | set `true` to enable `/api/logs` + Logs page |
 | `OTHONI_TOTP_SECRET`    | unset        | base32 secret to require a TOTP code on login (see `npm run totp:setup`) |
 | `OTHONI_PROMETHEUS_TOKEN` | unset      | Bearer token for the optional `/metrics` Prometheus exporter (off when unset) |
+| `OTHONI_ACTIONS_ENABLED`| unset        | Set `true` to enable opt-in write actions (systemd / Docker / process signal — concrete actions land in v0.32+) |
 | `NODE_ENV`              | `production` | `production` on a VPS                       |
 
 ## Run in development
@@ -253,6 +254,8 @@ authenticated session.
 | GET    | `/api/audit`        | Audit-log events (`?range=`, `?action=`, `?limit=`) |
 | GET    | `/api/audit/actions`| Whitelist of audited action names |
 | GET    | `/api/hosts`        | Auto-discovered hosts pushing `custom.<host>.*` metrics |
+| GET    | `/api/actions`      | Opt-in action surface state + registered kinds (`enabled:false` when off) |
+| POST   | `/api/actions/run`  | Run an action (404 when `OTHONI_ACTIONS_ENABLED` is unset) |
 
 `/api/history` accepts these metrics:
 

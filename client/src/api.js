@@ -36,6 +36,14 @@ export const api = {
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   overview: () => request('/api/overview'),
   hosts: () => request('/api/hosts'),
+  actions: {
+    list: () => request('/api/actions'),
+    run: ({ kind, target, dryRun = false }) =>
+      request('/api/actions/run', {
+        method: 'POST',
+        body: JSON.stringify({ kind, target, dryRun }),
+      }),
+  },
   system: () => request('/api/system'),
   cpu: () => request('/api/cpu'),
   memory: () => request('/api/memory'),

@@ -8,6 +8,69 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.31.0] — 2026-05-11
+
+Action framework + opt-in flag. Foundation for Phase 1 (write surface).
+No real actions yet — just the contract + a built-in `noop` kind for
+framework testing. Concrete actions land in v0.32 (systemd), v0.33
+(Docker), v0.34 (process signal).
+
+### Added
+
+- **`OTHONI_ACTIONS_ENABLED` env var.** Off by default. Read once at
+  module load — toggling requires a service restart so an operator
+  can never flip actions on via a header or query param.
+- **`server/actions.js`** — uniform action framework with three
+  cross-cutting concerns: audit logging (every invocation, including
+  dry runs, lands in `audit_log`), per-actor concurrency lock (one
+  running action per actor at a time — return `409 busy` otherwise),
+  and bounded output capture (8 KB per stream in the result;
+  200-byte snippets in audit metadata). Result shape:
+  `{ ok, exitCode, stdout, stderr, durationMs }`.
+- **`register(kind, cfg)`** API for sibling modules to declare actions.
+  Each kind has a description, optional `targetValidator`, async
+  `run()` runner, and an optional `requiresConfirmation` UI hint.
+  Kind name must match `[a-z][a-z0-9._-]{0,40}`.
+- **Built-in `noop` action.** Always succeeds; optional `target` like
+  `"200ms"` sleeps that long. Used to smoke-test the framework
+  (concurrency, audit, dry-run, error paths) without any
+  system-mutating code.
+- **`GET /api/actions`** — returns `{ enabled, kinds }` when on; the
+  Logs-pattern `{ enabled: false, reason }` when off (200, so the UI
+  can render the enable-instructions card).
+- **`POST /api/actions/run`** — body: `{ kind, target?, dryRun? }`.
+  Returns `{ result }`. `400 invalid_request` / `400 unknown_kind` /
+  `400 invalid_target` / `409 busy` / `404 not_found` (when actions
+  disabled) / `500 action_failed`.
+- **Actions card on Settings** — enabled/disabled chip, table of
+  registered kinds, framework smoke-test buttons ("Run noop (dry
+  run)" / "Run noop") with the captured result rendered inline.
+- **Audit whitelist** pre-reserves `action.noop`,
+  `action.systemd.restart`, `action.docker.{start,stop,restart}`,
+  and `action.process.signal` so v0.32 – v0.34 land without
+  whitelist edits.
+
+### Changed
+
+- `package.json` bumped to `0.31.0`.
+- `.env.example` — documents `OTHONI_ACTIONS_ENABLED` with a note on
+  what concrete actions arrive in each subsequent Phase 1 release.
+
+### Notes
+
+- **Off by default in production.** The framework is plumbed but
+  doesn't change any system state until both (a) the env var is set
+  and (b) the operator explicitly invokes an action.
+- Smoke-tested at the module level: dry-run path, real-run path,
+  concurrency lock (second call returns `busy` while first is in
+  flight), `unknown_kind` error, `invalid_target` error, and the
+  three audit-log rows that result from a dry-run + 2 real runs are
+  all present with the expected metadata. HTTP route wiring verified
+  (401 from auth wall on all paths).
+- Output cap is 8 KB per stream — enough for "service restarted, X
+  jobs pending" style output, not enough to OOM the response on a
+  command that emits megabytes.
+
 ## [0.30.0] — 2026-05-11
 
 Per-host dashboard view. Closes the multi-host story started in v0.10.0
@@ -1523,6 +1586,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.31.0]: #0310--2026-05-11
 [0.30.0]: #0300--2026-05-11
 [0.29.0]: #0290--2026-05-11
 [0.28.0]: #0280--2026-05-11

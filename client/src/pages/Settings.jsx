@@ -358,6 +358,144 @@ function AuditLogCard() {
   );
 }
 
+function ActionsCard() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [testResult, setTestResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+
+  function refresh() {
+    api.actions.list()
+      .then(setData)
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(() => { refresh(); }, []);
+
+  async function runNoop(dryRun) {
+    setTesting(true);
+    setErr(null);
+    try {
+      const r = await api.actions.run({ kind: 'noop', target: '50ms', dryRun });
+      setTestResult({ ts: Date.now(), ...r.result });
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Actions</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Opt-in write surface. Service restarts, container start/stop,
+            process signals — gated behind <code>OTHONI_ACTIONS_ENABLED</code>{' '}
+            in <code>.env</code>. Every invocation is audit-logged.
+          </div>
+        </div>
+        <span className={`chip ${data?.enabled ? 'ok' : ''}`}>
+          <span className="dot" />{data?.enabled ? 'enabled' : 'disabled'}
+        </span>
+      </div>
+
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      {data && !data.enabled && (
+        <div className="empty" style={{ padding: '16px 0', fontSize: 13 }}>
+          <p className="muted">
+            Set <code>OTHONI_ACTIONS_ENABLED=true</code> in <code>.env</code>{' '}
+            and restart the service. Concrete actions (systemd, Docker,
+            process signal) land in v0.32 / v0.33 / v0.34.
+          </p>
+        </div>
+      )}
+
+      {data && data.enabled && (
+        <>
+          <div style={{ marginTop: 12 }}>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+              Registered kinds ({data.kinds.length})
+            </div>
+            <div className="table-wrap">
+              <table className="t">
+                <thead>
+                  <tr>
+                    <th>Kind</th>
+                    <th>Description</th>
+                    <th style={{ width: 90 }}>Confirm</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.kinds.map((k) => (
+                    <tr key={k.kind}>
+                      <td className="mono">{k.kind}</td>
+                      <td className="muted" style={{ fontSize: 12 }}>{k.description}</td>
+                      <td>{k.requiresConfirmation ? 'yes' : 'no'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14 }}>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+              Framework smoke test
+            </div>
+            <div className="toolbar" style={{ margin: 0 }}>
+              <button
+                type="button"
+                className="btn tiny"
+                onClick={() => runNoop(true)}
+                disabled={testing}
+              >
+                Run noop (dry run)
+              </button>
+              <button
+                type="button"
+                className="btn tiny"
+                onClick={() => runNoop(false)}
+                disabled={testing}
+              >
+                Run noop
+              </button>
+              {testing && <span className="muted" style={{ fontSize: 12 }}>running…</span>}
+            </div>
+            {testResult && (
+              <div style={{
+                marginTop: 10,
+                padding: 10,
+                background: 'var(--bg-card-2)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: 12,
+              }}>
+                <div className="mono">
+                  ok={String(testResult.ok)} · exit={testResult.exitCode} ·{' '}
+                  duration={testResult.durationMs}ms
+                  {testResult.dryRun ? ' · dry-run' : ''}
+                </div>
+                {testResult.stdout && (
+                  <div className="mono muted" style={{ marginTop: 4 }}>
+                    stdout: {testResult.stdout}
+                  </div>
+                )}
+                {testResult.stderr && (
+                  <div className="mono crit" style={{ marginTop: 4 }}>
+                    stderr: {testResult.stderr}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ApiKeysCard() {
   const [keys, setKeys] = useState(null);
   const [label, setLabel] = useState('');
@@ -630,6 +768,10 @@ export default function Settings() {
       <div className="spacer-md" />
 
       <StorageCard />
+
+      <div className="spacer-md" />
+
+      <ActionsCard />
 
       <div className="spacer-md" />
 
