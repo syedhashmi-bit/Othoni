@@ -1,0 +1,63 @@
+# Example systemd service for the othoni metrics agent.
+#
+# The agent runs on a remote host and pushes /proc-based metrics to a
+# central othoni dashboard via POST /api/metrics. Pairs with the v0.23.0
+# multi-host source attribution so each agent's metrics land under
+# `custom.<host>.<leaf>` in the central store.
+#
+# 1. Copy agent.sh to the remote host (no install required — pure shell):
+#      sudo install -m 0755 agent.sh /usr/local/bin/othoni-agent
+#
+# 2. Drop an environment file with the URL + API key. Generate the key
+#    on the central dashboard at /settings → API keys.
+#      sudo install -m 0600 /dev/stdin /etc/othoni-agent.env <<'EOF'
+#      OTHONI_URL=https://othoni.example.com
+#      OTHONI_API_KEY=othoni_<your-key>
+#      # Optional: explicit source label (else short hostname is used).
+#      # OTHONI_HOST=app-server-1
+#      # Optional: push cadence in seconds (default 30, min 5).
+#      # OTHONI_INTERVAL=30
+#      EOF
+#
+# 3. Install + enable this unit:
+#      sudo cp othoni-agent.service.example /etc/systemd/system/othoni-agent.service
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable --now othoni-agent
+#
+# 4. Tail logs:
+#      sudo journalctl -u othoni-agent -f
+#
+# The agent emits one log line per failed push; steady-state success is
+# silent. Verify on the dashboard: open History → "Custom · <host>".
+
+[Unit]
+Description=othoni metrics agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/othoni-agent.env
+ExecStart=/usr/local/bin/othoni-agent
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# The agent reads /proc and runs curl — it doesn't need root.
+DynamicUser=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

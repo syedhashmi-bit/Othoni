@@ -8,6 +8,63 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.25.0] — 2026-05-11
+
+Bundled remote metrics agent. Closes the agent-side half of the
+multi-host story that v0.10.0 (`POST /api/metrics`) and v0.23.0
+(`host` attribution) had been incrementally building toward —
+remote hosts can now stream metrics without writing a shell script
+themselves.
+
+### Added
+
+- **`agent.sh`** at the repo root — POSIX shell metrics agent (no
+  bashisms; tested under dash / busybox). Reads `/proc/stat`,
+  `/proc/meminfo`, `/proc/loadavg`, `/proc/net/dev`, and `df /` and
+  pushes six metrics — `custom.cpu`, `custom.mem`, `custom.load1`,
+  `custom.disk_root`, `custom.net_rx`, `custom.net_tx` — to a remote
+  othoni via `POST /api/metrics` every `OTHONI_INTERVAL` seconds
+  (default 30, min 5). Single dependencies are `awk` + `curl`.
+  Required env: `OTHONI_URL`, `OTHONI_API_KEY`. Optional:
+  `OTHONI_HOST` (else derived from `hostname`, lowercased, stripped
+  to match the server's DNS-style regex). Supports `--once` for cron
+  use; otherwise long-lived with `INT`/`TERM` trapped for clean
+  shutdown. CPU and net-throughput state are kept across iterations
+  so each tick is a single `/proc` read after the first.
+- **`othoni-agent.service.example`** — drop-in systemd unit for the
+  agent. Uses `DynamicUser=true` since the agent only needs `/proc`
+  reads + outbound HTTPS, plus the standard hardening stack
+  (`ProtectSystem=strict`, `NoNewPrivileges`, `LockPersonality`,
+  …). `EnvironmentFile=/etc/othoni-agent.env` for the URL + key.
+- **README section** documenting the agent: copy-paste install,
+  one-shot vs. long-lived mode, env var reference, and how the
+  output threads into the v0.23.0 host attribution.
+
+### Changed
+
+- `package.json` bumped to `0.25.0`.
+- `ROADMAP.md` — dropped the stale "Sync alert rules across
+  browsers" item from Next up (effectively shipped in v0.11.0 when
+  alerts moved server-side). Moved "agent.sh" out of the Later
+  bucket's still-not-built list and into the shipped list.
+- `README.md` — added the agent to the project layout block and
+  updated the Roadmap section to reflect what's actually still
+  open.
+
+### Notes
+
+- The agent uses the existing `custom.*` ingestion path — no new
+  server endpoints, no new metric names server-side. Metrics
+  arriving from `agent.sh` running on host `app-server-1` land as
+  `custom.app-server-1.cpu` etc. and group correctly under the
+  History page's Custom section.
+- Validated against the server's host regex up front (the same
+  `[a-z0-9][a-z0-9-]{0,38}[a-z0-9]` pattern that
+  `server/routes/metrics.js` enforces) so a misconfigured agent
+  fails loud rather than silently pushing un-attributed metrics.
+- Cadence floor of 5s matches the server's 600 req/min/key limit
+  with comfortable headroom.
+
 ## [0.24.0] — 2026-05-10
 
 One-line installer + nginx config example. Closes the "fresh VPS to live
@@ -1177,6 +1234,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.25.0]: #0250--2026-05-11
 [0.24.0]: #0240--2026-05-10
 [0.23.0]: #0230--2026-05-10
 [0.22.0]: #0220--2026-05-10

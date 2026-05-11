@@ -327,6 +327,36 @@ metrics share the same SQLite store and 24h retention as built-in
 metrics, and show up automatically under a **Custom** section on the
 History page.
 
+### Bundled `agent.sh` for remote hosts
+
+If you just want a stock CPU / mem / load / disk / network feed from
+another box, ship the bundled POSIX shell agent — no Node, no binary,
+no dependencies beyond `awk`, `curl`, and `/proc`:
+
+```bash
+# Copy agent.sh to the remote host:
+scp agent.sh root@app-server-1:/usr/local/bin/othoni-agent
+
+# Run it (foreground, one-shot or long-lived):
+OTHONI_URL=https://othoni.example.com \
+OTHONI_API_KEY=othoni_<your-key> \
+OTHONI_HOST=app-server-1 \
+  /usr/local/bin/othoni-agent
+```
+
+For a long-lived install, drop the bundled
+`othoni-agent.service.example` into `/etc/systemd/system/` and point
+its `EnvironmentFile=` at `/etc/othoni-agent.env`. The agent runs
+under `DynamicUser=` (only needs to read `/proc` and talk to your
+dashboard).
+
+The agent pushes `custom.cpu`, `custom.mem`, `custom.load1`,
+`custom.disk_root`, `custom.net_rx`, and `custom.net_tx` every
+`OTHONI_INTERVAL` seconds (default 30, min 5). Combined with the
+v0.23.0 host attribution, they land in the central store as
+`custom.<host>.cpu` etc., and show up grouped by host on the
+History page's Custom section.
+
 ## Security notes
 
 - Always change `OTHONI_ADMIN_PASSWORD` and set a unique `OTHONI_JWT_SECRET` in
@@ -374,7 +404,11 @@ othoni/
 │   │   └── styles.css
 │   └── dist/            # Built assets (after `npm run build`)
 ├── data/                # Created at runtime — SQLite samples DB
+├── agent.sh             # POSIX shell metrics agent for remote hosts
 ├── othoni.service.example
+├── othoni-agent.service.example
+├── install.sh
+├── nginx-othoni.conf.example
 ├── .env.example
 ├── CONTEXT.md           # Project orientation for future contributors
 └── package.json
@@ -403,7 +437,8 @@ with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
 - Per-process kill / service restart actions (opt-in, requires elevated perms)
 - Auth: optional read-only second user
-- Multi-host: per-host views in the dashboard (today everything lands in one
-  flat namespace; v0.23.0 added per-host attribution at the metric-name level)
+- Multi-host: per-host dashboard views (today everything lands in one
+  flat namespace; v0.23.0 attributes metric names by host, v0.25.0
+  bundles a remote agent)
 
 See `ROADMAP.md` for details and `CHANGELOG.md` for what's already shipped.
