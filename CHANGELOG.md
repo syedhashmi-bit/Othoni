@@ -8,6 +8,72 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.29.0] — 2026-05-11
+
+Rate-of-change alert comparators. Catches "the disk is filling at
+>1%/min" before the absolute >90% rule fires — useful for runaway
+log files, leaking memory, and load spikes that are still building.
+
+### Added
+
+- **`rate_gt` and `rate_lt` comparators** on alert rules.
+  Evaluates the change-per-minute of a metric across a configurable
+  window (`rateWindowMs`, default 5 min, range 1 min–1 h) by
+  diffing the first and last sample in the window from the
+  `samples` table. The endpoint-to-endpoint slope is comparable
+  to a linear regression at the 5s sampling cadence and is
+  trivially cheap (single SELECT, two rows from the
+  `(metric, t)` index).
+- **`comparator` column on `alert_fires`** — denormalizes the
+  comparator at fire time so historical rate-fires render with
+  the right `/min` suffix even after rule edits. Added via a new
+  idempotent `migrate()` step in `history.js` (PRAGMA
+  table_info → ADD COLUMN if missing). Rows from before v0.29.0
+  get `NULL` and are formatted with the legacy instant
+  formatter.
+- **`formatRateValue()`** helper that adds a signed `/min`
+  suffix tuned to the metric's unit: `+1.50%/min`,
+  `-300 KB/s/min`, `+2.10/min` (for unitless `load1`).
+- **Rule editor: comparator dropdown** gains "Δ/min > (rising
+  faster than)" and "Δ/min < (falling faster than)" entries
+  alongside the existing `>` / `<`.
+- **Rule editor: rate window picker** appears under the
+  threshold input when the comparator is a rate type. Options:
+  1 min, 5 min (default), 15 min, 30 min, 1 hour. Unit hint on
+  the threshold gets a `/min` suffix in rate mode.
+
+### Changed
+
+- `package.json` bumped to `0.29.0`.
+- `server/alerts.js` — `METRICS` map gains a `historyKey` field
+  for the alert key → `samples.metric` mapping (`disk_read` →
+  `disk.read`, `disk_write` → `disk.write`; everything else is a
+  pass-through). `isValidRule()` accepts the new comparators
+  and validates `rateWindowMs` when present. `tick()` branches
+  on the comparator: instant comparators use the existing live
+  collector path; rate comparators call `rateAt(metric,
+  windowMs, now)`. `projectActive()` + `listFires()` use the
+  comparator to pick the rate-formatter or the instant
+  formatter.
+- `server/history.js` — bootstrap now ends with
+  `migrate(db)` which adds the new `comparator` column to
+  `alert_fires` if missing.
+
+### Notes
+
+- Smoke-tested end-to-end: a temporary `rate_gt cpu > -100/min`
+  rule fired immediately with `value=-0.71%/min` (CPU rate over
+  the prior 5 min), formatted as `-0.71%/min` vs threshold
+  `-100.00%/min`. Rule cleaned up; alert-rules.json unchanged.
+- Rate alerts can still use `durationMs` to require the rate to
+  *sustain* — e.g. "disk filling > 1%/min sustained 1 min".
+  Default for new rules is `durationMs: 60_000`.
+- B/s metrics (net_rx, net_tx, disk_read, disk_write) accept
+  rate comparators but the value is technically a second
+  derivative — usually less useful than instant thresholds for
+  these. We don't block it; operators who know what they want
+  can opt in.
+
 ## [0.28.0] — 2026-05-11
 
 Per-webhook delivery history. Webhooks page now shows a live success/
@@ -1400,6 +1466,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.29.0]: #0290--2026-05-11
 [0.28.0]: #0280--2026-05-11
 [0.27.0]: #0270--2026-05-11
 [0.26.0]: #0260--2026-05-11

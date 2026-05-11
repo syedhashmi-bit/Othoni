@@ -166,7 +166,23 @@ function open() {
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_t    ON webhook_deliveries(t);
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_id_t ON webhook_deliveries(webhook_id, t);
   `);
+  migrate(db);
   return db;
+}
+
+// Lightweight schema migrations for columns added after the initial
+// CREATE TABLE shipped. Each block must be idempotent — running this on
+// a fresh DB (where the column already exists from the CREATE) and on
+// an old DB (where it doesn't) both have to work. PRAGMA table_info is
+// the standard cross-version compatibility check for SQLite.
+function migrate(db) {
+  const cols = db.prepare("PRAGMA table_info(alert_fires)").all().map((c) => c.name);
+  if (!cols.includes('comparator')) {
+    // Rate-comparator alerts (v0.29.0). Backwards compatible — existing
+    // rows get NULL which the read path treats as the legacy 'gt'/'lt'
+    // instant model.
+    db.exec('ALTER TABLE alert_fires ADD COLUMN comparator TEXT');
+  }
 }
 
 const insertStmt = () =>

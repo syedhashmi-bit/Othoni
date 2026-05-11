@@ -23,17 +23,41 @@ const TICK_MS = 10_000;
 
 // Metric definitions — kept in lockstep with client/src/alerts.js so the
 // UI labels and the server evaluator agree on what each metric means.
+// `historyKey` maps the rule's metric key onto the history.samples
+// metric name used by rate-comparator evaluation; for most metrics it's
+// the same string, but disk_read/disk_write are dotted in the store.
 const METRICS = {
-  cpu:        { label: 'CPU usage (%)',       unit: '%',   extract: (s) => s.cpu?.usage ?? null,            format: pct },
-  mem:        { label: 'Memory usage (%)',    unit: '%',   extract: (s) => s.memory?.usagePercent ?? null,  format: pct },
-  swap:       { label: 'Swap usage (%)',      unit: '%',   extract: (s) => (s.memory?.swapTotal ? s.memory.swapPercent : null), format: pct },
-  load1:      { label: 'Load average (1m)',   unit: '',    extract: (s) => s.cpu?.loadAverage?.[0] ?? null, format: num2 },
-  disk_root:  { label: 'Root disk usage (%)', unit: '%',   extract: (s) => rootDisk(s)?.usagePercent ?? null, format: pct },
-  net_rx:     { label: 'Network in (B/s)',    unit: 'B/s', extract: (s) => sumNonLoopback(s.network, 'rxBytesPerSec'), format: rate },
-  net_tx:     { label: 'Network out (B/s)',   unit: 'B/s', extract: (s) => sumNonLoopback(s.network, 'txBytesPerSec'), format: rate },
-  disk_read:  { label: 'Disk read (B/s)',     unit: 'B/s', extract: (s) => s.diskio?.totalReadBytesPerSec ?? null,     format: rate },
-  disk_write: { label: 'Disk write (B/s)',    unit: 'B/s', extract: (s) => s.diskio?.totalWriteBytesPerSec ?? null,    format: rate },
+  cpu:        { label: 'CPU usage (%)',       unit: '%',   extract: (s) => s.cpu?.usage ?? null,            format: pct,  historyKey: 'cpu' },
+  mem:        { label: 'Memory usage (%)',    unit: '%',   extract: (s) => s.memory?.usagePercent ?? null,  format: pct,  historyKey: 'mem' },
+  swap:       { label: 'Swap usage (%)',      unit: '%',   extract: (s) => (s.memory?.swapTotal ? s.memory.swapPercent : null), format: pct, historyKey: 'swap' },
+  load1:      { label: 'Load average (1m)',   unit: '',    extract: (s) => s.cpu?.loadAverage?.[0] ?? null, format: num2, historyKey: 'load1' },
+  disk_root:  { label: 'Root disk usage (%)', unit: '%',   extract: (s) => rootDisk(s)?.usagePercent ?? null, format: pct, historyKey: 'disk_root' },
+  net_rx:     { label: 'Network in (B/s)',    unit: 'B/s', extract: (s) => sumNonLoopback(s.network, 'rxBytesPerSec'), format: rate, historyKey: 'net_rx' },
+  net_tx:     { label: 'Network out (B/s)',   unit: 'B/s', extract: (s) => sumNonLoopback(s.network, 'txBytesPerSec'), format: rate, historyKey: 'net_tx' },
+  disk_read:  { label: 'Disk read (B/s)',     unit: 'B/s', extract: (s) => s.diskio?.totalReadBytesPerSec ?? null,     format: rate, historyKey: 'disk.read' },
+  disk_write: { label: 'Disk write (B/s)',    unit: 'B/s', extract: (s) => s.diskio?.totalWriteBytesPerSec ?? null,    format: rate, historyKey: 'disk.write' },
 };
+
+// Rate-comparator support. The value compared against the threshold is
+// the change-per-minute of the metric over `rateWindowMs`. Slope is
+// computed as (last - first) / (last.t - first.t in minutes) from the
+// in-process samples table.
+const COMPARATORS = new Set(['gt', 'lt', 'rate_gt', 'rate_lt']);
+const RATE_COMPARATORS = new Set(['rate_gt', 'rate_lt']);
+const MIN_RATE_WINDOW_MS = 60_000;
+const MAX_RATE_WINDOW_MS = 60 * 60_000;
+const DEFAULT_RATE_WINDOW_MS = 5 * 60_000;
+
+function isRateComparator(c) { return RATE_COMPARATORS.has(c); }
+
+function formatRateValue(meta, ratePerMin) {
+  if (ratePerMin == null || !Number.isFinite(ratePerMin)) return '—';
+  const sign = ratePerMin >= 0 ? '+' : '';
+  const abs = Math.abs(ratePerMin);
+  if (meta.unit === '%') return `${sign}${ratePerMin.toFixed(2)}%/min`;
+  if (meta.unit === 'B/s') return `${sign}${rate(abs)}/min`.replace('+-', '−');
+  return `${sign}${ratePerMin.toFixed(2)}/min`;
+}
 
 function pct(v) { return `${v.toFixed(1)}%`; }
 function num2(v) { return v.toFixed(2); }
@@ -66,13 +90,20 @@ let timer = null;
 let dispatcher = null;  // injected by index.js — function to call on fire
 
 function isValidRule(r) {
-  return r && typeof r === 'object'
-    && typeof r.id === 'string'
-    && METRICS[r.metric]
-    && (r.comparator === 'gt' || r.comparator === 'lt')
-    && typeof r.threshold === 'number' && Number.isFinite(r.threshold)
-    && typeof r.durationMs === 'number' && r.durationMs >= 0
-    && (r.severity === 'warn' || r.severity === 'crit');
+  if (!r || typeof r !== 'object') return false;
+  if (typeof r.id !== 'string') return false;
+  if (!METRICS[r.metric]) return false;
+  if (!COMPARATORS.has(r.comparator)) return false;
+  if (typeof r.threshold !== 'number' || !Number.isFinite(r.threshold)) return false;
+  if (typeof r.durationMs !== 'number' || r.durationMs < 0) return false;
+  if (r.severity !== 'warn' && r.severity !== 'crit') return false;
+  // rateWindowMs is optional — fall through to default at evaluation time
+  // when missing. When present, validate.
+  if (r.rateWindowMs != null) {
+    if (typeof r.rateWindowMs !== 'number' || !Number.isFinite(r.rateWindowMs)) return false;
+    if (r.rateWindowMs < MIN_RATE_WINDOW_MS || r.rateWindowMs > MAX_RATE_WINDOW_MS) return false;
+  }
+  return true;
 }
 
 function newRuleId() { return crypto.randomBytes(4).toString('hex'); }
@@ -148,6 +179,33 @@ async function snapshot() {
   return { cpu, memory, network, disks, diskio };
 }
 
+// Compute the change-per-minute of `metric` over `windowMs` using the
+// in-process samples table. Returns null if fewer than 2 samples or the
+// timestamps span 0ms. Naive endpoint-to-endpoint slope rather than a
+// linear regression — the existing 5s sampling cadence makes the two
+// approaches indistinguishable in practice and the endpoint version is
+// trivially cheap (single SELECT, two rows).
+function rateAt(metricKey, windowMs, now) {
+  const meta = METRICS[metricKey];
+  if (!meta) return null;
+  const histKey = meta.historyKey || metricKey;
+  const from = now - windowMs;
+  const db = history.getDb();
+  // First and last sample in the window — SQLite picks them off the
+  // (metric, t) index without scanning the body.
+  const first = db.prepare(
+    `SELECT t, v FROM samples WHERE metric = ? AND t >= ? ORDER BY t ASC LIMIT 1`
+  ).get(histKey, from);
+  if (!first) return null;
+  const last = db.prepare(
+    `SELECT t, v FROM samples WHERE metric = ? AND t >= ? ORDER BY t DESC LIMIT 1`
+  ).get(histKey, from);
+  if (!last || last.t === first.t) return null;
+  const minutes = (last.t - first.t) / 60_000;
+  if (minutes <= 0) return null;
+  return (last.v - first.v) / minutes;
+}
+
 async function tick() {
   load();
   if (rules.length === 0) { activeCache = []; return; }
@@ -164,12 +222,29 @@ async function tick() {
       continue;
     }
     const meta = METRICS[rule.metric];
-    const value = meta.extract(snap);
+    const isRate = isRateComparator(rule.comparator);
+    let value;
+    if (isRate) {
+      const windowMs = Math.min(
+        MAX_RATE_WINDOW_MS,
+        Math.max(MIN_RATE_WINDOW_MS, rule.rateWindowMs || DEFAULT_RATE_WINDOW_MS)
+      );
+      value = rateAt(rule.metric, windowMs, now);
+    } else {
+      value = meta.extract(snap);
+    }
     if (value == null) {
       state[rule.id] = { firstBreachAt: null, firing: false, lastValue: null };
       continue;
     }
-    const breach = rule.comparator === 'gt' ? value > rule.threshold : value < rule.threshold;
+    let breach;
+    switch (rule.comparator) {
+      case 'gt':       breach = value > rule.threshold; break;
+      case 'lt':       breach = value < rule.threshold; break;
+      case 'rate_gt':  breach = value > rule.threshold; break;
+      case 'rate_lt':  breach = value < rule.threshold; break;
+      default:         breach = false;
+    }
     if (!breach) {
       state[rule.id] = { firstBreachAt: null, firing: false, lastValue: value };
       continue;
@@ -178,11 +253,13 @@ async function tick() {
     const firing = (now - firstBreachAt) >= rule.durationMs;
     state[rule.id] = { firstBreachAt, firing, lastValue: value };
     if (firing && !prev.firing) {
+      const valueFmt = isRate ? formatRateValue(meta, value) : meta.format(value);
+      const thresholdFmt = isRate ? formatRateValue(meta, rule.threshold) : meta.format(rule.threshold);
       fires.push({
         rule,
         value,
-        valueFmt:     meta.format(value),
-        thresholdFmt: meta.format(rule.threshold),
+        valueFmt,
+        thresholdFmt,
         sustainedFor: now - firstBreachAt,
       });
     }
@@ -206,8 +283,8 @@ async function tick() {
 function recordFires(t, fires) {
   const db = history.getDb();
   const stmt = db.prepare(
-    `INSERT INTO alert_fires (t, rule_id, metric, severity, label, value, threshold, sustained_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO alert_fires (t, rule_id, metric, severity, label, value, threshold, sustained_ms, comparator)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const tx = db.transaction((rows) => {
     for (const f of rows) {
@@ -219,7 +296,8 @@ function recordFires(t, fires) {
         f.rule.label || '',
         f.value,
         f.rule.threshold,
-        f.sustainedFor
+        f.sustainedFor,
+        f.rule.comparator || null
       );
     }
   });
@@ -231,17 +309,19 @@ function projectActive() {
   for (const rule of rules) {
     const s = state[rule.id];
     if (!s || !s.firing) continue;
+    const meta = METRICS[rule.metric];
+    const isRate = isRateComparator(rule.comparator);
     out.push({
       id: rule.id,
       label: rule.label,
       metric: rule.metric,
-      metricLabel: METRICS[rule.metric].label,
+      metricLabel: meta.label,
       comparator: rule.comparator,
       threshold: rule.threshold,
-      thresholdFmt: METRICS[rule.metric].format(rule.threshold),
+      thresholdFmt: isRate ? formatRateValue(meta, rule.threshold) : meta.format(rule.threshold),
       severity: rule.severity,
       value: s.lastValue,
-      valueFmt: METRICS[rule.metric].format(s.lastValue),
+      valueFmt: isRate ? formatRateValue(meta, s.lastValue) : meta.format(s.lastValue),
       sustainedFor: Date.now() - (s.firstBreachAt || Date.now()),
     });
   }
@@ -316,7 +396,7 @@ function listFires({ range = '24h', limit = 100 } = {}) {
   const from = now - span;
   const cap  = Math.min(500, Math.max(1, limit | 0 || 100));
   const rows = history.getDb().prepare(
-    `SELECT t, rule_id AS ruleId, metric, severity, label, value, threshold, sustained_ms AS sustainedMs
+    `SELECT t, rule_id AS ruleId, metric, severity, label, value, threshold, sustained_ms AS sustainedMs, comparator
        FROM alert_fires
       WHERE t >= ?
       ORDER BY t DESC
@@ -325,14 +405,21 @@ function listFires({ range = '24h', limit = 100 } = {}) {
 
   // Build value/threshold formatters using the current METRICS map. If the
   // metric is no longer in the map (unlikely but possible) fall back to raw.
+  // Rows fired before v0.29.0 have comparator=NULL — treat them as instant
+  // (gt/lt) and use the metric's standard formatter.
   return {
     range, from, to: now, count: rows.length,
     fires: rows.map((r) => {
       const meta = METRICS[r.metric];
+      const isRate = isRateComparator(r.comparator);
+      const fmt = (v) => {
+        if (!meta || v == null) return v != null ? String(v) : null;
+        return isRate ? formatRateValue(meta, v) : meta.format(v);
+      };
       return {
         ...r,
-        valueFmt:     meta && r.value     != null ? meta.format(r.value)     : (r.value     != null ? String(r.value)     : null),
-        thresholdFmt: meta && r.threshold != null ? meta.format(r.threshold) : (r.threshold != null ? String(r.threshold) : null),
+        valueFmt:     fmt(r.value),
+        thresholdFmt: fmt(r.threshold),
       };
     }),
   };

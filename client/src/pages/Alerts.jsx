@@ -67,6 +67,23 @@ const DURATIONS = [
   { ms: 30 * 60_000, label: '30 min' },
 ];
 
+const RATE_WINDOWS = [
+  { ms: 60_000,        label: '1 min' },
+  { ms: 5 * 60_000,    label: '5 min' },
+  { ms: 15 * 60_000,   label: '15 min' },
+  { ms: 30 * 60_000,   label: '30 min' },
+  { ms: 60 * 60_000,   label: '1 hour' },
+];
+
+const COMPARATOR_OPTIONS = [
+  { value: 'gt',      label: '> (above)' },
+  { value: 'lt',      label: '< (below)' },
+  { value: 'rate_gt', label: 'Δ/min > (rising faster than)' },
+  { value: 'rate_lt', label: 'Δ/min < (falling faster than)' },
+];
+
+function isRateComparator(c) { return c === 'rate_gt' || c === 'rate_lt'; }
+
 const FORMATS = [
   { value: 'generic', label: 'Generic JSON' },
   { value: 'slack',   label: 'Slack' },
@@ -116,10 +133,11 @@ function RuleRow({ rule, active, metrics, stats, statsRange, onChange, onDelete 
           value={rule.comparator}
           onChange={(e) => onChange({ ...rule, comparator: e.target.value })}
           className="select"
-          style={{ width: 64 }}
+          style={{ width: 200 }}
         >
-          <option value="gt">&gt;</option>
-          <option value="lt">&lt;</option>
+          {COMPARATOR_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
         </select>
       </td>
       <td>
@@ -131,7 +149,24 @@ function RuleRow({ rule, active, metrics, stats, statsRange, onChange, onDelete 
           className="input mono"
           style={{ width: 110 }}
         />
-        <span className="dim" style={{ marginLeft: 6, fontSize: 12 }}>{unitFor(rule.metric, metrics)}</span>
+        <span className="dim" style={{ marginLeft: 6, fontSize: 12 }}>
+          {unitFor(rule.metric, metrics)}{isRateComparator(rule.comparator) ? '/min' : ''}
+        </span>
+        {isRateComparator(rule.comparator) && (
+          <div style={{ marginTop: 4, fontSize: 11 }} className="muted">
+            over{' '}
+            <select
+              value={rule.rateWindowMs || 5 * 60_000}
+              onChange={(e) => onChange({ ...rule, rateWindowMs: parseInt(e.target.value, 10) })}
+              className="select"
+              style={{ padding: '1px 4px', fontSize: 11 }}
+            >
+              {RATE_WINDOWS.map((w) => (
+                <option key={w.ms} value={w.ms}>{w.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </td>
       <td>
         <select
