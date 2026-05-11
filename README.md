@@ -233,6 +233,7 @@ authenticated session.
 | POST   | `/api/webhooks`     | Add a webhook (label, url, format) |
 | PATCH  | `/api/webhooks/:id` | Toggle / rename                   |
 | POST   | `/api/webhooks/:id/test` | Fire a synthetic test event  |
+| GET    | `/api/webhooks/:id/deliveries` | Recent delivery history (`?range=`, `?limit=`) |
 | DELETE | `/api/webhooks/:id` | Remove a webhook                  |
 | GET    | `/api/checks`       | List synthetic checks + state     |
 | POST   | `/api/checks`       | Add an HTTP / TCP / ping check    |

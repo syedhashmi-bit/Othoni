@@ -98,6 +98,8 @@ export const api = {
     }),
     revoke:  (id) => request(`/api/webhooks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     test:    (id) => request(`/api/webhooks/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+    deliveries: (id, { range = '24h', limit = 50 } = {}) =>
+      request(`/api/webhooks/${encodeURIComponent(id)}/deliveries?range=${encodeURIComponent(range)}&limit=${limit}`),
   },
   checks: {
     list:    () => request('/api/checks'),

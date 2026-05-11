@@ -8,6 +8,71 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.28.0] — 2026-05-11
+
+Per-webhook delivery history. Webhooks page now shows a live success/
+failure strip per row and an expand-on-click panel with the full
+recent-deliveries table. Each retry is its own row on purpose —
+"first attempt 503'd, retry 200'd" is exactly the case operators
+want to see when tuning.
+
+### Added
+
+- **`server/webhook-history.js`** — append-only delivery recorder.
+  Inserts happen inline in `webhooks.fireOne` for each HTTP
+  attempt (so a fail-then-retry-OK appears as two rows). Records
+  status code, request duration, attempt index (0 = first, 1 =
+  retry), error string, and the originating event label
+  (`rule.label` or `"webhook test"`). Insert never throws into
+  the caller. `query()` returns newest-first deliveries + an
+  aggregate `{ total, ok, fail, avgDurationMs }` block in one
+  round-trip. `queryStrip()` returns oldest→newest last-N
+  attempts so the UI can render a tiny strip inline in the
+  webhooks table without N round-trips.
+- **`webhook_deliveries` SQLite table** bootstrapped on first
+  open. Indexes on `(t)` and `(webhook_id, t)`. Pruned at the
+  existing 24h retention sweep.
+- **`GET /api/webhooks/:id/deliveries?range=&limit=`** —
+  cookie-auth'd endpoint. Returns `{ stats, deliveries }`.
+- **Recent column on the Webhooks card** — 12-slot left-padded
+  strip of bars per row (success = `--ok`, fail = `--crit`, no
+  data = dim placeholder). Right-most slot is the most recent.
+- **Click-to-expand delivery details row** — inline `<DeliveryDetails />`
+  with range chips (1h / 6h / 24h), an aggregate header (total /
+  ok / fail / avg duration), and a recent-deliveries table with
+  per-attempt status, HTTP code, duration, attempt index, event
+  label, and error.
+
+### Changed
+
+- `package.json` bumped to `0.28.0`.
+- `server/webhooks.js` — `postWithTimeout()` now returns the
+  status code (and attaches `statusCode` to the thrown error
+  on non-2xx) so the history row can record it. `fireOne()`
+  now wraps every attempt in start/end timestamps and records a
+  history row per attempt. `sanitize()` gains an optional
+  `recent: [{t, ok}]` field (last 12 attempts) so the
+  Webhooks card renders the dot strip without N extra
+  requests.
+- `server/history.js` — bootstraps the new `webhook_deliveries`
+  table; `cleanup()` extended to prune it.
+- `client/src/api.js` — adds `api.webhooks.deliveries(id, opts)`.
+- `client/src/pages/Alerts.jsx` — new `<DeliveryStrip>` cell +
+  expand-on-click `<DeliveryDetails>` row on each webhook.
+
+### Notes
+
+- Smoke-tested end-to-end: a fake webhook hitting `httpbin.org/post`
+  recorded one OK row (200, ~557ms, attempt 0); a fake webhook
+  hitting `httpbin.org/status/500` recorded two FAIL rows
+  (attempt 0 + retry attempt 1), both with status 500 and
+  matching error text.
+- 24h retention applies, so the strip and the expanded panel
+  both reset over time. Operators looking for longer-term
+  reliability stats should still rely on the alert engine's
+  webhook delivery as the source of truth (every fire still
+  updates `lastFiredAt` / `lastError`).
+
 ## [0.27.0] — 2026-05-11
 
 Audit log of admin actions. Captures who did what and when for the
@@ -1335,6 +1400,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.28.0]: #0280--2026-05-11
 [0.27.0]: #0270--2026-05-11
 [0.26.0]: #0260--2026-05-11
 [0.25.0]: #0250--2026-05-11

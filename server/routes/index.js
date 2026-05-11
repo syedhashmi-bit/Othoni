@@ -22,6 +22,7 @@ const history = require('../history');
 const processHistory = require('../process-history');
 const dbStats = require('../db-stats');
 const audit = require('../audit');
+const webhookHistory = require('../webhook-history');
 
 const router = express.Router();
 
@@ -256,6 +257,14 @@ router.delete('/webhooks/:id', (req, res) => {
     target: req.params.id,
   });
   res.json({ ok: true });
+});
+
+// Per-webhook delivery history. Each retry is its own row, on purpose —
+// "first attempt 503'd, retry 200'd" is the interesting case for tuning.
+router.get('/webhooks/:id/deliveries', (req, res) => {
+  const range = String(req.query.range || '24h');
+  const limit = parseInt(req.query.limit || '50', 10) || 50;
+  res.json(webhookHistory.query(req.params.id, { range, limit }));
 });
 
 router.post('/webhooks/:id/test', async (req, res) => {

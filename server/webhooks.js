@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const logger = require('./logger');
+const webhookHistory = require('./webhook-history');
 
 const DEFAULT_PATH = path.join(__dirname, '..', 'data', 'webhooks.json');
 const STORE_PATH = process.env.OTHONI_WEBHOOKS_PATH || DEFAULT_PATH;
@@ -55,12 +56,12 @@ function isValidUrl(s) {
   } catch { return false; }
 }
 
-function sanitize(w) {
+function sanitize(w, { withStrip = true, stripN = 12 } = {}) {
   // Never return the URL through the API — it's the secret. Only the
   // host portion is exposed so the user can recognize the destination.
   let host = '';
   try { host = new URL(w.url).hostname; } catch { /* ignore */ }
-  return {
+  const base = {
     id: w.id,
     label: w.label,
     format: w.format,
@@ -70,6 +71,11 @@ function sanitize(w) {
     lastFiredAt: w.lastFiredAt || null,
     lastError: w.lastError || null,
   };
+  if (withStrip) {
+    try { base.recent = webhookHistory.queryStrip(w.id, stripN); }
+    catch { base.recent = []; }
+  }
+  return base;
 }
 
 function listWebhooks() {
@@ -173,8 +179,12 @@ async function postWithTimeout(url, body) {
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return true;
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`);
+      err.statusCode = res.status;
+      throw err;
+    }
+    return { status: res.status };
   } finally {
     clearTimeout(t);
   }
@@ -182,17 +192,37 @@ async function postWithTimeout(url, body) {
 
 async function fireOne(w, event) {
   const body = formatPayload(w.format, event);
+  const eventLabel = (event && event.rule && (event.rule.label || event.rule.metric)) || null;
   let lastErr = null;
   for (let attempt = 0; attempt < 2; attempt++) {
+    const startedAt = Date.now();
     try {
-      await postWithTimeout(w.url, body);
-      // Update success metadata
+      const result = await postWithTimeout(w.url, body);
+      const durationMs = Date.now() - startedAt;
+      webhookHistory.record({
+        webhookId: w.id,
+        ok: true,
+        statusCode: result?.status || 200,
+        durationMs,
+        attempt,
+        eventLabel,
+      });
       w.lastFiredAt = Date.now();
       w.lastError = null;
       persist();
       return true;
     } catch (e) {
+      const durationMs = Date.now() - startedAt;
       lastErr = e;
+      webhookHistory.record({
+        webhookId: w.id,
+        ok: false,
+        statusCode: e?.statusCode || null,
+        error: (e && e.message) || 'unknown',
+        durationMs,
+        attempt,
+        eventLabel,
+      });
       if (attempt === 0) await new Promise((r) => setTimeout(r, RETRY_AFTER_MS));
     }
   }

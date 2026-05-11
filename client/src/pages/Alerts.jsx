@@ -294,6 +294,133 @@ function RecentFiresCard() {
   );
 }
 
+// Compact left-to-right strip of dots — one per delivery attempt. Last
+// entry on the right is the most recent. Empty bullets fill from the
+// left when fewer than `slots` attempts exist, so the live tip stays
+// pinned right and the strip width doesn't jitter as it fills up.
+function DeliveryStrip({ recent = [], slots = 12 }) {
+  const items = [...recent];
+  while (items.length < slots) items.unshift(null);
+  return (
+    <div style={{ display: 'inline-flex', gap: 2, alignItems: 'center' }}>
+      {items.map((d, i) => {
+        const cls = d == null ? 'dim' : d.ok ? 'ok' : 'crit';
+        const bg =
+          d == null
+            ? 'var(--bg-card-2)'
+            : d.ok
+            ? 'var(--ok)'
+            : 'var(--crit)';
+        const title = d
+          ? `${d.ok ? '200 OK' : 'failed'} — ${new Date(d.t).toLocaleString([], { hour12: false })}`
+          : '—';
+        return (
+          <span
+            key={i}
+            title={title}
+            className={cls}
+            style={{
+              width: 6,
+              height: 14,
+              borderRadius: 2,
+              background: bg,
+              opacity: d == null ? 0.4 : 1,
+              display: 'inline-block',
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function DeliveryDetails({ webhookId }) {
+  const [data, setData] = useState(null);
+  const [range, setRange] = useState('24h');
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    setData(null);
+    api.webhooks
+      .deliveries(webhookId, { range, limit: 100 })
+      .then(setData)
+      .catch((e) => setErr(e.message));
+  }, [webhookId, range]);
+
+  return (
+    <div style={{ padding: '10px 14px 14px', background: 'var(--bg-card-2)' }}>
+      <div className="toolbar" style={{ marginTop: 0, marginBottom: 10 }}>
+        {['1h', '6h', '24h'].map((r) => (
+          <button
+            key={r}
+            type="button"
+            className={`btn ghost ${range === r ? 'active' : ''}`}
+            onClick={() => setRange(r)}
+          >
+            {r}
+          </button>
+        ))}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, fontSize: 12 }}>
+          {data ? (
+            <>
+              <span className="muted">total <strong className="mono">{data.stats.total}</strong></span>
+              <span className="ok">ok <strong className="mono">{data.stats.ok}</strong></span>
+              <span className="crit">fail <strong className="mono">{data.stats.fail}</strong></span>
+              {data.stats.avgDurationMs != null && (
+                <span className="muted">avg <strong className="mono">{data.stats.avgDurationMs}ms</strong></span>
+              )}
+            </>
+          ) : (
+            <span className="muted">loading…</span>
+          )}
+        </div>
+      </div>
+      {err && <div className="error">{err}</div>}
+      {data && data.deliveries.length === 0 && (
+        <div className="empty" style={{ padding: '10px 0', fontSize: 12 }}>
+          No deliveries in this range.
+        </div>
+      )}
+      {data && data.deliveries.length > 0 && (
+        <div className="table-wrap">
+          <table className="t">
+            <thead>
+              <tr>
+                <th style={{ width: 140 }}>When</th>
+                <th>Status</th>
+                <th>HTTP</th>
+                <th>Duration</th>
+                <th>Attempt</th>
+                <th>Event</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.deliveries.map((d, i) => (
+                <tr key={`${d.t}-${i}`}>
+                  <td className="muted" style={{ fontSize: 12 }}>{relativeTime(d.t)}</td>
+                  <td>
+                    <span className={`chip ${d.ok ? 'ok' : 'crit'}`} style={{ fontSize: 11 }}>
+                      <span className="dot" />{d.ok ? 'ok' : 'fail'}
+                    </span>
+                  </td>
+                  <td className="mono" style={{ fontSize: 12 }}>{d.statusCode ?? '—'}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>
+                    {d.durationMs != null ? `${d.durationMs}ms` : '—'}
+                  </td>
+                  <td className="mono" style={{ fontSize: 12 }}>{d.attempt}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>{d.eventLabel || '—'}</td>
+                  <td className="mono crit" style={{ fontSize: 11 }}>{d.error || ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WebhooksCard() {
   const [list, setList] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -301,6 +428,7 @@ function WebhooksCard() {
   const [err, setErr] = useState(null);
   const [testing, setTesting] = useState(null); // id being tested
   const [testResult, setTestResult] = useState({}); // { [id]: { ok, error } }
+  const [expandedId, setExpandedId] = useState(null);
 
   function refresh() {
     api.webhooks.list().then((r) => setList(r.webhooks || [])).catch((e) => setErr(e.message));
@@ -421,6 +549,7 @@ function WebhooksCard() {
                 <th>Label</th>
                 <th>Host</th>
                 <th>Format</th>
+                <th>Recent</th>
                 <th>Last fired</th>
                 <th>Status</th>
                 <th style={{ width: 130 }}></th>
@@ -429,58 +558,88 @@ function WebhooksCard() {
             <tbody>
               {list.map((w) => {
                 const tr = testResult[w.id];
+                const expanded = expandedId === w.id;
                 return (
-                  <tr key={w.id} style={{ opacity: w.enabled ? 1 : 0.55 }}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={w.enabled}
-                        onChange={() => toggle(w)}
-                        aria-label="Enable webhook"
-                      />
-                    </td>
-                    <td>{w.label}</td>
-                    <td className="mono dim" style={{ fontSize: 12 }}>{w.host}</td>
-                    <td className="muted">{w.format}</td>
-                    <td className="muted" style={{ fontSize: 12 }}>
-                      {w.lastFiredAt ? new Date(w.lastFiredAt).toLocaleString([], { hour12: false }) : 'never'}
-                    </td>
-                    <td>
-                      {testing === w.id ? (
-                        <span className="chip"><span className="dot" />testing…</span>
-                      ) : tr ? (
-                        <span className={`chip ${tr.ok ? 'ok' : 'crit'}`}>
-                          <span className="dot" />{tr.ok ? 'test ok' : (tr.error || 'failed')}
-                        </span>
-                      ) : w.lastError ? (
-                        <span className="chip crit"><span className="dot" />{w.lastError}</span>
-                      ) : w.lastFiredAt ? (
-                        <span className="chip ok"><span className="dot" />ok</span>
-                      ) : (
-                        <span className="chip"><span className="dot" />idle</span>
-                      )}
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn tiny"
-                        onClick={() => test(w)}
-                        disabled={testing === w.id}
-                        style={{ marginRight: 6 }}
-                      >
-                        Test
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        onClick={() => remove(w)}
-                        title="Remove webhook"
-                        aria-label="Remove webhook"
-                      >
-                        <IconTrash />
-                      </button>
-                    </td>
-                  </tr>
+                  <React.Fragment key={w.id}>
+                    <tr style={{ opacity: w.enabled ? 1 : 0.55 }}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={w.enabled}
+                          onChange={() => toggle(w)}
+                          aria-label="Enable webhook"
+                        />
+                      </td>
+                      <td>{w.label}</td>
+                      <td className="mono dim" style={{ fontSize: 12 }}>{w.host}</td>
+                      <td className="muted">{w.format}</td>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedId(expanded ? null : w.id)}
+                          style={{
+                            background: 'transparent',
+                            border: 0,
+                            padding: 0,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            color: 'var(--text-muted)',
+                          }}
+                          title={expanded ? 'collapse delivery history' : 'expand delivery history'}
+                        >
+                          <DeliveryStrip recent={w.recent || []} />
+                          <span className="muted" style={{ fontSize: 11 }}>{expanded ? '▾' : '▸'}</span>
+                        </button>
+                      </td>
+                      <td className="muted" style={{ fontSize: 12 }}>
+                        {w.lastFiredAt ? new Date(w.lastFiredAt).toLocaleString([], { hour12: false }) : 'never'}
+                      </td>
+                      <td>
+                        {testing === w.id ? (
+                          <span className="chip"><span className="dot" />testing…</span>
+                        ) : tr ? (
+                          <span className={`chip ${tr.ok ? 'ok' : 'crit'}`}>
+                            <span className="dot" />{tr.ok ? 'test ok' : (tr.error || 'failed')}
+                          </span>
+                        ) : w.lastError ? (
+                          <span className="chip crit"><span className="dot" />{w.lastError}</span>
+                        ) : w.lastFiredAt ? (
+                          <span className="chip ok"><span className="dot" />ok</span>
+                        ) : (
+                          <span className="chip"><span className="dot" />idle</span>
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn tiny"
+                          onClick={() => test(w)}
+                          disabled={testing === w.id}
+                          style={{ marginRight: 6 }}
+                        >
+                          Test
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => remove(w)}
+                          title="Remove webhook"
+                          aria-label="Remove webhook"
+                        >
+                          <IconTrash />
+                        </button>
+                      </td>
+                    </tr>
+                    {expanded && (
+                      <tr>
+                        <td colSpan={8} style={{ padding: 0 }}>
+                          <DeliveryDetails webhookId={w.id} />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>

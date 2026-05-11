@@ -152,6 +152,19 @@ function open() {
     );
     CREATE INDEX IF NOT EXISTS idx_audit_log_t        ON audit_log(t);
     CREATE INDEX IF NOT EXISTS idx_audit_log_action_t ON audit_log(action, t);
+
+    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      t           INTEGER NOT NULL,
+      webhook_id  TEXT    NOT NULL,
+      ok          INTEGER NOT NULL,
+      status_code INTEGER,
+      error       TEXT,
+      duration_ms INTEGER,
+      attempt     INTEGER,
+      event_label TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_t    ON webhook_deliveries(t);
+    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_id_t ON webhook_deliveries(webhook_id, t);
   `);
   return db;
 }
@@ -231,14 +244,15 @@ async function takeSample() {
 
 function cleanup() {
   const cutoff = Date.now() - RETENTION_MS;
-  const info  = open().prepare('DELETE FROM samples         WHERE t < ?').run(cutoff);
-  const pinfo = open().prepare('DELETE FROM process_samples WHERE t < ?').run(cutoff);
-  const ainfo = open().prepare('DELETE FROM alert_fires     WHERE t < ?').run(cutoff);
-  const lginfo = open().prepare('DELETE FROM audit_log      WHERE t < ?').run(cutoff);
-  const total = info.changes + pinfo.changes + ainfo.changes + lginfo.changes;
+  const info   = open().prepare('DELETE FROM samples            WHERE t < ?').run(cutoff);
+  const pinfo  = open().prepare('DELETE FROM process_samples    WHERE t < ?').run(cutoff);
+  const ainfo  = open().prepare('DELETE FROM alert_fires        WHERE t < ?').run(cutoff);
+  const lginfo = open().prepare('DELETE FROM audit_log          WHERE t < ?').run(cutoff);
+  const winfo  = open().prepare('DELETE FROM webhook_deliveries WHERE t < ?').run(cutoff);
+  const total = info.changes + pinfo.changes + ainfo.changes + lginfo.changes + winfo.changes;
   if (total > 0) {
     logger.debug(
-      `history: pruned ${info.changes} samples + ${pinfo.changes} process_samples + ${ainfo.changes} alert_fires + ${lginfo.changes} audit_log`
+      `history: pruned ${info.changes} samples + ${pinfo.changes} process_samples + ${ainfo.changes} alert_fires + ${lginfo.changes} audit_log + ${winfo.changes} webhook_deliveries`
     );
   }
 }
