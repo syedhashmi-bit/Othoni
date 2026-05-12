@@ -56,6 +56,12 @@ export const api = {
   overview: () => request('/api/overview'),
   hosts: () => request('/api/hosts'),
   hostDetail: (host) => request(`/api/hosts/${encodeURIComponent(host)}`),
+  retention: {
+    get: () => request('/api/retention'),
+    set: (overrides) => request('/api/retention', {
+      method: 'PUT', body: JSON.stringify({ overrides }),
+    }),
+  },
   hostMeta: {
     list:   () => request('/api/host-meta'),
     upsert: (host, patch) => request(`/api/host-meta/${encodeURIComponent(host)}`, {

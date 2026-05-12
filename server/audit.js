@@ -43,6 +43,8 @@ const VALID_ACTIONS = new Set([
   // Phase 3 host metadata (v0.43).
   'host.meta.update',
   'host.meta.delete',
+  // Phase 4 retention overrides (v0.47).
+  'retention.update',
 ]);
 
 let insertStmt = null;

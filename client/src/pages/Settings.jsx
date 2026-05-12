@@ -236,6 +236,7 @@ const AUDIT_ACTION_LABELS = {
   'session.revoke': { label: 'session revoke',tone: 'warn' },
   'host.meta.update': { label: 'host meta ~', tone: 'accent' },
   'host.meta.delete': { label: 'host meta −', tone: 'warn' },
+  'retention.update': { label: 'retention ~', tone: 'accent' },
 };
 
 function AuditLogCard() {
@@ -496,6 +497,162 @@ function ActionsCard() {
             </div>
           </AdminOnly>
         </>
+      )}
+    </div>
+  );
+}
+
+function RetentionCard() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
+  const [state, setState] = useState(null);
+  const [draft, setDraft] = useState([]); // [{ pattern, ttlMs }]
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  function refresh() {
+    api.retention.get()
+      .then((r) => {
+        setState(r);
+        setDraft(r.overrides.slice());
+        setDirty(false);
+      })
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(() => { refresh(); }, []);
+
+  function update(i, patch) {
+    setDraft((d) => d.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
+    setDirty(true);
+  }
+  function remove(i) {
+    setDraft((d) => d.filter((_, idx) => idx !== i));
+    setDirty(true);
+  }
+  function add() {
+    setDraft((d) => [...d, { pattern: '', ttlMs: 7 * 24 * 3600 * 1000 }]);
+    setDirty(true);
+  }
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.retention.set(draft);
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function ttlLabel(ms) {
+    if (ms < 3600_000) return `${Math.round(ms / 60_000)}m`;
+    if (ms < 86400_000) return `${(ms / 3600_000).toFixed(1)}h`;
+    return `${(ms / 86400_000).toFixed(1)}d`;
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Retention overrides</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Per-metric overrides on the global retention default
+            (currently <strong>{state ? ttlLabel(state.defaultMs) : '—'}</strong>).
+            Patterns are exact names or globs with <code>*</code>.
+            Longest matching TTL wins per metric.
+          </div>
+        </div>
+      </div>
+
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      <div className="table-wrap" style={{ marginTop: 12 }}>
+        <table className="t">
+          <thead>
+            <tr>
+              <th>Pattern</th>
+              <th style={{ width: 140 }}>TTL (ms)</th>
+              <th style={{ width: 90 }}>Reads as</th>
+              {isAdmin && <th style={{ width: 50 }}></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {draft.length === 0 && (
+              <tr>
+                <td colSpan={isAdmin ? 4 : 3} className="muted" style={{ fontSize: 12, padding: '12px 0' }}>
+                  No overrides — every metric uses the global default.
+                </td>
+              </tr>
+            )}
+            {draft.map((row, i) => (
+              <tr key={i}>
+                <td>
+                  <input
+                    type="text"
+                    value={row.pattern}
+                    onChange={(e) => update(i, { pattern: e.target.value })}
+                    placeholder="disk_root or custom.*.disk_root"
+                    className="input mono"
+                    style={{ fontSize: 12 }}
+                    disabled={!isAdmin}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    value={row.ttlMs}
+                    onChange={(e) => update(i, { ttlMs: parseInt(e.target.value, 10) || 0 })}
+                    className="input mono"
+                    style={{ fontSize: 12 }}
+                    disabled={!isAdmin}
+                  />
+                </td>
+                <td className="mono" style={{ fontSize: 12 }}>
+                  {Number.isFinite(row.ttlMs) ? ttlLabel(row.ttlMs) : '—'}
+                </td>
+                {isAdmin && (
+                  <td>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => remove(i)}
+                      title="Remove"
+                      aria-label="Remove override"
+                    >
+                      <IconTrash />
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {isAdmin && (
+        <div className="toolbar" style={{ marginTop: 10 }}>
+          <button
+            type="button"
+            className="btn compact"
+            onClick={add}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <IconPlus /> Add override
+          </button>
+          <button
+            type="button"
+            className="btn compact"
+            onClick={save}
+            disabled={!dirty || busy}
+            style={{ background: dirty ? 'var(--accent)' : 'var(--bg-elevated)', color: dirty ? 'white' : 'var(--text-muted)' }}
+          >
+            {busy ? 'Saving…' : dirty ? 'Save overrides' : 'Saved'}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -1098,6 +1255,10 @@ export default function Settings() {
       <div className="spacer-md" />
 
       <HostsCard />
+
+      <div className="spacer-md" />
+
+      <RetentionCard />
 
       <div className="spacer-md" />
 

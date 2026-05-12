@@ -8,6 +8,79 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.47.0] — 2026-05-12
+
+Per-metric retention overrides. Every metric shares the global
+`OTHONI_RETENTION_MS` default (24 h). Some series benefit from longer
+retention — most notably `disk_root` for capacity planning, or any
+`custom.<host>.disk_root` from remote agents. v0.47 adds an opt-in
+override layer keyed by pattern (exact or glob) → TTL, with the
+cleanup pass honoring the longest matching TTL per metric.
+
+### Added
+
+- **`server/retention.js`** + `data/retention-overrides.json`
+  atomic-write store. Pattern syntax matches the metric name
+  alphabet plus `*` for glob (e.g. `disk_root` or
+  `custom.*.disk_root`). TTL bounded to `[60s, 1 year]`. Hard
+  cap of 64 overrides.
+- **`effectiveTtl(metricName)`** returns the longest matching
+  override (or null when nothing matches → caller falls back to
+  the global default). Regex compile is memoized between
+  cleanup passes; invalidated on save.
+- **`GET /api/retention`** — returns
+  `{ defaultMs, overrides: [{ pattern, ttlMs }], bounds: { minMs, maxMs } }`.
+  Cookie-auth, viewer-readable.
+- **`PUT /api/retention`** — replaces the whole override list
+  atomically. Admin-only via `requireAdmin`. 400s on
+  `invalid_pattern` / `invalid_ttl` / `duplicate_pattern` /
+  `invalid_request`.
+- **`retention.update` audit action** with `{ count }` metadata.
+- **Retention overrides card on Settings.** Tabular editor with
+  pattern + ttlMs + a human "reads as" hint (1h/2.5d/etc).
+  Save/dirty model identical to the Alerts rules editor.
+
+### Changed
+
+- `package.json` bumped to `0.47.0`.
+- `server/history.js` — `cleanup()` now does per-metric pruning:
+  groups distinct metric names by their effective TTL (longest
+  matching override or global default), then issues one DELETE
+  per TTL group with `WHERE metric IN (?, ?, ...)`. Falls back
+  to a single bulk DELETE if the `retention` module fails to
+  load (defensive, never expected in practice).
+- `server/audit.js` — `retention.update` added.
+- `server/routes/index.js` — two new routes.
+- `client/src/api.js` — `api.retention.{get,set}`.
+- `client/src/pages/Settings.jsx` — new `<RetentionCard>`,
+  mounted between Hosts and Sessions. Audit label updated.
+
+### Notes
+
+- **Longest TTL wins per metric.** A broader pattern can never
+  shorten the retention of a metric also matched by a more
+  specific override — that would be a surprising-and-bad
+  default (operator carefully extends `disk_root` to 30 days,
+  then accidentally adds a `*` override at 6h and silently
+  loses 24 days of data). Implementing this as "longest wins"
+  matches the operator's mental model: "extend, don't trim."
+- **No way to shorten below the global default for now.**
+  Possible follow-up if anyone needs per-metric trim. The MIN
+  bound of 60s exists only to make sure the override doesn't
+  race the 10-min cleanup tick.
+- Smoke-tested live:
+  - Empty list → defaults JSON returned.
+  - `PUT` two overrides (exact `disk_root` + glob
+    `custom.*.disk_root`, both 7d). Roundtripped via GET +
+    `data/retention-overrides.json` atomic written.
+  - `effectiveTtl('disk_root')` = 7d, `effectiveTtl('custom.app.disk_root')`
+    = 7d (matched by glob), `effectiveTtl('cpu')` = null.
+  - 400 paths: ttlMs=1000 → `invalid_ttl`; pattern with space →
+    `invalid_pattern`; duplicate pattern → `duplicate_pattern`.
+  - Audit log captured two `retention.update` events with the
+    correct `count` metadata.
+  - Overrides cleared after smoke test.
+
 ## [0.46.0] — 2026-05-12
 
 Process tree view. The existing Processes page Top-20 table is great

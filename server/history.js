@@ -283,8 +283,35 @@ async function takeSample() {
 }
 
 function cleanup() {
-  const cutoff = Date.now() - RETENTION_MS;
-  const info    = open().prepare('DELETE FROM samples            WHERE t < ?').run(cutoff);
+  const now = Date.now();
+  const cutoff = now - RETENTION_MS;
+  // v0.47 per-metric retention. Group distinct metric names by their
+  // effective TTL (longest matching override, else the global default),
+  // then issue one DELETE per group. Cheap given the (metric, t) index.
+  let retention;
+  try { retention = require('./retention'); } catch (_e) { retention = null; }
+  let info = { changes: 0 };
+  if (retention) {
+    const dbh = open();
+    const metrics = dbh.prepare('SELECT DISTINCT metric FROM samples').all().map((r) => r.metric);
+    const groups = new Map(); // ttlMs -> [metric]
+    for (const name of metrics) {
+      const override = retention.effectiveTtl(name);
+      const ttl = override || RETENTION_MS;
+      if (!groups.has(ttl)) groups.set(ttl, []);
+      groups.get(ttl).push(name);
+    }
+    for (const [ttl, names] of groups) {
+      if (names.length === 0) continue;
+      const placeholders = names.map(() => '?').join(',');
+      const r = dbh
+        .prepare(`DELETE FROM samples WHERE metric IN (${placeholders}) AND t < ?`)
+        .run(...names, now - ttl);
+      info.changes += r.changes;
+    }
+  } else {
+    info = open().prepare('DELETE FROM samples WHERE t < ?').run(cutoff);
+  }
   const pinfo   = open().prepare('DELETE FROM process_samples    WHERE t < ?').run(cutoff);
   const ainfo   = open().prepare('DELETE FROM alert_fires        WHERE t < ?').run(cutoff);
   const lginfo  = open().prepare('DELETE FROM audit_log          WHERE t < ?').run(cutoff);

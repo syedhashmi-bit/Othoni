@@ -28,6 +28,7 @@ const actions = require('../actions');
 const actionHistory = require('../action-history');
 const sessions = require('../sessions');
 const hostMeta = require('../host-meta');
+const retention = require('../retention');
 
 const router = express.Router();
 
@@ -407,6 +408,34 @@ router.put('/host-meta/:host', (req, res) => {
     }
     logger.error('host-meta upsert failed:', e.message);
     res.status(500).json({ error: 'host_meta_failed' });
+  }
+});
+
+// ---------- per-metric retention overrides (v0.47) ----------
+
+router.get('/retention', (req, res) => {
+  res.json({
+    defaultMs: history.RETENTION_MS,
+    overrides: retention.list(),
+    bounds: { minMs: retention.MIN_TTL_MS, maxMs: retention.MAX_TTL_MS },
+  });
+});
+
+router.put('/retention', (req, res) => {
+  try {
+    const next = retention.setAll((req.body && req.body.overrides) || []);
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'retention.update',
+      metadata: { count: next.length },
+    });
+    res.json({ overrides: next });
+  } catch (e) {
+    if (['invalid_request', 'invalid_pattern', 'invalid_ttl', 'duplicate_pattern'].includes(e.code)) {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    logger.error('retention setAll failed:', e.message);
+    res.status(500).json({ error: 'retention_failed' });
   }
 });
 
