@@ -55,6 +55,7 @@ export const api = {
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   overview: () => request('/api/overview'),
   hosts: () => request('/api/hosts'),
+  hostDetail: (host) => request(`/api/hosts/${encodeURIComponent(host)}`),
   hostMeta: {
     list:   () => request('/api/host-meta'),
     upsert: (host, patch) => request(`/api/host-meta/${encodeURIComponent(host)}`, {

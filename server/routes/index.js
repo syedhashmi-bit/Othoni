@@ -360,6 +360,15 @@ router.post('/checks/:id/run', async (req, res) => {
 // (v0.43).
 router.get('/hosts', wrap('hosts', () => ({ hosts: hosts.getHosts() })));
 
+// Per-host detail (v0.44). 404 when the host has neither live samples
+// in the last 10 minutes, nor stored metadata, nor any alert_fires
+// rows — i.e. nothing this dashboard knows about by that name.
+router.get('/hosts/:host', (req, res) => {
+  const detail = hosts.getHostDetail(req.params.host);
+  if (!detail) return res.status(404).json({ error: 'not_found' });
+  res.json({ host: detail });
+});
+
 // ---------- host metadata (v0.43) ----------
 // Operator-supplied overlay (owner, environment, tags, notes) keyed by
 // host. Independent of the metric ingest — metadata stays put even if

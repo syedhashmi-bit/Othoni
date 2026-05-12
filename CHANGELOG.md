@@ -8,6 +8,89 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.44.0] — 2026-05-12
+
+Per-host detail page — **closes Phase 3 (per-host depth)**. Clicking
+a host card on `/hosts` now drills into `/hosts/<host>` — a dashboard-
+shaped view scoped to that one host. Hero chart with metric +
+brushable-zoom range picker, the same 6 stat tiles as the Hosts page
+(now bigger), an "Other custom metrics" section for non-standard
+agent leaves, and a recent-fires-on-this-host timeline filtered to
+the host.
+
+### Added
+
+- **`GET /api/hosts/:host`** endpoint. Returns `{ host: { host,
+  lastSeenAt, live, metrics, extras, meta, fires } }`. `live` is
+  true iff there's at least one sample in the last 10 min. 404
+  when the host has no live samples *and* no metadata *and* no
+  alert_fires rows — i.e. nothing the dashboard knows about by
+  that name. Labeled-only hosts (metadata exists but no live
+  samples) return 200 with `live: false` so the URL stays stable
+  across agent downtime.
+- **`/hosts/:host` React route + page.** Hero chart with metric
+  + range picker (15m / 1h / 6h / 24h, brushable zoom),
+  stat-tile grid scaled up from the Hosts page tiles (now 180px
+  sparklines), extras section, host-scoped fires table.
+- **Click-to-drill on the Hosts page.** Each host card's name is
+  now a `<Link>` to the detail page with a `→` affordance.
+- **Header chip strip on the detail page.** Freshness chip
+  (live / "no samples in last 10 min"), env chip, owner line,
+  tag chips, free-text notes — all sourced from the v0.43
+  metadata overlay. Renders gracefully when meta is null.
+
+### Changed
+
+- `package.json` bumped to `0.44.0`.
+- `server/hosts.js` — new `getHostDetail(host)` does the
+  single-host scan + the alert-fires-by-host lookup + the
+  metadata overlay. Exported alongside `getHosts`.
+- `server/routes/index.js` — mounts `GET /api/hosts/:host`.
+- `client/src/api.js` — `api.hostDetail(host)`.
+- `client/src/App.jsx` — registers `/hosts/:host`.
+- `client/src/pages/Hosts.jsx` — host card name becomes a link.
+
+### Notes
+
+- **Action-runs-targeting-this-host section deferred.** The
+  roadmap mentioned it ("alert fires originating from it, action
+  runs targeting it"), but actions in the current framework
+  always run on the local box (`systemctl restart`, `docker`,
+  `process.signal` against the dashboard's own host). There's
+  no concept of an action that targets a *remote* host — the
+  framework would need a separate "exec via the agent" path,
+  which is way out of scope for v0.44. Fires-only on this page;
+  actions covered by the standalone `/actions` page.
+- **Brushable zoom on the hero chart** comes for free via the
+  existing `<LineChart>` primitive — same component that powers
+  the History page brushing.
+- **Stat-tile sparkline range follows the page range picker.**
+  So switching to 6h on the hero also pulls 6h of history into
+  every tile sparkline. One round-trip per tile (same pattern
+  as the existing Hosts page), kept light by the sampler's
+  cheap (metric, t)-index lookups.
+- Smoke-tested end-to-end:
+  - Pushed `custom.v44host.{cpu,mem,something_else}` samples
+    via a fresh API key. Labeled the host with owner / env /
+    tags / notes. Installed a `cpu > 50` per-host rule on
+    `v44host` that fired within the next 10s tick.
+  - `GET /api/hosts/v44host` returned `live:true`, both known
+    leaves (`cpu`, `mem`) in `metrics`, `something_else` in
+    `extras`, the metadata overlay, and the 1 fire with
+    `host="v44host"`.
+  - `PUT /api/host-meta/ghosthost` for an unpushed name, then
+    `GET /api/hosts/ghosthost` → 200 with `live: false`,
+    `lastSeenAt: null`, no metrics, but meta intact.
+  - `GET /api/hosts/ghost-host-does-not-exist` → 404.
+  - Cleaned up the test API key, rule, and metadata. Final
+    rules + host-meta state restored to baseline.
+
+This release closes Phase 3 (per-host depth). Phase 3 total: v0.41
+per-host alert rules, v0.42 per-host webhook subscriptions, v0.43
+host metadata, v0.44 host detail page. Together they take othoni
+from "discover hosts by name" to "first-class per-host scoping
+across rules, webhooks, metadata, and a dedicated drill-down view."
+
 ## [0.43.0] — 2026-05-12
 
 Host metadata overlay. Hosts have been auto-discovered from

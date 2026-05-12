@@ -94,4 +94,71 @@ function getHosts({ recentMs = DEFAULT_RECENT_MS } = {}) {
   return out;
 }
 
-module.exports = { getHosts, KNOWN_LEAVES };
+// Single-host detail snapshot for the v0.44 detail page. Same shape as
+// one entry in getHosts() plus a recent-fires slice filtered to this
+// host. Returns null when the host has no samples in the last 10 min
+// — the page renders a "host went silent" fallback so the URL stays
+// stable across agent restarts.
+function getHostDetail(host, { firesRangeMs = 24 * 60 * 60 * 1000 } = {}) {
+  if (typeof host !== 'string' || !host) return null;
+  const db = history.getDb();
+  const cutoff = Date.now() - DEFAULT_RECENT_MS;
+  const rows = db
+    .prepare(
+      `SELECT metric, MAX(t) AS lastT
+       FROM samples
+       WHERE metric LIKE 'custom.' || ? || '.%' AND t >= ?
+       GROUP BY metric`
+    )
+    .all(host, cutoff);
+
+  const meta = hostMeta.get(host);
+  const liveRows = rows.length > 0;
+  let lastSeenAt = 0;
+  const metrics = {};
+  const extras = {};
+  if (liveRows) {
+    const latestStmt = db.prepare(
+      `SELECT t, v FROM samples WHERE metric = ? ORDER BY t DESC LIMIT 1`
+    );
+    for (const r of rows) {
+      const m = HOST_RE.exec(r.metric);
+      if (!m || m[1] !== host) continue;
+      const leaf = m[2];
+      const last = latestStmt.get(r.metric);
+      if (!last) continue;
+      const entry = { t: last.t, v: last.v, metric: r.metric };
+      if (KNOWN_LEAVES.has(leaf)) metrics[leaf] = entry;
+      else extras[leaf] = entry;
+      if (r.lastT > lastSeenAt) lastSeenAt = r.lastT;
+    }
+  }
+
+  // Recent fires for this host. Includes the comparator + denormalized
+  // label/severity so they render after the rule is deleted.
+  const fires = db
+    .prepare(
+      `SELECT t, rule_id AS ruleId, metric, severity, label, value, threshold, sustained_ms AS sustainedMs, comparator, host
+         FROM alert_fires
+        WHERE host = ? AND t >= ?
+        ORDER BY t DESC
+        LIMIT 100`
+    )
+    .all(host, Date.now() - firesRangeMs);
+
+  // If the host has neither live samples nor stored metadata nor a
+  // fire history, treat it as "unknown" so the API can 404 cleanly.
+  if (!liveRows && !meta && fires.length === 0) return null;
+
+  return {
+    host,
+    lastSeenAt: lastSeenAt || null,
+    live: liveRows,
+    metrics,
+    extras,
+    meta: meta || null,
+    fires,
+  };
+}
+
+module.exports = { getHosts, getHostDetail, KNOWN_LEAVES };

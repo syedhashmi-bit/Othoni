@@ -19,6 +19,7 @@ import Logs from './pages/Logs.jsx';
 import Settings from './pages/Settings.jsx';
 import History from './pages/History.jsx';
 import Hosts from './pages/Hosts.jsx';
+import HostDetail from './pages/HostDetail.jsx';
 import Actions from './pages/Actions.jsx';
 import { Logo } from './Logo.jsx';
 import { Cheatsheet } from './Cheatsheet.jsx';
@@ -400,6 +401,7 @@ function AuthedAppBody({ refreshMs, alerts, user, handleLogout }) {
         <Route path="/" element={<Dashboard />} />
         <Route path="/history" element={<History />} />
         <Route path="/hosts" element={<Hosts />} />
+        <Route path="/hosts/:host" element={<HostDetail />} />
         <Route path="/actions" element={<Actions />} />
         <Route path="/storage" element={<Storage />} />
         <Route path="/processes" element={<Processes />} />

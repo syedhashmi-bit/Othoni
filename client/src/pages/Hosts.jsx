@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { Sparkline } from '../Charts.jsx';
 import { formatBytes, formatRate, statusClass } from '../utils.js';
@@ -84,7 +85,14 @@ function HostCard({ host }) {
             <span className={`chip ${freshness}`} style={{ fontSize: 11 }}>
               <span className="dot" />{freshnessLabel(host.lastSeenAt)}
             </span>
-            <span className="mono" style={{ fontSize: 16 }}>{host.host}</span>
+            <Link
+              to={`/hosts/${encodeURIComponent(host.host)}`}
+              className="mono"
+              style={{ fontSize: 16, color: 'inherit', textDecoration: 'none' }}
+              title={`Open ${host.host} detail`}
+            >
+              {host.host} →
+            </Link>
             {m.environment && (
               <span className="chip" style={{ fontSize: 10 }}>{m.environment}</span>
             )}
