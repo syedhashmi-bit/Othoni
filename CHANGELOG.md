@@ -8,6 +8,86 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.41.0] — 2026-05-12
+
+Per-host alert rules — opens Phase 3 (per-host depth). Until now,
+every alert rule evaluated against the local box's snapshot. With
+multi-host attribution (v0.23.0) and `agent.sh` (v0.25.0) pushing
+samples from N machines, the natural next step is to let rules
+target *those* hosts: "alert when `app-server-1`'s CPU > 90%
+sustained 5 min." Rule schema grows an optional `host` field; the
+evaluator branches accordingly. Local-box rules continue to work
+unchanged (no `host` set = existing behaviour).
+
+### Added
+
+- **Optional `host` field on alert rules.** DNS-style validation
+  (matches the existing ingest pattern, so a rule never references
+  a host name the ingest would reject). Missing/empty = local-box
+  rule, full back-compat.
+- **Per-host evaluator path.** When `rule.host` is set, the
+  evaluator reads `custom.<host>.<metric>` from the samples table
+  instead of the local snapshot. For rate comparators
+  (`rate_gt` / `rate_lt`), the rate query uses the host-attributed
+  metric name too. Latest-value lookups for per-host rules have a
+  10-minute freshness window so a host that stops reporting stops
+  firing on its stale last value.
+- **`host` column on `alert_fires`.** Idempotent migration adds
+  it; pre-v0.41 rows get NULL (rendered as the local-box default
+  on read). Fires triggered by a per-host rule denormalize the
+  host into the row so the Recent fires card can show which host
+  fired even after the rule is deleted.
+- **`host` field threaded through `/api/alerts/active` and
+  `/api/alerts/history`.** Per-rule active entries now carry
+  `host: "..."` or `null`; recent-fires rows ditto.
+- **Host picker on the Alerts rule editor.** Inline under the
+  metric select: `on [this box ▾]` with options sourced from
+  `/api/hosts`. Refreshed every 60 s. A previously-saved host
+  that's no longer in the hosts list shows up as
+  `<host> (offline)` so it stays editable even when the agent is
+  down.
+- **Host chip on the Recent fires timeline** + an "on <host>"
+  annotation in the live rule row's "Now" column for per-host
+  active rules.
+
+### Changed
+
+- `package.json` bumped to `0.41.0`.
+- `server/history.js` — `migrate()` adds the `host` column to
+  `alert_fires` idempotently.
+- `server/alerts.js` — new `HOST_RE` + `isValidHost`, `host`
+  validation in `isValidRule`, `sampleMetricFor(rule)` + new
+  `latestForHost()` helper, `tick()` branches on `rule.host`,
+  `recordFires()` writes `host`, `listFires()` selects it,
+  `projectActive()` includes it.
+- `client/src/pages/Alerts.jsx` — Alerts page fetches `/api/hosts`
+  and threads the list into `<RuleRow>`. New host picker inline
+  under the metric select. Active "Now" cell shows host, recent
+  fires rows carry a host chip.
+
+### Notes
+
+- The intersection of "metrics agent.sh pushes" and "metrics the
+  alert engine knows about" is currently {cpu, mem, load1,
+  disk_root, net_rx, net_tx}. Per-host rules targeting `swap` /
+  `disk_read` / `disk_write` will silently never fire unless a
+  custom agent pushes those leaves under `custom.<host>.*`. That's
+  fine — null value → no breach → no spurious fire.
+- Smoke-tested end-to-end against the live VPS:
+  - Minted an API key, pushed four `custom.smoketesthost1.cpu=95`
+    samples via the Bearer-auth ingest.
+  - Created a rule `{ metric: "cpu", host: "smoketesthost1",
+    comparator: "gt", threshold: 50, durationMs: 0 }`.
+  - After the next 10 s tick: `/api/alerts/active` returned the
+    rule firing with `host: "smoketesthost1"`, `value: 95`,
+    `valueFmt: "95.0%"`. `/api/alerts/history` row carried the
+    same `host`.
+  - Pushed a rule with a malformed host (uppercase) → server
+    `dropped invalid rule` warn, rule dropped on save.
+  - Pushed a rule against a host with no samples ever
+    (`nonexistent`) → never fired.
+  - Original rules restored after smoke test; key revoked.
+
 ## [0.40.0] — 2026-05-12
 
 Login lockout. Fourth Phase 2 release — **closes Phase 2 (auth &

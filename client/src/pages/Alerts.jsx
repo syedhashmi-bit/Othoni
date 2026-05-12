@@ -206,7 +206,7 @@ function OnFireEditor({ onFire, actionsState, onChange }) {
   );
 }
 
-function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, editable = true, onChange, onDelete }) {
+function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, hosts = [], editable = true, onChange, onDelete }) {
   const sevColor = rule.severity === 'crit' ? 'var(--crit)' : 'var(--warn)';
   const isFiring = !!active;
   const [expanded, setExpanded] = React.useState(false);
@@ -242,6 +242,30 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, edita
         >
           {metrics.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
         </select>
+        <div style={{ marginTop: 4, fontSize: 11 }} className="muted">
+          on{' '}
+          <select
+            value={rule.host || ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              const next = { ...rule };
+              if (v) next.host = v; else delete next.host;
+              onChange(next);
+            }}
+            className="select"
+            style={{ padding: '1px 4px', fontSize: 11 }}
+            disabled={!editable}
+            title="Host scope. 'this box' uses the local snapshot; pick a host name to evaluate against custom.<host>.<metric>."
+          >
+            <option value="">this box</option>
+            {hosts.map((h) => <option key={h} value={h}>{h}</option>)}
+            {/* Preserve a host name that's no longer in the list — e.g.
+                the agent stopped reporting. */}
+            {rule.host && !hosts.includes(rule.host) && (
+              <option value={rule.host}>{rule.host} (offline)</option>
+            )}
+          </select>
+        </div>
       </td>
       <td>
         <select
@@ -313,6 +337,9 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, edita
           <>
             <span style={{ color: sevColor }}>{active.valueFmt}</span>
             <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>firing · {formatDuration(active.sustainedFor)}</div>
+            {active.host && (
+              <div className="dim" style={{ fontSize: 11 }}>on {active.host}</div>
+            )}
           </>
         ) : (
           <span className="dim">—</span>
@@ -463,7 +490,14 @@ function RecentFiresCard() {
                     </div>
                   </td>
                   <td>
-                    <div>{f.label || <span className="dim">(unnamed)</span>}</div>
+                    <div>
+                      {f.label || <span className="dim">(unnamed)</span>}
+                      {f.host && (
+                        <span className="chip" style={{ marginLeft: 6, fontSize: 10 }}>
+                          {f.host}
+                        </span>
+                      )}
+                    </div>
                     <div className="dim mono" style={{ fontSize: 11 }}>{f.metric}</div>
                   </td>
                   <td>
@@ -861,6 +895,7 @@ export default function Alerts() {
   const [metrics, setMetrics] = useState([]);
   const [stats, setStats] = useState(null); // { range, from, to, bucketMs, byRule: { id: { fires, lastFiredAt, points } } }
   const [actionsState, setActionsState] = useState(null);
+  const [hostList, setHostList] = useState([]);
   const [err, setErr] = useState(null);
   const [notify, setNotify] = useState(readNotifyEnabled());
   const [saving, setSaving] = useState(false);
@@ -873,6 +908,21 @@ export default function Alerts() {
     api.actions.list()
       .then(setActionsState)
       .catch(() => setActionsState({ enabled: false, kinds: [] }));
+  }, []);
+
+  // Host list for the per-host rule picker (v0.41). Re-fetch every 60s so
+  // newly-onboarded hosts show up without a page reload. Stale-host
+  // names already saved on a rule remain editable via the "(offline)"
+  // option preserved in RuleRow.
+  useEffect(() => {
+    function refresh() {
+      api.hosts()
+        .then((r) => setHostList((r.hosts || []).map((h) => h.host)))
+        .catch(() => { /* leave list empty; rules with host:'' still work */ });
+    }
+    refresh();
+    const id = setInterval(refresh, 60_000);
+    return () => clearInterval(id);
   }, []);
 
   function loadAll() {
@@ -1030,6 +1080,7 @@ export default function Alerts() {
                     stats={stats?.byRule?.[r.id]}
                     statsRange={stats ? { from: stats.from, to: stats.to } : null}
                     actionsState={actionsState}
+                    hosts={hostList}
                     editable={isAdmin}
                     onChange={(next) => update(r.id, next)}
                     onDelete={() => remove(r.id)}

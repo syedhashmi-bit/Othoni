@@ -201,6 +201,12 @@ function migrate(db) {
     // instant model.
     db.exec('ALTER TABLE alert_fires ADD COLUMN comparator TEXT');
   }
+  if (!cols.includes('host')) {
+    // Per-host alert rules (v0.41.0). NULL = local-box rule (existing
+    // behaviour); a value = rule was scoped to that host's `custom.*`
+    // metric.
+    db.exec('ALTER TABLE alert_fires ADD COLUMN host TEXT');
+  }
 }
 
 const insertStmt = () =>

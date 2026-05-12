@@ -45,6 +45,12 @@ const METRICS = {
 // in-process samples table.
 const COMPARATORS = new Set(['gt', 'lt', 'rate_gt', 'rate_lt']);
 const RATE_COMPARATORS = new Set(['rate_gt', 'rate_lt']);
+
+// Same DNS-style pattern the ingest endpoint enforces. Used by v0.41
+// per-host rules so a rule never references a host name the ingest
+// would reject.
+const HOST_RE = /^([a-z0-9][a-z0-9-]{0,38}[a-z0-9]|[a-z0-9])$/;
+function isValidHost(h) { return typeof h === 'string' && HOST_RE.test(h); }
 const MIN_RATE_WINDOW_MS = 60_000;
 const MAX_RATE_WINDOW_MS = 60 * 60_000;
 const DEFAULT_RATE_WINDOW_MS = 5 * 60_000;
@@ -119,6 +125,12 @@ function isValidRule(r) {
   // tightens the action whitelist.
   if (r.onFire != null) {
     if (!isValidOnFire(r.onFire)) return false;
+  }
+  // v0.41: optional `host` field. When set, the evaluator reads
+  // `custom.<host>.<metric>` from the samples table instead of the
+  // local snapshot. Missing/null = the existing local-box behaviour.
+  if (r.host != null && r.host !== '') {
+    if (!isValidHost(r.host)) return false;
   }
   return true;
 }
@@ -219,21 +231,42 @@ async function snapshot() {
 // linear regression — the existing 5s sampling cadence makes the two
 // approaches indistinguishable in practice and the endpoint version is
 // trivially cheap (single SELECT, two rows).
-function rateAt(metricKey, windowMs, now) {
-  const meta = METRICS[metricKey];
-  if (!meta) return null;
-  const histKey = meta.historyKey || metricKey;
+// Returns the metric name in the samples table for a given rule. Per-host
+// rules read from `custom.<host>.<metric>` (agent.sh pushes flat names
+// like `cpu`, `mem` etc. — same keys as the alert METRICS map, no dotted
+// historyKey translation needed). Local rules use the existing
+// historyKey when set, falling back to the metric key.
+function sampleMetricFor(rule) {
+  if (rule.host) return `custom.${rule.host}.${rule.metric}`;
+  const meta = METRICS[rule.metric];
+  return (meta && meta.historyKey) || rule.metric;
+}
+
+// Latest sample for a per-host rule. Considers only points within the
+// last 10 minutes so a host that stopped reporting doesn't keep firing
+// forever on its last stale value.
+const HOST_LATEST_WINDOW_MS = 10 * 60 * 1000;
+function latestForHost(metricName, now) {
+  const row = history.getDb()
+    .prepare(
+      `SELECT t, v FROM samples WHERE metric = ? AND t >= ? ORDER BY t DESC LIMIT 1`
+    )
+    .get(metricName, now - HOST_LATEST_WINDOW_MS);
+  return row ? row.v : null;
+}
+
+function rateAt(metricName, windowMs, now) {
   const from = now - windowMs;
   const db = history.getDb();
   // First and last sample in the window — SQLite picks them off the
   // (metric, t) index without scanning the body.
   const first = db.prepare(
     `SELECT t, v FROM samples WHERE metric = ? AND t >= ? ORDER BY t ASC LIMIT 1`
-  ).get(histKey, from);
+  ).get(metricName, from);
   if (!first) return null;
   const last = db.prepare(
     `SELECT t, v FROM samples WHERE metric = ? AND t >= ? ORDER BY t DESC LIMIT 1`
-  ).get(histKey, from);
+  ).get(metricName, from);
   if (!last || last.t === first.t) return null;
   const minutes = (last.t - first.t) / 60_000;
   if (minutes <= 0) return null;
@@ -257,13 +290,19 @@ async function tick() {
     }
     const meta = METRICS[rule.metric];
     const isRate = isRateComparator(rule.comparator);
+    const sampleMetric = sampleMetricFor(rule);
     let value;
     if (isRate) {
       const windowMs = Math.min(
         MAX_RATE_WINDOW_MS,
         Math.max(MIN_RATE_WINDOW_MS, rule.rateWindowMs || DEFAULT_RATE_WINDOW_MS)
       );
-      value = rateAt(rule.metric, windowMs, now);
+      value = rateAt(sampleMetric, windowMs, now);
+    } else if (rule.host) {
+      // Per-host threshold rule: read the latest sample for the
+      // host-attributed metric. Stale hosts (no sample in last 10m)
+      // → null → no fire, same shape as missing local data.
+      value = latestForHost(sampleMetric, now);
     } else {
       value = meta.extract(snap);
     }
@@ -359,8 +398,8 @@ async function dispatchOnFire(fireEvent, firedAt) {
 function recordFires(t, fires) {
   const db = history.getDb();
   const stmt = db.prepare(
-    `INSERT INTO alert_fires (t, rule_id, metric, severity, label, value, threshold, sustained_ms, comparator)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO alert_fires (t, rule_id, metric, severity, label, value, threshold, sustained_ms, comparator, host)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const tx = db.transaction((rows) => {
     for (const f of rows) {
@@ -373,7 +412,8 @@ function recordFires(t, fires) {
         f.value,
         f.rule.threshold,
         f.sustainedFor,
-        f.rule.comparator || null
+        f.rule.comparator || null,
+        f.rule.host || null
       );
     }
   });
@@ -392,6 +432,7 @@ function projectActive() {
       label: rule.label,
       metric: rule.metric,
       metricLabel: meta.label,
+      host: rule.host || null,
       comparator: rule.comparator,
       threshold: rule.threshold,
       thresholdFmt: isRate ? formatRateValue(meta, rule.threshold) : meta.format(rule.threshold),
@@ -472,7 +513,7 @@ function listFires({ range = '24h', limit = 100 } = {}) {
   const from = now - span;
   const cap  = Math.min(500, Math.max(1, limit | 0 || 100));
   const rows = history.getDb().prepare(
-    `SELECT t, rule_id AS ruleId, metric, severity, label, value, threshold, sustained_ms AS sustainedMs, comparator
+    `SELECT t, rule_id AS ruleId, metric, severity, label, value, threshold, sustained_ms AS sustainedMs, comparator, host
        FROM alert_fires
       WHERE t >= ?
       ORDER BY t DESC
