@@ -37,6 +37,8 @@ const VALID_ACTIONS = new Set([
   'action.docker.stop',
   'action.docker.restart',
   'action.process.signal',
+  // Phase 2 session management (v0.38).
+  'session.revoke',
 ]);
 
 let insertStmt = null;

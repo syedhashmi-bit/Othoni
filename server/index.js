@@ -16,6 +16,7 @@ const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
 const promExport = require('./prom-export');
 const history = require('./history');
+const sessions = require('./sessions');
 const processHistory = require('./process-history');
 const alerts = require('./alerts');
 const webhooks = require('./webhooks');
@@ -111,6 +112,10 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, HOST, () => {
   logger.info(`othoni v${VERSION} listening on http://${HOST}:${PORT}`);
   history.start();
+  // Prime the in-memory revoked-session cache from disk so cookies revoked
+  // before the last restart stay revoked.
+  sessions.ensureSchema();
+  sessions.loadRevokedFromDb();
   // Process trends sampler — slower cadence (default 30s), shares the same
   // SQLite handle via history.getDb() so it must start after history.start().
   processHistory.start();

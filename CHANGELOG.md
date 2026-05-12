@@ -8,6 +8,104 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.38.0] — 2026-05-12
+
+Active session list + revoke. JWT cookies were stateless before this —
+the only way to invalidate a leaked session was rotating
+`OTHONI_JWT_SECRET` (which logs every cookie out at once). v0.38 adds
+a `sessions` table keyed on a `sid` claim baked into every new JWT;
+each authenticated request checks the table and rejects revoked
+cookies. The Settings page gains a Sessions card listing every
+active session with a Revoke button (admin) — and viewers can see
+their own session there to confirm where they're logged in.
+
+### Added
+
+- **`sessions` SQLite table.** Columns: `sid`, `actor`, `role`, `ip`,
+  `ua`, `createdAt`, `lastSeenAt`, `expiresAt`, `revokedAt`,
+  `revokedBy`. Indexed on `actor` + `expiresAt`. Lives in the
+  shared `data/othoni.db` file alongside everything else.
+- **`server/sessions.js`** — `create()`, `getActive(sid)`, `touch(sid)`,
+  `revoke(sid, { revokedBy })`, `listAll()`, `prune()`,
+  `loadRevokedFromDb()`. An in-memory `revokedCache` Set lets the
+  hot path skip the DB lookup on revoked cookies. `touch()` is
+  throttled to one write per session per 30 seconds.
+- **`sid` claim on every JWT.** Generated as 192 random bits
+  (base64url) at login. Stored in the cookie *and* the audit
+  log's `login.ok` metadata so a session can be cross-referenced
+  back to its login event.
+- **`GET /api/sessions`.** Admin sees every row; viewer sees only
+  their own rows (so they can confirm where they're logged in
+  without exposing the admin's session list). Sorted active-first,
+  then revoked, then by `lastSeenAt` desc. Each row carries a
+  `self: true` flag for the requesting session.
+- **`DELETE /api/sessions/:sid`.** Admin-only (caught at the
+  router-level `requireAdmin` guard). Marks the row revoked,
+  records `revokedBy`, adds it to the in-memory cache. Audit-logged
+  as `session.revoke` with `metadata.self` distinguishing
+  self-revoke from operator-revoke.
+- **`session.revoke` audit action.** Added to the whitelist; new
+  Settings → Audit log label.
+- **Sessions card on the Settings page.** Lists each session with
+  actor, role, IP, UA, started/last-seen relative times, a status
+  chip (active/revoked + revokedBy), and a Revoke button for
+  admins on active rows. Refreshes every 30s. Revoking your own
+  session prompts an explicit confirm.
+- **Logout = self-revoke.** `POST /api/auth/logout` now revokes
+  the cookie's `sid`. Defensive decode lets it still work if the
+  cookie passed through the `auth` middleware *or* if it didn't.
+
+### Changed
+
+- `package.json` bumped to `0.38.0`.
+- `server/auth.js` — `login()` creates a session row first, then
+  signs `{ sub, role, sid }`. `auth()` middleware rejects any
+  token without `sid` (pre-v0.38 cookies become invalid) or
+  whose `sid` isn't in the active set, and `touch()`es the
+  session on every authenticated request. `logout()` defensively
+  decodes the cookie + revokes the sid.
+- `server/index.js` — primes the revoked-session cache from disk
+  via `sessions.loadRevokedFromDb()` after `history.start()`.
+- `server/history.js` — `cleanup()` now also calls `sessions.prune()`
+  so the existing 10-min sweep removes expired or 7-day-stale
+  revoked rows.
+- `server/audit.js` — `session.revoke` added to the action whitelist.
+- `server/routes/index.js` — mounts the two new endpoints.
+- `client/src/api.js` — `api.sessions.{list,revoke}` helpers.
+- `client/src/pages/Settings.jsx` — new `<SessionsCard>`, mounted
+  between the Actions card and the API keys card.
+
+### Notes
+
+- **Pre-v0.38 JWT cookies are forcibly invalidated.** Tokens
+  signed before this release don't carry a `sid` and the new
+  middleware rejects them — every user has to log in once after
+  the upgrade. Acceptable: this is a security-tightening release
+  and the alternative (grandfathering old tokens) defeats the
+  whole point.
+- **Revoked-sid cache primed at boot.** Otherwise a process
+  restart would resurrect cookies revoked just before the
+  restart (until their first request triggered a DB miss).
+- **Forensic retention.** Revoked + expired rows stick around
+  for 7 days past their respective lifetimes (revokedAt /
+  expiresAt) so the Sessions card can show "this session was
+  revoked at X by Y" after the fact. After that the cleanup
+  sweep drops them. The cache is reloaded from disk after a
+  prune so removed sids don't occupy memory forever.
+- **`lastSeenAt` write throttle.** Per-sid in-memory map gates
+  the UPDATE to one write per 30s so a tight polling loop
+  (the live alert-active poller fires every 10s) doesn't flood
+  the SQLite writer.
+- Smoke-tested end-to-end against the live VPS at v0.38.0:
+  multi-session login (admin × 2 + viewer) → `/api/sessions`
+  returns 3 to admin, 1 to viewer. Admin revoked admin-B → next
+  GET on admin-B's cookie returned 401. Pre-v0.38 token (no
+  sid) → 401. Forged sid that doesn't exist in the table → 401.
+  Viewer logged out → their cookie → 401. Service restarted →
+  every previously-revoked cookie remained 401 (cache primed
+  from disk). Viewer's DELETE attempt → 403 (requireAdmin
+  caught it).
+
 ## [0.37.0] — 2026-05-12
 
 Read-only second user — the first release of Phase 2 (auth & access).

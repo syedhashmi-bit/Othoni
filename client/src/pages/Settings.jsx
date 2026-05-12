@@ -233,6 +233,7 @@ const AUDIT_ACTION_LABELS = {
   'check.update':   { label: 'check ~',       tone: 'dim' },
   'check.delete':   { label: 'check −',       tone: 'warn' },
   'check.run':      { label: 'check run',     tone: 'dim' },
+  'session.revoke': { label: 'session revoke',tone: 'warn' },
 };
 
 function AuditLogCard() {
@@ -493,6 +494,132 @@ function ActionsCard() {
             </div>
           </AdminOnly>
         </>
+      )}
+    </div>
+  );
+}
+
+function SessionsCard() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
+  const [list, setList] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(null); // sid being revoked
+
+  function refresh() {
+    api.sessions.list()
+      .then((r) => setList(r.sessions || []))
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(() => {
+    refresh();
+    // Refresh every 30s so lastSeen ticks forward.
+    const id = setInterval(refresh, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  async function revoke(s) {
+    const verb = s.self ? 'Revoke YOUR OWN session (this will log you out)' : `Revoke ${s.actor}'s session`;
+    if (!confirm(`${verb}?`)) return;
+    setBusy(s.sid);
+    setErr(null);
+    try {
+      await api.sessions.revoke(s.sid);
+      refresh();
+      // Revoking your own session logs you out — let the next API call
+      // trigger the unauth flow naturally rather than hard-redirecting.
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const active = (list || []).filter((s) => !s.revokedAt);
+  const revoked = (list || []).filter((s) => s.revokedAt);
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Sessions</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Active browser logins. Revoke to invalidate a leaked cookie
+            without rotating the JWT secret. Revoked rows stay visible
+            for 7 days as a forensic trail.
+          </div>
+        </div>
+        <button type="button" className="btn tiny" onClick={refresh}>refresh</button>
+      </div>
+
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      {list != null && list.length === 0 && (
+        <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
+          No sessions recorded yet.
+        </div>
+      )}
+
+      {list != null && list.length > 0 && (
+        <div className="table-wrap" style={{ marginTop: 12 }}>
+          <table className="t">
+            <thead>
+              <tr>
+                <th>Actor</th>
+                <th>Role</th>
+                <th>IP</th>
+                <th>UA</th>
+                <th>Started</th>
+                <th>Last seen</th>
+                <th>Status</th>
+                {isAdmin && <th style={{ width: 80 }}></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {[...active, ...revoked].map((s) => (
+                <tr key={s.sid} style={{ opacity: s.revokedAt ? 0.55 : 1 }}>
+                  <td>
+                    {s.actor}
+                    {s.self && <span className="chip" style={{ marginLeft: 6, fontSize: 10 }}>you</span>}
+                  </td>
+                  <td className="mono" style={{ fontSize: 12 }}>{s.role}</td>
+                  <td className="mono dim" style={{ fontSize: 12 }}>{s.ip || '—'}</td>
+                  <td className="mono dim" style={{ fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.ua || ''}>
+                    {s.ua || '—'}
+                  </td>
+                  <td className="muted" style={{ fontSize: 12 }}>{formatRelative(s.createdAt)}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>{formatRelative(s.lastSeenAt)}</td>
+                  <td>
+                    {s.revokedAt ? (
+                      <span className="chip dim" style={{ fontSize: 11 }}>
+                        <span className="dot" />revoked
+                        {s.revokedBy && s.revokedBy !== s.actor && ` by ${s.revokedBy}`}
+                      </span>
+                    ) : (
+                      <span className="chip ok" style={{ fontSize: 11 }}>
+                        <span className="dot" />active
+                      </span>
+                    )}
+                  </td>
+                  {isAdmin && (
+                    <td>
+                      {!s.revokedAt && (
+                        <button
+                          type="button"
+                          className="btn tiny"
+                          onClick={() => revoke(s)}
+                          disabled={busy === s.sid}
+                        >
+                          {busy === s.sid ? '…' : 'Revoke'}
+                        </button>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -780,6 +907,10 @@ export default function Settings() {
       <div className="spacer-md" />
 
       <ActionsCard />
+
+      <div className="spacer-md" />
+
+      <SessionsCard />
 
       <div className="spacer-md" />
 

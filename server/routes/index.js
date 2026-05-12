@@ -26,6 +26,7 @@ const webhookHistory = require('../webhook-history');
 const hosts = require('../hosts');
 const actions = require('../actions');
 const actionHistory = require('../action-history');
+const sessions = require('../sessions');
 
 const router = express.Router();
 
@@ -444,6 +445,45 @@ router.get('/audit', (req, res) => {
 // List of valid action names for the filter dropdown.
 router.get('/audit/actions', (req, res) => {
   res.json({ actions: audit.listActions() });
+});
+
+// ---------- sessions (v0.38) ----------
+// Admin sees every session; viewer sees only their own (so they can confirm
+// where they're logged in without exposing the admin's session list).
+// Revoke is admin-only — blocked at the router-level requireAdmin guard.
+
+router.get('/sessions', (req, res) => {
+  const all = sessions.listAll();
+  const visible = req.user.role === 'admin'
+    ? all
+    : all.filter((s) => s.actor === req.user.username);
+  res.json({
+    sessions: visible.map((s) => ({
+      sid: s.sid,
+      actor: s.actor,
+      role: s.role,
+      ip: s.ip,
+      ua: s.ua,
+      createdAt: s.createdAt,
+      lastSeenAt: s.lastSeenAt,
+      expiresAt: s.expiresAt,
+      revokedAt: s.revokedAt,
+      revokedBy: s.revokedBy,
+      self: s.sid === req.user.sid,
+    })),
+  });
+});
+
+router.delete('/sessions/:sid', (req, res) => {
+  const ok = sessions.revoke(req.params.sid, { revokedBy: req.user.username });
+  if (!ok) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'session.revoke',
+    target: req.params.sid,
+    metadata: { self: req.params.sid === req.user.sid },
+  });
+  res.json({ ok: true });
 });
 
 // Settings (server-side bits the UI may want to display)

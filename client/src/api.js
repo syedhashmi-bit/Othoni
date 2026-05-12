@@ -76,6 +76,10 @@ export const api = {
   services: () => request('/api/services'),
   settings: () => request('/api/settings'),
   dbStats: () => request('/api/db/stats'),
+  sessions: {
+    list:   () => request('/api/sessions'),
+    revoke: (sid) => request(`/api/sessions/${encodeURIComponent(sid)}`, { method: 'DELETE' }),
+  },
   audit: ({ range = '24h', action = null, limit = 200 } = {}) => {
     const qs = new URLSearchParams({ range, limit: String(limit) });
     if (action) qs.set('action', action);

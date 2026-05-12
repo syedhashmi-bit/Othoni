@@ -284,10 +284,18 @@ function cleanup() {
   const lginfo  = open().prepare('DELETE FROM audit_log          WHERE t < ?').run(cutoff);
   const winfo   = open().prepare('DELETE FROM webhook_deliveries WHERE t < ?').run(cutoff);
   const actinfo = open().prepare('DELETE FROM action_history     WHERE t < ?').run(cutoff);
-  const total = info.changes + pinfo.changes + ainfo.changes + lginfo.changes + winfo.changes + actinfo.changes;
+  // Sessions live on their own clock (TTL + 7-day forensic window) so they
+  // don't share the 24h cutoff above. Required so revoked-session rows
+  // stay visible in the Sessions card for a few days after the fact.
+  let sessChanges = 0;
+  try {
+    const sessions = require('./sessions');
+    sessChanges = sessions.prune();
+  } catch (_e) { /* sessions module may not be loaded in tests */ }
+  const total = info.changes + pinfo.changes + ainfo.changes + lginfo.changes + winfo.changes + actinfo.changes + sessChanges;
   if (total > 0) {
     logger.debug(
-      `history: pruned ${info.changes} samples + ${pinfo.changes} process_samples + ${ainfo.changes} alert_fires + ${lginfo.changes} audit_log + ${winfo.changes} webhook_deliveries + ${actinfo.changes} action_history`
+      `history: pruned ${info.changes} samples + ${pinfo.changes} process_samples + ${ainfo.changes} alert_fires + ${lginfo.changes} audit_log + ${winfo.changes} webhook_deliveries + ${actinfo.changes} action_history + ${sessChanges} sessions`
     );
   }
 }
