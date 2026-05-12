@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
-import { useApp } from '../App.jsx';
+import { useApp, AdminOnly } from '../App.jsx';
 import { IconPlus, IconTrash } from '../Icons.jsx';
 import { formatBytes } from '../utils.js';
 
@@ -440,29 +440,30 @@ function ActionsCard() {
             </div>
           </div>
 
-          <div style={{ marginTop: 14 }}>
-            <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
-              Framework smoke test
-            </div>
-            <div className="toolbar" style={{ margin: 0 }}>
-              <button
-                type="button"
-                className="btn tiny"
-                onClick={() => runNoop(true)}
-                disabled={testing}
-              >
-                Run noop (dry run)
-              </button>
-              <button
-                type="button"
-                className="btn tiny"
-                onClick={() => runNoop(false)}
-                disabled={testing}
-              >
-                Run noop
-              </button>
-              {testing && <span className="muted" style={{ fontSize: 12 }}>running…</span>}
-            </div>
+          <AdminOnly>
+            <div style={{ marginTop: 14 }}>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                Framework smoke test
+              </div>
+              <div className="toolbar" style={{ margin: 0 }}>
+                <button
+                  type="button"
+                  className="btn tiny"
+                  onClick={() => runNoop(true)}
+                  disabled={testing}
+                >
+                  Run noop (dry run)
+                </button>
+                <button
+                  type="button"
+                  className="btn tiny"
+                  onClick={() => runNoop(false)}
+                  disabled={testing}
+                >
+                  Run noop
+                </button>
+                {testing && <span className="muted" style={{ fontSize: 12 }}>running…</span>}
+              </div>
             {testResult && (
               <div style={{
                 marginTop: 10,
@@ -489,7 +490,8 @@ function ActionsCard() {
                 )}
               </div>
             )}
-          </div>
+            </div>
+          </AdminOnly>
         </>
       )}
     </div>
@@ -497,6 +499,8 @@ function ActionsCard() {
 }
 
 function ApiKeysCard() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
   const [keys, setKeys] = useState(null);
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
@@ -605,24 +609,26 @@ function ApiKeysCard() {
         </div>
       )}
 
-      <form onSubmit={generate} className="toolbar" style={{ marginTop: 14, marginBottom: 0 }}>
-        <input
-          type="text"
-          placeholder="Label (e.g. app-server-1, cron-job-foo)"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          maxLength={80}
-          className="input grow"
-        />
-        <button
-          type="submit"
-          className="btn compact"
-          disabled={busy || !label.trim()}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-        >
-          <IconPlus /> Generate
-        </button>
-      </form>
+      {isAdmin && (
+        <form onSubmit={generate} className="toolbar" style={{ marginTop: 14, marginBottom: 0 }}>
+          <input
+            type="text"
+            placeholder="Label (e.g. app-server-1, cron-job-foo)"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            maxLength={80}
+            className="input grow"
+          />
+          <button
+            type="submit"
+            className="btn compact"
+            disabled={busy || !label.trim()}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <IconPlus /> Generate
+          </button>
+        </form>
+      )}
 
       {keys != null && keys.length === 0 && (
         <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
@@ -639,7 +645,7 @@ function ApiKeysCard() {
                 <th>Fingerprint</th>
                 <th>Created</th>
                 <th>Last used</th>
-                <th style={{ width: 50 }}></th>
+                {isAdmin && <th style={{ width: 50 }}></th>}
               </tr>
             </thead>
             <tbody>
@@ -649,17 +655,19 @@ function ApiKeysCard() {
                   <td className="mono dim">{k.fingerprint}…</td>
                   <td className="muted" style={{ fontSize: 12 }}>{formatRelative(k.createdAt)}</td>
                   <td className="muted" style={{ fontSize: 12 }}>{formatRelative(k.lastUsedAt)}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      onClick={() => revoke(k.id, k.label)}
-                      title="Revoke key"
-                      aria-label="Revoke key"
-                    >
-                      <IconTrash />
-                    </button>
-                  </td>
+                  {isAdmin && (
+                    <td>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={() => revoke(k.id, k.label)}
+                        title="Revoke key"
+                        aria-label="Revoke key"
+                      >
+                        <IconTrash />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

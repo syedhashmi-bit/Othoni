@@ -6,6 +6,7 @@ import {
   formatDuration,
 } from '../alerts';
 import { IconPlus, IconTrash } from '../Icons.jsx';
+import { useApp } from '../App.jsx';
 
 const HISTORY_RANGES = [
   { value: '1h',  label: '1h' },
@@ -205,7 +206,7 @@ function OnFireEditor({ onFire, actionsState, onChange }) {
   );
 }
 
-function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onChange, onDelete }) {
+function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, editable = true, onChange, onDelete }) {
   const sevColor = rule.severity === 'crit' ? 'var(--crit)' : 'var(--warn)';
   const isFiring = !!active;
   const [expanded, setExpanded] = React.useState(false);
@@ -218,6 +219,7 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onCha
           checked={rule.enabled}
           onChange={(e) => onChange({ ...rule, enabled: e.target.checked })}
           aria-label="Enable rule"
+          disabled={!editable}
         />
       </td>
       <td>
@@ -228,6 +230,7 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onCha
           placeholder="(unnamed)"
           className="input"
           style={{ width: 170 }}
+          disabled={!editable}
         />
       </td>
       <td>
@@ -235,6 +238,7 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onCha
           value={rule.metric}
           onChange={(e) => onChange({ ...rule, metric: e.target.value })}
           className="select"
+          disabled={!editable}
         >
           {metrics.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
         </select>
@@ -245,6 +249,7 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onCha
           onChange={(e) => onChange({ ...rule, comparator: e.target.value })}
           className="select"
           style={{ width: 200 }}
+          disabled={!editable}
         >
           {COMPARATOR_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
@@ -259,6 +264,7 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onCha
           onChange={(e) => onChange({ ...rule, threshold: parseFloat(e.target.value) || 0 })}
           className="input mono"
           style={{ width: 110 }}
+          disabled={!editable}
         />
         <span className="dim" style={{ marginLeft: 6, fontSize: 12 }}>
           {unitFor(rule.metric, metrics)}{isRateComparator(rule.comparator) ? '/min' : ''}
@@ -271,6 +277,7 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onCha
               onChange={(e) => onChange({ ...rule, rateWindowMs: parseInt(e.target.value, 10) })}
               className="select"
               style={{ padding: '1px 4px', fontSize: 11 }}
+              disabled={!editable}
             >
               {RATE_WINDOWS.map((w) => (
                 <option key={w.ms} value={w.ms}>{w.label}</option>
@@ -284,6 +291,7 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onCha
           value={rule.durationMs}
           onChange={(e) => onChange({ ...rule, durationMs: parseInt(e.target.value, 10) })}
           className="select"
+          disabled={!editable}
         >
           {DURATIONS.map((d) => <option key={d.ms} value={d.ms}>{d.label}</option>)}
         </select>
@@ -294,6 +302,7 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onCha
           onChange={(e) => onChange({ ...rule, severity: e.target.value })}
           className="select"
           style={{ color: sevColor, fontWeight: 600 }}
+          disabled={!editable}
         >
           <option value="warn">warn</option>
           <option value="crit">crit</option>
@@ -328,15 +337,17 @@ function RuleRow({ rule, active, metrics, stats, statsRange, actionsState, onCha
         )}
       </td>
       <td>
-        <button
-          type="button"
-          onClick={onDelete}
-          aria-label="Delete rule"
-          title="Delete rule"
-          className="icon-btn"
-        >
-          <IconTrash />
-        </button>
+        {editable && (
+          <button
+            type="button"
+            onClick={onDelete}
+            aria-label="Delete rule"
+            title="Delete rule"
+            className="icon-btn"
+          >
+            <IconTrash />
+          </button>
+        )}
       </td>
     </tr>
     <tr style={{ opacity: rule.enabled ? 1 : 0.55 }}>
@@ -607,6 +618,8 @@ function DeliveryDetails({ webhookId }) {
 }
 
 function WebhooksCard() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
   const [list, setList] = useState(null);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ label: '', url: '', format: 'generic' });
@@ -669,7 +682,7 @@ function WebhooksCard() {
             same JSON POST shape via incoming-webhook URLs.
           </div>
         </div>
-        {!adding && (
+        {!adding && isAdmin && (
           <button
             type="button"
             className="btn compact"
@@ -753,6 +766,7 @@ function WebhooksCard() {
                           checked={w.enabled}
                           onChange={() => toggle(w)}
                           aria-label="Enable webhook"
+                          disabled={!isAdmin}
                         />
                       </td>
                       <td>{w.label}</td>
@@ -797,24 +811,28 @@ function WebhooksCard() {
                         )}
                       </td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn tiny"
-                          onClick={() => test(w)}
-                          disabled={testing === w.id}
-                          style={{ marginRight: 6 }}
-                        >
-                          Test
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          onClick={() => remove(w)}
-                          title="Remove webhook"
-                          aria-label="Remove webhook"
-                        >
-                          <IconTrash />
-                        </button>
+                        {isAdmin && (
+                          <>
+                            <button
+                              type="button"
+                              className="btn tiny"
+                              onClick={() => test(w)}
+                              disabled={testing === w.id}
+                              style={{ marginRight: 6 }}
+                            >
+                              Test
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              onClick={() => remove(w)}
+                              title="Remove webhook"
+                              aria-label="Remove webhook"
+                            >
+                              <IconTrash />
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                     {expanded && (
@@ -836,6 +854,8 @@ function WebhooksCard() {
 }
 
 export default function Alerts() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
   const [rules, setRules] = useState(null);
   const [active, setActive] = useState([]);
   const [metrics, setMetrics] = useState([]);
@@ -937,23 +957,27 @@ export default function Alerts() {
       </p>
 
       <div className="toolbar">
-        <button
-          type="button"
-          className="btn compact"
-          onClick={add}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-        >
-          <IconPlus /> Add rule
-        </button>
-        <button
-          type="button"
-          className="btn compact"
-          onClick={save}
-          disabled={!dirty || saving}
-          style={{ background: dirty ? 'var(--accent)' : 'var(--bg-elevated)', color: dirty ? 'white' : 'var(--text-muted)' }}
-        >
-          {saving ? 'Saving…' : dirty ? 'Save rules' : 'Saved'}
-        </button>
+        {isAdmin && (
+          <>
+            <button
+              type="button"
+              className="btn compact"
+              onClick={add}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <IconPlus /> Add rule
+            </button>
+            <button
+              type="button"
+              className="btn compact"
+              onClick={save}
+              disabled={!dirty || saving}
+              style={{ background: dirty ? 'var(--accent)' : 'var(--bg-elevated)', color: dirty ? 'white' : 'var(--text-muted)' }}
+            >
+              {saving ? 'Saving…' : dirty ? 'Save rules' : 'Saved'}
+            </button>
+          </>
+        )}
         <label
           className="pushright"
           style={{
@@ -1006,6 +1030,7 @@ export default function Alerts() {
                     stats={stats?.byRule?.[r.id]}
                     statsRange={stats ? { from: stats.from, to: stats.to } : null}
                     actionsState={actionsState}
+                    editable={isAdmin}
                     onChange={(next) => update(r.id, next)}
                     onDelete={() => remove(r.id)}
                   />

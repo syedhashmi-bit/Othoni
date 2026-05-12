@@ -8,6 +8,88 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.37.0] — 2026-05-12
+
+Read-only second user — the first release of Phase 2 (auth & access).
+Brings othoni from "one admin, single shared password" to "small ops
+team can hand out a view-only login without sharing the admin
+credential." The viewer can navigate every page and read every API,
+but every state-changing route returns 403. Off by default — no
+`OTHONI_VIEWER_*` env vars set means no viewer login path.
+
+### Added
+
+- **`OTHONI_VIEWER_USER` + `OTHONI_VIEWER_PASSWORD_HASH` /
+  `OTHONI_VIEWER_PASSWORD` env vars.** Hash variant preferred in
+  production (`npm run hash-password`). Plaintext fallback for the
+  same backward-compat reason the admin slot has one.
+- **`role` claim baked into the JWT.** `admin` or `viewer`. Surfaced
+  on `/api/auth/me` and `/api/auth/login` responses as
+  `{ user: { username, role } }`.
+- **`requireAdmin` middleware on the `/api` router.** Runs after
+  cookie auth: GET/HEAD always pass; PUT/POST/PATCH/DELETE return
+  `403 { error: 'forbidden', message: 'read-only session' }` unless
+  `req.user.role === 'admin'`. Pre-router endpoints (`/api/auth/*`,
+  `/api/metrics`, `/api/health`, `/metrics`) are unaffected so the
+  viewer can still log in / out and the headless-agent flow keeps
+  working.
+- **`role` metadata on audit `login.ok` events.** Distinguishes
+  viewer logins from admin logins in the audit log without changing
+  the action whitelist.
+- **Read-only chip in the topbar + sidebar user-chip.** Visible
+  only on viewer sessions. `body[data-role="viewer"]` is set as a
+  CSS hook for future styling.
+- **`<AdminOnly>` wrapper component** in `App.jsx` for any UI that
+  would call a state-changing endpoint.
+- **Per-page UI gating** so the viewer never sees a button that
+  would 403: Settings (API key create form + revoke buttons,
+  Actions framework test buttons), Alerts (Add rule + Save rules
+  + rule editor inputs disabled + delete hidden + Webhooks
+  create/Test/delete/toggle), Checks (Add check + Run now +
+  delete + toggle), Docker (container start/stop/restart strip),
+  Services (`<RestartControl>` per-card), Processes
+  (`<SignalControl>` per-row). All belt-and-braces on top of the
+  server-side 403.
+
+### Changed
+
+- `package.json` bumped to `0.37.0`.
+- `server/auth.js` — login compares against both admin and viewer
+  slots in parallel (always runs both password checks so timing
+  doesn't reveal which account exists). JWT signed with
+  `{ sub, role }`. `auth()` decodes role onto `req.user`. New
+  `requireAdmin` export.
+- `server/index.js` — `app.use('/api', auth, requireAdmin, apiRouter)`.
+- `.env.example` — documents the new vars.
+- `client/src/App.jsx` — context surfaces role; `<AdminOnly>` export;
+  `data-role` body attribute; topbar + sidebar viewer chip.
+- Pages above gain `useApp().user.role === 'admin'` checks around
+  their destructive controls.
+
+### Notes
+
+- Smoke-tested end-to-end on the live VPS at v0.37.0 against
+  `127.0.0.1:8088`. Generated a scrypt-hashed viewer credential,
+  appended to `.env`, restarted othoni. Both `admin` and `viewer`
+  log in with valid TOTP and get their respective roles in the
+  `me` response. Viewer sessions return 403 on PUT
+  `/api/alerts/rules`, POST `/api/keys`, DELETE `/api/keys/:id`,
+  POST `/api/checks`, POST `/api/actions/run`. Admin still
+  PUTs/POSTs/DELETEs fine (round-tripped the rules without diff,
+  generated + revoked an API key). Audit log records the role in
+  `login.ok` metadata for both accounts.
+- Login timing is constant w.r.t. which account exists: both
+  scrypt verifies run on every attempt, gated by which
+  `(username, password)` pair matched. Failure returns the same
+  generic `invalid_credentials` 401 regardless of which check
+  failed (existing behaviour preserved from v0.9.0).
+- The viewer cannot log out other sessions — that lands in
+  v0.38.0 (active session list + revoke). For today, the only
+  way to invalidate a leaked viewer cookie is rotating
+  `OTHONI_JWT_SECRET` (which logs everyone out).
+- TOTP applies to viewers too — there's still one global
+  `OTHONI_TOTP_SECRET`, no per-user TOTP.
+
 ## [0.36.0] — 2026-05-11
 
 Alert → action wire-up. Closes Phase 1 (write surface). Alert rules

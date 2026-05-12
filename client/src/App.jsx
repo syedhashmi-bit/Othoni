@@ -122,6 +122,15 @@ function useKeyboardShortcuts() {
 const AppCtx = createContext(null);
 export const useApp = () => useContext(AppCtx);
 
+// Wrap any UI that would call a state-changing endpoint. Viewer sessions
+// don't render it. The server's `requireAdmin` middleware is the real
+// security boundary — this just keeps the UI honest.
+export function AdminOnly({ children, fallback = null }) {
+  const ctx = useApp();
+  if (ctx?.user?.role !== 'admin') return fallback;
+  return children;
+}
+
 const NAV = [
   { to: '/', label: 'Dashboard', end: true, Icon: IconDashboard },
   { to: '/history', label: 'History', Icon: IconHistory },
@@ -185,6 +194,9 @@ function Shell({ user, onLogout, children, refreshMs, activeAlerts, onShortcutsC
           <span className="user-chip">
             <span className="user-avatar">{(user?.username || '?').slice(0, 1).toUpperCase()}</span>
             <span className="user-name">{user?.username}</span>
+            {user?.role === 'viewer' && (
+              <span className="chip dim" style={{ fontSize: 10, marginLeft: 4 }}>read-only</span>
+            )}
           </span>
           <button className="icon-btn" onClick={onLogout} title="Sign out" aria-label="Sign out">
             <IconSignOut />
@@ -197,6 +209,15 @@ function Shell({ user, onLogout, children, refreshMs, activeAlerts, onShortcutsC
           <span>VPS monitoring</span>
         </div>
         <div className="topbar-meta">
+          {user?.role === 'viewer' && (
+            <span
+              className="chip dim"
+              title="This account is read-only. State-changing controls are hidden."
+              style={{ fontSize: 11 }}
+            >
+              read-only mode
+            </span>
+          )}
           <AlertBadge activeAlerts={activeAlerts} onClick={() => setPopoverOpen((v) => !v)} />
           <LiveIndicator refreshMs={refreshMs} />
           <ServerClock />
@@ -297,6 +318,17 @@ export default function App() {
       delete document.body.dataset.density;
     }
   }, [density]);
+
+  // Same trick for read-only viewer sessions — gives CSS a hook to hide
+  // edit affordances (the form-disabled mixin in styles.css) without
+  // every component reading context.
+  useEffect(() => {
+    if (user && user.role === 'viewer') {
+      document.body.dataset.role = 'viewer';
+    } else {
+      delete document.body.dataset.role;
+    }
+  }, [user]);
 
   // Check session on mount
   useEffect(() => {

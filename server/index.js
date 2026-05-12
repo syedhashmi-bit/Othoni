@@ -10,7 +10,7 @@ const express = require('express');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
-const { auth, login, logout, me, totpEnabled } = require('./auth');
+const { auth, requireAdmin, login, logout, me, totpEnabled } = require('./auth');
 const { loginLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
@@ -78,8 +78,9 @@ app.use('/api/metrics', metricsRouter);
 // session). Mounted before the cookie-auth wall for the same reason.
 app.get('/metrics', (req, res) => promExport.handleRequest(req, res));
 
-// Protected API routes
-app.use('/api', auth, apiRouter);
+// Protected API routes. `requireAdmin` runs after `auth` so the viewer
+// can still GET everything but is 403'd on PUT/POST/PATCH/DELETE.
+app.use('/api', auth, requireAdmin, apiRouter);
 
 // Static frontend
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

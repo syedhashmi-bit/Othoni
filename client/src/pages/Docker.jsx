@@ -25,12 +25,14 @@ function allowedVerbs(state) {
 // Per-row state-aware controls. Two-step UX matching the systemd
 // version: button → confirm strip → run → result chip.
 function DockerControls({ container, canRun, onActed }) {
+  const { user } = useApp();
   const [pending, setPending] = useState(null);     // { verb }
   const [running, setRunning] = useState(null);     // verb currently running
   const [result, setResult] = useState(null);
   const [err, setErr] = useState(null);
 
   if (!canRun) return null;
+  if (user?.role !== 'admin') return null;
 
   const verbs = allowedVerbs(container.state);
   if (verbs.length === 0) {
@@ -126,7 +128,7 @@ function DockerControls({ container, canRun, onActed }) {
 }
 
 export default function Docker() {
-  const { refreshMs } = useApp();
+  const { refreshMs, user } = useApp();
   const { data, loading, error, refresh } = usePoller(api.docker, refreshMs);
 
   const [actionsState, setActionsState] = useState(null);
@@ -137,6 +139,7 @@ export default function Docker() {
   }, []);
 
   const canRun =
+    user?.role === 'admin' &&
     !!actionsState?.enabled &&
     (actionsState.kinds || []).some((k) => k.kind.startsWith('docker.'));
 

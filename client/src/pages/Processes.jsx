@@ -144,6 +144,7 @@ function TrendsCard({ sortBy }) {
 // confirm button enables — irreversible-destructive operations should
 // be deliberate. Both audit-log via the v0.34.0 process.signal kind.
 function SignalControl({ proc, canRun, onActed }) {
+  const { user } = useApp();
   const [phase, setPhase] = useState('idle'); // idle | confirm-term | confirm-kill | running | done
   const [typed, setTyped] = useState('');
   const [running, setRunning] = useState(null); // 'TERM' | 'KILL'
@@ -151,6 +152,7 @@ function SignalControl({ proc, canRun, onActed }) {
   const [err, setErr] = useState(null);
 
   if (!canRun) return null;
+  if (user?.role !== 'admin') return null;
 
   function reset() {
     setPhase('idle');

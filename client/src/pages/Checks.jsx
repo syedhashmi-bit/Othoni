@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { IconPlus, IconTrash } from '../Icons.jsx';
+import { useApp } from '../App.jsx';
 
 const TYPES = [
   { value: 'http', label: 'HTTP', placeholder: 'https://example.com/health' },
@@ -163,6 +164,8 @@ function AddCheckForm({ onCreated, onCancel }) {
 }
 
 export default function Checks() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
   const [list, setList] = useState(null);
   const [err, setErr] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -224,7 +227,7 @@ export default function Checks() {
       <div className="spacer-md" />
 
       <div className="toolbar">
-        {!adding && (
+        {!adding && isAdmin && (
           <button
             type="button"
             className="btn compact"
@@ -271,6 +274,7 @@ export default function Checks() {
                         checked={c.enabled}
                         onChange={() => toggle(c)}
                         aria-label="Enable check"
+                        disabled={!isAdmin}
                       />
                     </td>
                     <td>{c.label}</td>
@@ -282,24 +286,28 @@ export default function Checks() {
                     <td><StatusChip check={c} /></td>
                     <td className="muted" style={{ fontSize: 12 }}>{relativeTime(c.lastRunAt)}</td>
                     <td>
-                      <button
-                        type="button"
-                        className="btn tiny"
-                        onClick={() => runNow(c)}
-                        disabled={running === c.id || !c.enabled}
-                        style={{ marginRight: 6 }}
-                      >
-                        {running === c.id ? '…' : 'Run now'}
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        onClick={() => remove(c)}
-                        title="Remove check"
-                        aria-label="Remove check"
-                      >
-                        <IconTrash />
-                      </button>
+                      {isAdmin && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn tiny"
+                            onClick={() => runNow(c)}
+                            disabled={running === c.id || !c.enabled}
+                            style={{ marginRight: 6 }}
+                          >
+                            {running === c.id ? '…' : 'Run now'}
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={() => remove(c)}
+                            title="Remove check"
+                            aria-label="Remove check"
+                          >
+                            <IconTrash />
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}

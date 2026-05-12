@@ -11,11 +11,13 @@ import { useApp } from '../App.jsx';
 // Two-step UX: click → inline confirm strip with Cancel + Restart →
 // running spinner → result chip with stderr surfaced inline on failure.
 function RestartControl({ unit, status, allowed }) {
+  const { user } = useApp();
   const [phase, setPhase] = useState('idle'); // idle | confirm | running | done
   const [result, setResult] = useState(null);
   const [err, setErr] = useState(null);
 
   if (!allowed) return null;
+  if (user?.role !== 'admin') return null;
 
   async function run() {
     setPhase('running');
