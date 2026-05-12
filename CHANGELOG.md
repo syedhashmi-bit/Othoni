@@ -8,6 +8,64 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.50.0] — 2026-05-12
+
+Dashboard layout customization — **closes Phase 4 (visualization,
+storage & ops)**. Each major Dashboard section now has a stable id;
+operators can hide / reorder them via a small inline editor (no
+modal, no library). Saved in localStorage per browser following
+the existing `useLocalSetting` pattern.
+
+### Added
+
+- **Six named sections.** `hero` (last-hour CPU+Memory chart),
+  `stats` (top stat tiles), `heatmap` (v0.45 CPU heatmap),
+  `cores` (CPU-per-core + Disk-I/O paired row), `uptime`
+  (Uptime / Load / Swap tiles), `info` (System / Network / CPU
+  info row).
+- **Dashboard layout state** in `othoni.dashboardLayout`
+  localStorage key. Shape: `[{ id, visible }, ...]`.
+- **`reconcileLayout(saved)`** reconciler. Drops unknown ids
+  (graceful degrade across upgrades that remove a section),
+  dedupes repeats, and appends any newly-added section ids
+  (graceful upgrade-forward when a future release adds a
+  section) with `visible: true` so the new bits show up by
+  default. Validated against 7 unit-test cases (null /
+  undefined / empty / unknown-dropped / reorder-respected /
+  duplicate-dedup / missing-appended) all pass.
+- **`<LayoutEditor>` inline panel.** Opens to the right of the
+  "Layout ▾" button on the Dashboard page header. Each section
+  row has a visibility checkbox + ▴/▾ buttons for move-up /
+  move-down. "reset" button restores defaults. Pure JSX, ~50
+  lines, no third-party DnD library.
+
+### Changed
+
+- `package.json` bumped to `0.50.0`.
+- `client/src/pages/Dashboard.jsx` — refactored render to build
+  a `sections` keyed map and dispatch over the saved layout.
+  Header rewritten to host the Layout button.
+
+### Notes
+
+- **Per-browser, not per-account.** localStorage is the simplest
+  thing that works for a single-admin dashboard. If multi-user
+  / cross-device sync becomes interesting later, a
+  `data/dashboard-layouts.json` keyed by username is the natural
+  next step. Not done here.
+- **No drag-and-drop.** Up/down buttons keep the implementation
+  in-bounds with the no-icon-library, no-DnD-library
+  preferences. Each move is one click; reordering 6 sections
+  with the worst-case end-to-start swap costs 5 clicks. Worth
+  the bundle savings.
+- **Section ids stay stable across releases.** A future release
+  that adds a section just appends to `SECTIONS`; existing
+  users' saved layouts auto-pick it up via `reconcileLayout`.
+- Closes Phase 4. Phase 4 total: v0.45 CPU heatmap, v0.46
+  process tree, v0.47 per-metric retention, v0.48 nightly
+  VACUUM scheduler, v0.49 bulk archive export, v0.50 dashboard
+  layout customization.
+
 ## [0.49.0] — 2026-05-12
 
 Bulk archive export. NDJSON stream of every historical table over a

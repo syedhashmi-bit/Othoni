@@ -1,10 +1,136 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import { usePoller } from '../hooks';
+import { usePoller, useLocalSetting } from '../hooks';
 import { formatBytes, formatRate, formatUptime, statusClass } from '../utils';
 import { useApp } from '../App.jsx';
 import { Sparkline, MultiLineChart, CoreGrid, Heatmap } from '../Charts.jsx';
 import { IconCpu, IconMemory, IconDisk, IconActivity } from '../Icons.jsx';
+
+// v0.50 Dashboard layout customization. Each section in the table
+// below has a stable id; the on-disk order + visibility live in
+// localStorage. Newly-introduced section ids (e.g. after an upgrade)
+// get auto-appended visible.
+const SECTIONS = [
+  { id: 'hero',    label: 'Hero chart (CPU + Memory, 1h)' },
+  { id: 'stats',   label: 'Top stat tiles' },
+  { id: 'heatmap', label: 'CPU heatmap over time' },
+  { id: 'cores',   label: 'Per-core CPU + Disk I/O' },
+  { id: 'uptime',  label: 'Uptime / Load / Swap' },
+  { id: 'info',    label: 'System / Network / CPU info' },
+];
+const DEFAULT_LAYOUT = SECTIONS.map((s) => ({ id: s.id, visible: true }));
+
+function reconcileLayout(saved) {
+  if (!Array.isArray(saved)) return DEFAULT_LAYOUT.slice();
+  const known = new Set(SECTIONS.map((s) => s.id));
+  const seen = new Set();
+  const out = [];
+  for (const row of saved) {
+    if (!row || typeof row.id !== 'string' || !known.has(row.id)) continue;
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push({ id: row.id, visible: row.visible !== false });
+  }
+  for (const s of SECTIONS) {
+    if (!seen.has(s.id)) out.push({ id: s.id, visible: true });
+  }
+  return out;
+}
+
+function LayoutEditor({ open, onClose, layout, setLayout }) {
+  function move(i, delta) {
+    setLayout((cur) => {
+      const next = cur.slice();
+      const j = i + delta;
+      if (j < 0 || j >= next.length) return cur;
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  }
+  function toggle(id) {
+    setLayout((cur) => cur.map((r) => (r.id === id ? { ...r, visible: !r.visible } : r)));
+  }
+  function reset() { setLayout(DEFAULT_LAYOUT.slice()); }
+  if (!open) return null;
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        right: 0,
+        top: '100%',
+        marginTop: 6,
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-sm)',
+        boxShadow: 'var(--shadow-md)',
+        zIndex: 20,
+        minWidth: 360,
+        padding: 10,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+        <div className="card-title" style={{ flex: 1, fontSize: 13 }}>Dashboard layout</div>
+        <button type="button" className="btn ghost" onClick={reset} style={{ fontSize: 11, padding: '2px 8px' }}>
+          reset
+        </button>
+        <button type="button" className="btn ghost" onClick={onClose} style={{ fontSize: 11, padding: '2px 8px', marginLeft: 4 }}>
+          close
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+        Reorder + show/hide sections. Saved in this browser only.
+      </div>
+      <div>
+        {layout.map((row, i) => {
+          const meta = SECTIONS.find((s) => s.id === row.id);
+          if (!meta) return null;
+          return (
+            <div
+              key={row.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '4px 0',
+                fontSize: 13,
+                opacity: row.visible ? 1 : 0.55,
+              }}
+            >
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flex: 1, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={row.visible}
+                  onChange={() => toggle(row.id)}
+                />
+                <span>{meta.label}</span>
+              </label>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => move(i, -1)}
+                disabled={i === 0}
+                style={{ padding: '1px 6px', fontSize: 11 }}
+                aria-label="Move up"
+              >
+                ▴
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => move(i, +1)}
+                disabled={i === layout.length - 1}
+                style={{ padding: '1px 6px', fontSize: 11 }}
+                aria-label="Move down"
+              >
+                ▾
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function useSpark(metric, range = '15m', refreshMs = 15000) {
   const loader = useCallback(() => api.history(metric, range), [metric, range]);
@@ -146,6 +272,15 @@ function StatCard({ title, value, sub, percent, spark, sparkMax, sparkFormat, sp
 export default function Dashboard() {
   const { refreshMs } = useApp();
   const { data, error, loading } = usePoller(api.overview, refreshMs);
+  const [layoutRaw, setLayoutRaw] = useLocalSetting('othoni.dashboardLayout', DEFAULT_LAYOUT);
+  const layout = useMemo(() => reconcileLayout(layoutRaw), [layoutRaw]);
+  const setLayout = (updater) => {
+    setLayoutRaw((cur) => {
+      const reconciled = reconcileLayout(cur);
+      return typeof updater === 'function' ? updater(reconciled) : updater;
+    });
+  };
+  const [layoutOpen, setLayoutOpen] = useState(false);
 
   // Sparklines (15min) — small per-card
   const cpuSpark = useSpark('cpu');
@@ -179,15 +314,10 @@ export default function Dashboard() {
   const ioRead = diskio?.totalReadBytesPerSec || 0;
   const ioWrite = diskio?.totalWriteBytesPerSec || 0;
 
-  return (
-    <div className="page-fade-in">
-      <h1 className="page-title">Dashboard</h1>
-      <p className="subtitle">
-        {system.distro} {system.release} · {system.hostname} · up{' '}
-        {formatUptime(system.uptimeSeconds)}
-      </p>
-
-      {/* Hero chart — last hour, CPU + Memory overlay */}
+  // Sections, keyed by id, each returning a React fragment. Render
+  // order + visibility come from the saved layout below.
+  const sections = {
+    hero: () => (
       <div className="card">
         <div className="card-header">
           <div className="card-title">Last hour — CPU &amp; Memory</div>
@@ -195,10 +325,8 @@ export default function Dashboard() {
         </div>
         <MultiLineChart series={heroSeries} height={200} format="percent" range="1h" fixedMax={100} />
       </div>
-
-      <div className="spacer-md" />
-
-      {/* At-a-glance cards with per-15min sparklines */}
+    ),
+    stats: () => (
       <div className="grid cols-4">
         <StatCard
           icon={IconCpu}
@@ -243,15 +371,9 @@ export default function Dashboard() {
           sparkStats
         />
       </div>
-
-      <div className="spacer-md" />
-
-      {/* CPU heatmap (over time) */}
-      <CpuHeatmapCard />
-
-      <div className="spacer-md" />
-
-      {/* Per-core CPU + Disk I/O */}
+    ),
+    heatmap: () => <CpuHeatmapCard />,
+    cores: () => (
       <div className="grid" style={{ gridTemplateColumns: '2fr 1fr', gap: 16 }}>
         <div className="card">
           <div className="card-header">
@@ -289,9 +411,8 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
-
-      <div className="spacer-md" />
-
+    ),
+    uptime: () => (
       <div className="grid cols-3">
         <StatCard title="Uptime" value={formatUptime(system.uptimeSeconds)} sub={`booted ${new Date(system.bootTime).toLocaleString()}`} />
         <StatCard title="Load average" value={cpu.loadAverage.join(' / ')} sub="1m / 5m / 15m" />
@@ -302,9 +423,8 @@ export default function Dashboard() {
           percent={memory.swapTotal ? memory.swapPercent : null}
         />
       </div>
-
-      <div className="spacer-md" />
-
+    ),
+    info: () => (
       <div className="grid cols-3">
         <div className="card">
           <div className="card-header">
@@ -368,6 +488,45 @@ export default function Dashboard() {
           </dl>
         </div>
       </div>
+    ),
+  };
+
+  return (
+    <div className="page-fade-in">
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, position: 'relative' }}>
+        <div style={{ flex: 1 }}>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="subtitle">
+            {system.distro} {system.release} · {system.hostname} · up{' '}
+            {formatUptime(system.uptimeSeconds)}
+          </p>
+        </div>
+        <div style={{ position: 'relative' }}>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => setLayoutOpen((v) => !v)}
+            title="Show / hide / reorder dashboard sections (saved per browser)"
+          >
+            Layout ▾
+          </button>
+          <LayoutEditor
+            open={layoutOpen}
+            onClose={() => setLayoutOpen(false)}
+            layout={layout}
+            setLayout={setLayout}
+          />
+        </div>
+      </div>
+
+      {layout
+        .filter((row) => row.visible && sections[row.id])
+        .map((row, i, arr) => (
+          <React.Fragment key={row.id}>
+            {sections[row.id]()}
+            {i < arr.length - 1 && <div className="spacer-md" />}
+          </React.Fragment>
+        ))}
     </div>
   );
 }
