@@ -8,6 +8,67 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.46.0] — 2026-05-12
+
+Process tree view. The existing Processes page Top-20 table is great
+for "who's burning CPU right now," but bad at answering "which
+service group is eating CPU." v0.46 adds a Tree toggle on the same
+page — full parent/child graph built from `ps -o pid,ppid,...`,
+with subtree-aggregated CPU + memory and heavy-branch highlighting.
+
+### Added
+
+- **`GET /api/processes/tree`** endpoint. Runs `ps` with an extra
+  `ppid` column, builds the pid → node map, links children to
+  parents, computes bottom-up subtree aggregates (`aggCpu`,
+  `aggMemory`), and sorts children by descending `aggCpu` so the
+  heaviest branches surface first. Defensive against `pid==ppid`
+  cycles (would never happen in a real snapshot but cheap to
+  guard).
+- **`getProcessTree()` collector** in `server/collectors/processes.js`
+  using a new `PS_TREE_ARGS` so the existing flat-list endpoint
+  doesn't pay for the extra column.
+- **Tree toggle on the Processes page.** New `view` state (`list`
+  / `tree`); toggle buttons in the right side of the toolbar. The
+  list view (TrendsCard + ps table) is unchanged; the tree view
+  replaces both with a single `<ProcessTree>` card.
+- **`<TreeRow>` recursive renderer.** Indent by depth, collapsible
+  per node (`▸` / `▾`), shows self + aggregated CPU/MEM side-by-
+  side. Heavy subtrees (aggCpu ≥ 20%) get an accent-tinted row
+  background + bold name + accent-colored aggCpu cell. Roots
+  default to open; descendants open automatically only when
+  they're heavy *and* shallow (depth < 2) to avoid auto-
+  expanding deep noisy trees.
+- **`api.processTree()`** client helper.
+
+### Changed
+
+- `package.json` bumped to `0.46.0`.
+- `server/collectors/processes.js` — adds `getProcessTree`.
+- `server/routes/index.js` — mounts `/api/processes/tree`.
+- `client/src/api.js` — adds `processTree`.
+- `client/src/pages/Processes.jsx` — new view toggle, new
+  `<ProcessTree>` + `<TreeRow>` components. By-CPU / By-memory
+  sort buttons disable in tree view (tree view sorts by aggCpu
+  intrinsically).
+
+### Notes
+
+- **Aggregation is sum-of-subtree.** `aggCpu` for a node is its
+  own `%cpu` plus every descendant's `%cpu`. So a parent shell
+  whose child is hammering CPU shows up as heavy even if the
+  parent itself is idle — that's the whole point of the tree
+  view (find the *service group* burning CPU, not the leaf).
+- **One root for userland + one for kernel threads.** PID 1
+  (`systemd`) and PID 2 (`kthreadd`) on Linux. The build
+  detects this naturally — anything whose ppid isn't in the
+  table or whose ppid is 0 becomes a root.
+- Smoke-tested live: 169 processes → 2 roots
+  (systemd + kthreadd), correct subtree aggregation (systemd's
+  subtree CPU summed to 146.8% on a multi-core box), heavy-
+  branch sorting visible (sshd parent at 113.2% rose to the
+  top of systemd's children).
+
 ## [0.45.0] — 2026-05-12
 
 Per-core CPU heatmap — opens Phase 4 (visualization, storage & ops).

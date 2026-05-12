@@ -8,7 +8,7 @@ const { getCpu } = require('../collectors/cpu');
 const { getMemory } = require('../collectors/memory');
 const { getDisks } = require('../collectors/disks');
 const { getNetwork } = require('../collectors/network');
-const { getProcesses } = require('../collectors/processes');
+const { getProcesses, getProcessTree } = require('../collectors/processes');
 const { getDocker } = require('../collectors/docker');
 const { getServices } = require('../collectors/services');
 const { getDiskIO } = require('../collectors/diskio');
@@ -83,6 +83,7 @@ router.get(
     return getProcesses({ limit, sortBy });
   })
 );
+router.get('/processes/tree', wrap('processes_tree', () => getProcessTree()));
 router.get('/docker', wrap('docker', () => getDocker()));
 router.get('/services', wrap('services', () => getServices()));
 

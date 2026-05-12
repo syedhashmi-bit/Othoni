@@ -101,6 +101,7 @@ export const api = {
   },
   processes: (sortBy = 'cpu', limit = 20) =>
     request(`/api/processes?sortBy=${sortBy}&limit=${limit}`),
+  processTree: () => request('/api/processes/tree'),
   docker: () => request('/api/docker'),
   services: () => request('/api/services'),
   settings: () => request('/api/settings'),
