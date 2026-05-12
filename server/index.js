@@ -17,6 +17,7 @@ const { loginLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
 const promExport = require('./prom-export');
+const exportEndpoint = require('./export');
 const history = require('./history');
 const sessions = require('./sessions');
 const vacuum = require('./vacuum');
@@ -91,6 +92,12 @@ app.use('/api/metrics', metricsRouter);
 // is set; uses its own Bearer-token check (separate from the dashboard
 // session). Mounted before the cookie-auth wall for the same reason.
 app.get('/metrics', (req, res) => promExport.handleRequest(req, res));
+
+// Optional bulk archive export (v0.49). Same Bearer-token pattern as
+// the Prom exporter, separate `OTHONI_EXPORT_TOKEN`. Streams NDJSON;
+// mounted before the cookie wall so backup tooling can curl with just
+// a token.
+app.get('/api/export', (req, res) => exportEndpoint.handleRequest(req, res));
 
 // Protected API routes. `requireAdmin` runs after `auth` so the viewer
 // can still GET everything but is 403'd on PUT/POST/PATCH/DELETE. CSRF

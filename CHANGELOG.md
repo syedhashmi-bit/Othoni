@@ -8,6 +8,79 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.49.0] — 2026-05-12
+
+Bulk archive export. NDJSON stream of every historical table over a
+time range, suitable for offsite backup or one-shot ingestion into a
+"real" TSDB / log store. Bearer-token auth (separate token from the
+Prometheus exporter so they can be rotated independently). Off by
+default; setting `OTHONI_EXPORT_TOKEN` enables the endpoint.
+
+### Added
+
+- **`GET /api/export?from=<ms>&to=<ms>`** endpoint. Mounted before
+  the cookie auth wall (next to `/metrics` and `/api/metrics`).
+  Returns `application/x-ndjson`; one JSON object per line.
+- **NDJSON format.** First line is a header
+  (`{ _header: true, version, from, to, totals: { ... }, grandTotal,
+  cap, truncated }`) with per-table row counts so a streaming parser
+  can pre-allocate. Subsequent lines are
+  `{ table, ...row-fields }`. Trailing line is
+  `{ _final: true, rowCount, truncated }` so the consumer can
+  confirm a complete dump.
+- **Six tables.** `samples`, `process_samples`, `alert_fires`,
+  `audit_log`, `webhook_deliveries`, `action_history`. All
+  filtered by `t >= from AND t < to`. Ordered by `t ASC` (then
+  by metric/rule for stable output).
+- **Per-row cap.** `OTHONI_EXPORT_MAX_ROWS` (default 1_000_000).
+  Once emitted, the rest of the export stops; the final line
+  carries `truncated: true`. Defensive against a typo'd huge
+  range against a dense ingest.
+- **Optional `?tables=` filter.** Comma-separated whitelist. Skipped
+  tables don't appear in the header `totals` either. Useful for
+  syncing just the samples table to a TSDB without dragging the
+  audit log along.
+- **`OTHONI_EXPORT_TOKEN` env var.** Constant-time Bearer compare,
+  same pattern as the Prom exporter. Unset → endpoint returns
+  404 (don't advertise its existence). Missing/wrong header →
+  401.
+- **`OTHONI_EXPORT_MAX_ROWS` env var.** Override the default row
+  cap.
+
+### Changed
+
+- `package.json` bumped to `0.49.0`.
+- `server/index.js` — mounts `/api/export` before the cookie wall.
+- `.env.example` — documents both new env vars.
+
+### Notes
+
+- **No materialization in JS heap.** Streams via better-sqlite3's
+  `stmt.iterate()` so a 1M-row export goes through a row-by-row
+  pipeline. Verified end-to-end against the live VPS: 2009 rows
+  / ~146 KB returned in well under a second with no memory
+  spike.
+- **`from < to` enforced** at request time. Defaults to the last
+  24h when both are missing, so a bare `curl /api/export` still
+  does the right thing. `to` clipped to "now" so a typo can't
+  ask for the future.
+- **Why streaming NDJSON, not a single JSON array.** Two reasons:
+  (1) operators can `| jq` line-by-line without loading the
+  whole thing into RAM. (2) The header + trailer envelope lets
+  the consumer detect a truncated download (the `_final` row
+  won't appear if the connection dropped mid-stream).
+- **No write path.** Importers / replicators are downstream
+  concerns; this is one-way egress. If/when an import path
+  becomes interesting, it'd live alongside the metrics ingest.
+- Smoke-tested live: 401 on missing/wrong token, 400 on inverted
+  range, valid export returned a well-formed header with
+  per-table counts (`samples: 1647, process_samples: 357,
+  audit_log: 5`), 2009 row lines, and a final `_final` row with
+  matching `rowCount: 2009`. `?tables=audit_log` filter scoped
+  the output to just that table. Token unset → 404 on both
+  empty and wrong-Bearer requests, confirming the endpoint
+  doesn't leak its existence.
+
 ## [0.48.0] — 2026-05-12
 
 Nightly SQLite VACUUM scheduler. SQLite never reclaims pages from
