@@ -8,6 +8,106 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.40.0] — 2026-05-12
+
+Login lockout. Fourth Phase 2 release — **closes Phase 2 (auth &
+access)**. Express-rate-limit caps the request *rate* from a single
+IP, but doesn't *lock* — after its window the attacker resumes. v0.40
+adds the lockout half: after N consecutive failures from one IP, that
+IP is rejected for M minutes regardless of how slow the attacker
+trickles requests. Locked attempts skip the credential check
+entirely, so no scrypt CPU is wasted on attackers and the timing
+channel narrows.
+
+### Added
+
+- **`server/login-lockout.js`** — in-memory per-IP failure tracker.
+  `check(ip)` returns `{ locked, unlockAt?, retryAfterSec? }`;
+  `recordFailure(ip, { actor })` increments and optionally locks;
+  `recordSuccess(ip)` clears the IP's counter. Memory-bounded by
+  cleanup-on-touch (entries forgotten after 24h of inactivity) and
+  a 1024-entry LRU cap.
+- **`OTHONI_LOGIN_LOCKOUT_FAILS` (default 5) and
+  `OTHONI_LOGIN_LOCKOUT_MS` (default 900_000 = 15 min)** env vars.
+  Set either to 0 to disable.
+- **`auth.lockout` on `/api/health`.** Shape:
+  ```json
+  { "enabled": true, "lockedNow": 0, "degraded": false }
+  ```
+  `degraded` is the explicit flag for a future status-page
+  integration — surfaces "auth surface degraded" when at least one
+  IP is currently locked.
+- **HTTP 429 + `Retry-After` header** on locked-out attempts and on
+  the request that triggered the lock. Body shape:
+  ```json
+  { "error": "locked_out", "message": "...", "retryAfterSec": 900, "unlockAt": <ms> }
+  ```
+- **`login.lockout` audit action.** Fires once per IP per
+  lock-transition, with `{ fails, lockMs, unlockAt }` metadata.
+  `login.fail` events now also carry `failsRemaining`.
+
+### Changed
+
+- `package.json` bumped to `0.40.0`.
+- `server/auth.js` — `login()` checks lockout first (locked IPs skip
+  scrypt). On credential failure, `recordFailure(req.ip, { actor })`;
+  on the threshold-crossing failure, returns 429 instead of 401. On
+  success, `recordSuccess(req.ip)`.
+- `server/audit.js` — `login.lockout` added to the whitelist.
+- `server/index.js` — `/api/health` includes the lockout snapshot.
+- `.env.example` — documents the new env vars.
+
+### Notes
+
+- **In-memory state.** A process restart wipes the lockout map.
+  Acceptable: at process-restart there are also no in-flight
+  attacks (the SQLite-backed audit log still records the lockout
+  events for forensics, and express-rate-limit picks up where it
+  left off via its own counters). Persisting to disk would be
+  more complexity than it's worth for a single-process dashboard.
+- **More aggressive than express-rate-limit.** The existing
+  `loginLimiter` caps any IP to 10 attempts per 15 minutes — that
+  rate-limits the *flow* but doesn't *block* once an attacker
+  hits the limit (they just get 429s until the window slides).
+  This module *locks* the IP outright on the configured failure
+  count, with a separate clock that doesn't slide.
+- **Locked IPs cost zero scrypt CPU.** The lockout check is the
+  first thing the login handler does — locked attempts return
+  429 before any password comparison runs. This both shields the
+  process from a CPU-DoS and removes the timing channel that an
+  attacker could use to mine information from password-check
+  duration.
+- **No admin unlock endpoint** in this release. If an operator
+  locks themselves out, they wait for the timer (default 15 min)
+  or restart the service. Could grow into a manual unlock UI on
+  Settings later if needed.
+- Smoke-tested end-to-end on the live VPS with test-friendly
+  values (`OTHONI_LOGIN_LOCKOUT_FAILS=4`,
+  `OTHONI_LOGIN_LOCKOUT_MS=4000`):
+  - Attempts 1–3 with wrong password → 401, audit metadata shows
+    `failsRemaining: 3,2,1`.
+  - Attempt 4 (threshold) → 429 `locked_out` with `Retry-After: 4`,
+    audit `login.lockout` event with `fails=4, lockMs=4000`.
+  - Attempt 5 with the *correct* password during lockout → still
+    429 (no scrypt run; the IP is locked).
+  - `/api/health` reports `lockedNow: 1, degraded: true`.
+  - After 5 seconds → correct password → 200 OK, lockout cleared,
+    `/api/health` back to `lockedNow: 0, degraded: false`.
+  - Module-level unit tests covered: per-IP isolation (one IP
+    locked, another unaffected), post-expiry counter reset
+    (lockout expires → counter starts fresh from 1),
+    `recordSuccess` clears the counter mid-stream.
+- Production values restored to defaults after smoke test
+  (`.env` no longer overrides; module defaults 5 fails / 15 min
+  apply).
+
+This release closes Phase 2. Phase 2 in total: v0.37 viewer role,
+v0.38 active sessions + revoke, v0.39 CSRF tokens, v0.40 login
+lockout. Together they take othoni from "one admin, single shared
+password" to "small ops team can share view-only access, revoke
+leaked cookies, fend off CSRF, and survive a brute-force without
+manual intervention."
+
 ## [0.39.0] — 2026-05-12
 
 CSRF token on state-changing routes. Closes the niche-but-real CSRF

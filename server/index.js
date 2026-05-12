@@ -12,6 +12,7 @@ const cookieParser = require('cookie-parser');
 
 const { auth, requireAdmin, login, logout, me, totpEnabled } = require('./auth');
 const csrf = require('./csrf');
+const loginLockout = require('./login-lockout');
 const { loginLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
@@ -58,11 +59,21 @@ app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
 // Public endpoints
 app.get('/api/health', (_req, res) => {
+  const lockout = loginLockout.snapshot();
   res.json({
     ok: true,
     version: VERSION,
     time: new Date().toISOString(),
-    auth: { totp: totpEnabled(), csrf: csrf.isEnabled() },
+    auth: {
+      totp: totpEnabled(),
+      csrf: csrf.isEnabled(),
+      lockout: {
+        enabled: lockout.enabled,
+        lockedNow: lockout.lockedNow,
+        // Surfaces auth-surface degradation for a future status-page integration.
+        degraded: lockout.lockedNow > 0,
+      },
+    },
   });
 });
 

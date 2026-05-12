@@ -17,6 +17,7 @@ const logger = require('./logger');
 const VALID_ACTIONS = new Set([
   'login.ok',
   'login.fail',
+  'login.lockout',
   'logout',
   'apikey.create',
   'apikey.revoke',
