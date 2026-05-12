@@ -13,6 +13,7 @@
 // visibility.
 
 const history = require('./history');
+const hostMeta = require('./host-meta');
 
 // Same DNS-style host pattern the ingest endpoint enforces, so we
 // never surface a "host" that won't round-trip. Single-char host is
@@ -83,6 +84,8 @@ function getHosts({ recentMs = DEFAULT_RECENT_MS } = {}) {
       lastSeenAt: slot.lastSeenAt,
       metrics: slot.metrics,
       extras: slot.extras,
+      // v0.43 overlay — null when no metadata is stored for this host.
+      meta: hostMeta.get(slot.host),
     });
   }
 

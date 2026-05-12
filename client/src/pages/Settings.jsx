@@ -234,6 +234,8 @@ const AUDIT_ACTION_LABELS = {
   'check.delete':   { label: 'check −',       tone: 'warn' },
   'check.run':      { label: 'check run',     tone: 'dim' },
   'session.revoke': { label: 'session revoke',tone: 'warn' },
+  'host.meta.update': { label: 'host meta ~', tone: 'accent' },
+  'host.meta.delete': { label: 'host meta −', tone: 'warn' },
 };
 
 function AuditLogCard() {
@@ -494,6 +496,191 @@ function ActionsCard() {
             </div>
           </AdminOnly>
         </>
+      )}
+    </div>
+  );
+}
+
+function HostsCard() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
+  const [byHost, setByHost] = useState(null);
+  const [hosts, setHosts] = useState([]); // discovered hosts (for the dropdown)
+  const [err, setErr] = useState(null);
+  const [drafts, setDrafts] = useState({}); // host -> patch
+  const [busy, setBusy] = useState(null);
+
+  function refresh() {
+    Promise.all([api.hostMeta.list(), api.hosts()])
+      .then(([m, h]) => {
+        setByHost(m.byHost || {});
+        setHosts((h.hosts || []).map((x) => x.host));
+      })
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(() => { refresh(); }, []);
+
+  // Union of known + labeled hosts. A host labeled before it ever pushed,
+  // or after the agent went silent, still shows up so the operator can
+  // see + edit + clear its metadata.
+  const allHosts = Array.from(new Set([...(hosts || []), ...Object.keys(byHost || {})])).sort();
+
+  function draftFor(host, field) {
+    return drafts[host]?.[field] ?? byHost?.[host]?.[field] ?? (field === 'tags' ? [] : '');
+  }
+  function setDraft(host, field, value) {
+    setDrafts((s) => ({ ...s, [host]: { ...(s[host] || {}), [field]: value } }));
+  }
+
+  async function save(host) {
+    const patch = drafts[host] || {};
+    setBusy(host);
+    setErr(null);
+    try {
+      await api.hostMeta.upsert(host, patch);
+      setDrafts((s) => { const c = { ...s }; delete c[host]; return c; });
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function clearMeta(host) {
+    if (!confirm(`Clear metadata for "${host}"?`)) return;
+    setBusy(host);
+    setErr(null);
+    try {
+      await api.hostMeta.remove(host);
+      setDrafts((s) => { const c = { ...s }; delete c[host]; return c; });
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Hosts</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Optional metadata overlay (owner, environment, tags, notes)
+            keyed by host name. Shows up on the Hosts page card and
+            filter pills.
+          </div>
+        </div>
+      </div>
+
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      {byHost != null && allHosts.length === 0 && (
+        <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
+          No hosts discovered or labeled yet. Push <code>custom.&lt;host&gt;.*</code> samples to populate this list.
+        </div>
+      )}
+
+      {allHosts.length > 0 && (
+        <div className="table-wrap" style={{ marginTop: 12 }}>
+          <table className="t">
+            <thead>
+              <tr>
+                <th style={{ width: 140 }}>Host</th>
+                <th style={{ width: 140 }}>Owner</th>
+                <th style={{ width: 120 }}>Environment</th>
+                <th style={{ width: 200 }}>Tags (comma-separated)</th>
+                <th>Notes</th>
+                {isAdmin && <th style={{ width: 130 }}></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {allHosts.map((host) => {
+                const cur = byHost[host] || {};
+                const draft = drafts[host];
+                const dirty = !!draft && Object.keys(draft).length > 0;
+                const tagsStr = Array.isArray(draftFor(host, 'tags'))
+                  ? draftFor(host, 'tags').join(', ')
+                  : '';
+                return (
+                  <tr key={host}>
+                    <td className="mono">{host}</td>
+                    <td>
+                      <input
+                        type="text"
+                        value={draftFor(host, 'owner')}
+                        onChange={(e) => setDraft(host, 'owner', e.target.value)}
+                        className="input"
+                        maxLength={80}
+                        disabled={!isAdmin}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={draftFor(host, 'environment')}
+                        onChange={(e) => setDraft(host, 'environment', e.target.value)}
+                        placeholder="prod / staging / dev"
+                        className="input"
+                        maxLength={40}
+                        disabled={!isAdmin}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={tagsStr}
+                        onChange={(e) => setDraft(
+                          host,
+                          'tags',
+                          e.target.value.split(',').map((t) => t.trim()).filter(Boolean)
+                        )}
+                        className="input mono"
+                        style={{ fontSize: 12 }}
+                        disabled={!isAdmin}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={draftFor(host, 'notes')}
+                        onChange={(e) => setDraft(host, 'notes', e.target.value)}
+                        className="input"
+                        maxLength={2000}
+                        disabled={!isAdmin}
+                      />
+                    </td>
+                    {isAdmin && (
+                      <td>
+                        <button
+                          type="button"
+                          className="btn tiny"
+                          onClick={() => save(host)}
+                          disabled={!dirty || busy === host}
+                          style={{ marginRight: 6 }}
+                        >
+                          {busy === host ? '…' : 'Save'}
+                        </button>
+                        {Object.keys(cur).length > 0 && (
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            onClick={() => clearMeta(host)}
+                            disabled={busy === host}
+                            style={{ padding: '2px 8px', fontSize: 11 }}
+                          >
+                            clear
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -907,6 +1094,10 @@ export default function Settings() {
       <div className="spacer-md" />
 
       <ActionsCard />
+
+      <div className="spacer-md" />
+
+      <HostsCard />
 
       <div className="spacer-md" />
 

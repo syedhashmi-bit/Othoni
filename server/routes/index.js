@@ -27,6 +27,7 @@ const hosts = require('../hosts');
 const actions = require('../actions');
 const actionHistory = require('../action-history');
 const sessions = require('../sessions');
+const hostMeta = require('../host-meta');
 
 const router = express.Router();
 
@@ -354,8 +355,50 @@ router.post('/checks/:id/run', async (req, res) => {
 
 // Per-host snapshot. Auto-discovers hosts from `custom.<host>.*` metric
 // names (laid down by v0.23.0 host attribution + v0.25.0 agent.sh) and
-// returns the latest value of each known agent metric per host.
+// returns the latest value of each known agent metric per host. The
+// response also overlays any per-host metadata stored via /api/host-meta
+// (v0.43).
 router.get('/hosts', wrap('hosts', () => ({ hosts: hosts.getHosts() })));
+
+// ---------- host metadata (v0.43) ----------
+// Operator-supplied overlay (owner, environment, tags, notes) keyed by
+// host. Independent of the metric ingest — metadata stays put even if
+// the agent goes silent for a while, and a fresh host that hasn't been
+// labeled yet just has `meta: null` on the /hosts response.
+
+router.get('/host-meta', (req, res) => {
+  res.json({ byHost: hostMeta.all() });
+});
+
+router.put('/host-meta/:host', (req, res) => {
+  try {
+    const next = hostMeta.upsert(req.params.host, req.body || {});
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'host.meta.update',
+      target: req.params.host,
+      metadata: Object.keys(req.body || {}),
+    });
+    res.json({ host: req.params.host, meta: next });
+  } catch (e) {
+    if (e.code === 'invalid_host' || e.code === 'invalid_request') {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    logger.error('host-meta upsert failed:', e.message);
+    res.status(500).json({ error: 'host_meta_failed' });
+  }
+});
+
+router.delete('/host-meta/:host', (req, res) => {
+  const ok = hostMeta.remove(req.params.host);
+  if (!ok) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'host.meta.delete',
+    target: req.params.host,
+  });
+  res.json({ ok: true });
+});
 
 // ---------- actions ----------
 // Off by default. When disabled, GET returns 200 with enabled:false so

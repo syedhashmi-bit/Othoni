@@ -8,6 +8,90 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.43.0] — 2026-05-12
+
+Host metadata overlay. Hosts have been auto-discovered from
+`custom.<host>.*` since v0.30 but they're just bare names — no
+"who owns this", "what env is this", "what is it for". v0.43 adds
+an opt-in metadata layer (`owner`, `environment`, `tags`, `notes`)
+keyed by host. Stored as a JSON file, surfaced on the Hosts page
+card and via filter pills, edited from the Settings page.
+
+### Added
+
+- **`server/host-meta.js`** + `data/hosts.json` store. Atomic
+  save (tmp + rename) following the existing
+  webhooks/alert-rules pattern. Validation: host name matches
+  the ingest pattern (`[a-z0-9-]{1,40}`); `owner` ≤ 80 chars;
+  `environment` ≤ 40 chars; `tags` array ≤ 16 entries each
+  ≤ 40 chars; `notes` ≤ 2000 chars. Empty patch (`{}` or all
+  fields cleared) removes the row entirely.
+- **`GET /api/host-meta`** — full `{ byHost: { ... } }` snapshot,
+  cookie-auth, GET so viewers see it too.
+- **`PUT /api/host-meta/:host`** — upsert; partial patches merge
+  with the existing record. Admin-only (`requireAdmin`).
+- **`DELETE /api/host-meta/:host`** — remove. Admin-only. 404
+  when the host has no row.
+- **Overlay on `GET /api/hosts`** — every host entry now
+  carries a `meta` field (null when no row exists). Same
+  endpoint, additive shape.
+- **Host card chips + notes on the Hosts page.** Environment
+  pill, tag chips, "owner: …" line, multi-line notes block
+  under the freshness chip.
+- **Filter pills on the Hosts page.** Per-environment +
+  per-owner toggles (auto-populated from the metadata that's
+  actually present). All / clear filters via the explicit "all"
+  button per row.
+- **Hosts card on the Settings page** with a table-of-rows
+  editor (owner / environment / tags / notes per host). Save
+  per row; "clear" wipes the row from disk. Viewer sessions see
+  the table read-only (inputs disabled; no Save / clear
+  buttons).
+- **`host.meta.update` + `host.meta.delete` audit actions.**
+
+### Changed
+
+- `package.json` bumped to `0.43.0`.
+- `server/audit.js` — two new entries in the whitelist.
+- `server/hosts.js` — `getHosts()` overlays metadata onto each
+  host. Imports `host-meta`.
+- `server/routes/index.js` — three new routes; imports the new
+  module.
+- `client/src/api.js` — `api.hostMeta.{list,upsert,remove}`.
+- `client/src/pages/Hosts.jsx` — host card surfaces metadata
+  chips + notes; page header grows filter pill rows.
+- `client/src/pages/Settings.jsx` — new `<HostsCard>` mounted
+  between Actions and Sessions. Audit action labels updated.
+
+### Notes
+
+- **Metadata + ingest are independent.** A host can be labeled
+  before it ever pushes; a labeled host whose agent goes silent
+  keeps its metadata for the next time it comes back. The
+  Settings → Hosts card lists the *union* of discovered hosts
+  + currently-labeled hosts so an offline host's metadata stays
+  editable.
+- **No schema-level changes** — metadata is overlay-only, lives
+  in its own JSON file, never touches the SQLite samples table.
+  Removing a host's metadata doesn't touch its samples.
+- **No `Won't do` for tag taxonomy** — tags are free text. The
+  filter pills only show tags that some host actually has.
+- Smoke-tested end-to-end on the live VPS:
+  - Initial `/api/host-meta` returns `{ byHost: {} }`.
+  - `PUT /api/host-meta/smoketesthost1` with
+    `{owner, environment, tags[], notes}` round-trips and
+    overlays on `/api/hosts`.
+  - Invalid host (uppercase) → 400 `invalid_host`.
+  - `tags: "not-array"` → 400 `invalid_request`.
+  - Empty patch deletes the row (`meta: null`).
+  - `DELETE` on a non-existent host → 404 `not_found`.
+  - Viewer GET → 200; viewer PUT → 403 (requireAdmin).
+  - Audit log captures `host.meta.update` with the changed
+    field names and `host.meta.delete` events.
+  - File persists; atomic write verified by reading
+    `data/hosts.json` between operations.
+  - Cleanup leaves `data/hosts.json` empty.
+
 ## [0.42.0] — 2026-05-12
 
 Per-host webhook subscriptions. v0.41 let alert rules target a

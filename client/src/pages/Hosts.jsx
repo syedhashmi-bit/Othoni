@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { Sparkline } from '../Charts.jsx';
 import { formatBytes, formatRate, statusClass } from '../utils.js';
+import { useApp, AdminOnly } from '../App.jsx';
 
 // Map host-metric leaf names to { label, format, range max for the
 // sparkline if appropriate, status-from-percent }. Tile order is the
@@ -74,20 +75,35 @@ function HostTile({ leaf, value, metricName, meta }) {
 function HostCard({ host }) {
   const freshness = freshnessClass(host.lastSeenAt);
   const extras = Object.entries(host.extras || {});
+  const m = host.meta || {};
   return (
     <div className="card">
       <div className="card-header" style={{ alignItems: 'flex-start' }}>
         <div style={{ flex: 1 }}>
-          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span className={`chip ${freshness}`} style={{ fontSize: 11 }}>
               <span className="dot" />{freshnessLabel(host.lastSeenAt)}
             </span>
             <span className="mono" style={{ fontSize: 16 }}>{host.host}</span>
+            {m.environment && (
+              <span className="chip" style={{ fontSize: 10 }}>{m.environment}</span>
+            )}
+            {m.owner && (
+              <span className="dim" style={{ fontSize: 11 }}>owner: {m.owner}</span>
+            )}
+            {Array.isArray(m.tags) && m.tags.map((t) => (
+              <span key={t} className="chip dim" style={{ fontSize: 10 }}>{t}</span>
+            ))}
           </div>
           <div className="card-sub" style={{ fontSize: 11 }}>
             Pushing via <code>POST /api/metrics</code> · last sample{' '}
             {new Date(host.lastSeenAt).toLocaleString([], { hour12: false })}
           </div>
+          {m.notes && (
+            <div className="dim" style={{ fontSize: 12, marginTop: 4, whiteSpace: 'pre-wrap' }}>
+              {m.notes}
+            </div>
+          )}
         </div>
       </div>
 
@@ -131,6 +147,8 @@ function HostCard({ host }) {
 export default function Hosts() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
+  const [envFilter, setEnvFilter] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState('');
 
   function refresh() {
     api.hosts()
@@ -146,6 +164,29 @@ export default function Hosts() {
     return () => clearInterval(id);
   }, []);
 
+  // Distinct environments + owners across the current hosts list. Drives
+  // the filter pill row.
+  const { envs, owners } = useMemo(() => {
+    const envSet = new Set();
+    const ownerSet = new Set();
+    for (const h of data || []) {
+      const m = h.meta || {};
+      if (m.environment) envSet.add(m.environment);
+      if (m.owner) ownerSet.add(m.owner);
+    }
+    return {
+      envs: Array.from(envSet).sort(),
+      owners: Array.from(ownerSet).sort(),
+    };
+  }, [data]);
+
+  const filtered = (data || []).filter((h) => {
+    const m = h.meta || {};
+    if (envFilter && m.environment !== envFilter) return false;
+    if (ownerFilter && m.owner !== ownerFilter) return false;
+    return true;
+  });
+
   return (
     <div className="page-fade-in">
       <h1 className="page-title">Hosts</h1>
@@ -154,6 +195,55 @@ export default function Hosts() {
         v0.23.0 <code>host</code> attribution. Auto-discovered from{' '}
         <code>custom.&lt;host&gt;.*</code> series in the history store.
       </p>
+
+      {(envs.length > 0 || owners.length > 0) && (
+        <div className="toolbar" style={{ flexWrap: 'wrap' }}>
+          {envs.length > 0 && (
+            <>
+              <span className="muted" style={{ fontSize: 12 }}>env:</span>
+              <button
+                type="button"
+                className={`btn ghost ${envFilter === '' ? 'active' : ''}`}
+                onClick={() => setEnvFilter('')}
+              >
+                all
+              </button>
+              {envs.map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  className={`btn ghost ${envFilter === e ? 'active' : ''}`}
+                  onClick={() => setEnvFilter(envFilter === e ? '' : e)}
+                >
+                  {e}
+                </button>
+              ))}
+            </>
+          )}
+          {owners.length > 0 && (
+            <>
+              <span className="muted" style={{ fontSize: 12, marginLeft: 16 }}>owner:</span>
+              <button
+                type="button"
+                className={`btn ghost ${ownerFilter === '' ? 'active' : ''}`}
+                onClick={() => setOwnerFilter('')}
+              >
+                all
+              </button>
+              {owners.map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  className={`btn ghost ${ownerFilter === o ? 'active' : ''}`}
+                  onClick={() => setOwnerFilter(ownerFilter === o ? '' : o)}
+                >
+                  {o}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       {err && <div className="error">{err}</div>}
 
@@ -186,9 +276,17 @@ export default function Hosts() {
       )}
 
       {data && data.length > 0 && (
-        <div className="grid cols-2" style={{ gap: 16 }}>
-          {data.map((h) => <HostCard key={h.host} host={h} />)}
-        </div>
+        <>
+          {filtered.length === 0 ? (
+            <div className="empty" style={{ padding: '24px 0', fontSize: 13 }}>
+              No hosts match the current filter.
+            </div>
+          ) : (
+            <div className="grid cols-2" style={{ gap: 16 }}>
+              {filtered.map((h) => <HostCard key={h.host} host={h} />)}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

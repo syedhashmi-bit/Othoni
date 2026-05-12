@@ -40,6 +40,9 @@ const VALID_ACTIONS = new Set([
   'action.process.signal',
   // Phase 2 session management (v0.38).
   'session.revoke',
+  // Phase 3 host metadata (v0.43).
+  'host.meta.update',
+  'host.meta.delete',
 ]);
 
 let insertStmt = null;

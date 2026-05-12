@@ -55,6 +55,15 @@ export const api = {
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   overview: () => request('/api/overview'),
   hosts: () => request('/api/hosts'),
+  hostMeta: {
+    list:   () => request('/api/host-meta'),
+    upsert: (host, patch) => request(`/api/host-meta/${encodeURIComponent(host)}`, {
+      method: 'PUT', body: JSON.stringify(patch),
+    }),
+    remove: (host) => request(`/api/host-meta/${encodeURIComponent(host)}`, {
+      method: 'DELETE',
+    }),
+  },
   actions: {
     list: () => request('/api/actions'),
     run: ({ kind, target, params, dryRun = false }) =>
