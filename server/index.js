@@ -11,6 +11,7 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
 const { auth, requireAdmin, login, logout, me, totpEnabled } = require('./auth');
+const csrf = require('./csrf');
 const { loginLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
@@ -61,7 +62,7 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     version: VERSION,
     time: new Date().toISOString(),
-    auth: { totp: totpEnabled() },
+    auth: { totp: totpEnabled(), csrf: csrf.isEnabled() },
   });
 });
 
@@ -80,8 +81,9 @@ app.use('/api/metrics', metricsRouter);
 app.get('/metrics', (req, res) => promExport.handleRequest(req, res));
 
 // Protected API routes. `requireAdmin` runs after `auth` so the viewer
-// can still GET everything but is 403'd on PUT/POST/PATCH/DELETE.
-app.use('/api', auth, requireAdmin, apiRouter);
+// can still GET everything but is 403'd on PUT/POST/PATCH/DELETE. CSRF
+// is gated on non-GET methods after the role check.
+app.use('/api', auth, requireAdmin, csrf.middleware, apiRouter);
 
 // Static frontend
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

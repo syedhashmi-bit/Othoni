@@ -8,6 +8,87 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.39.0] — 2026-05-12
+
+CSRF token on state-changing routes. Closes the niche-but-real CSRF
+attack surface that `sameSite=lax` already mostly handles, but doesn't
+cover (subdomain attacks, browser bugs, weird embedded usage).
+Double-submit cookie pattern: server sets `othoni_csrf` cookie at
+login (non-httpOnly so client JS can read it); client echoes it back
+in `X-Othoni-CSRF` header on every state-changing request; server
+compares constant-time. Defaults on; flag-gated for rollback.
+
+### Added
+
+- **`server/csrf.js`** — `isEnabled()`, `generateToken()` (192 random
+  bits, base64url), `attachCookie()`, `clearCookie()`,
+  `ensureCookie()` for backfilling pre-v0.39 sessions, and the
+  `middleware()` that 403s missing / mismatched tokens on
+  PUT/POST/PATCH/DELETE.
+- **`othoni_csrf` sibling cookie at login.** Same TTL as the session
+  cookie, `httpOnly: false`, `sameSite: lax`, `secure` when the
+  request was HTTPS.
+- **`X-Othoni-CSRF` header on the client.** `api.js` reads the
+  cookie via `document.cookie` regex and adds the header to any
+  non-GET fetch. Pure-string compare on the server uses
+  `crypto.timingSafeEqual` to dodge timing attacks.
+- **`auth.csrf` field on `/api/health`.** Tiny discoverability bit
+  for the UI / monitoring — mirrors the existing `auth.totp` field.
+- **`OTHONI_CSRF_ENABLED` env var.** Defaults `true`. Set
+  `false`/`0`/`no` to disable. Documented in `.env.example`.
+
+### Changed
+
+- `package.json` bumped to `0.39.0`.
+- `server/auth.js` — `login()` mints + attaches the CSRF cookie
+  alongside the session cookie. `auth()` middleware calls
+  `csrf.ensureCookie(req, res, ttl)` so pre-v0.39 sessions get a
+  cookie the next time they hit any authenticated endpoint
+  (typically `/api/auth/me` on app load). `logout()` clears both
+  cookies.
+- `server/index.js` — `app.use('/api', auth, requireAdmin, csrf.middleware, apiRouter)`.
+  The CSRF gate runs after auth + role so the response codes layer
+  cleanly (401 unauthorized → 403 forbidden → 403 csrf_required).
+- `client/src/api.js` — `request()` reads the CSRF cookie and adds
+  the `X-Othoni-CSRF` header automatically. Existing call sites
+  don't change.
+
+### Notes
+
+- **Headless flows unaffected.** `POST /api/metrics` is mounted
+  *before* the cookie auth wall and uses Bearer-token (API key)
+  auth. It never carries a session cookie so the CSRF middleware
+  never runs against it. Verified end-to-end.
+- **GET requests not gated.** The CSRF check only fires on
+  non-GET/HEAD/OPTIONS. Read-only browsing — including the
+  ubiquitous `/api/auth/me` on every page load — never sees the
+  middleware.
+- **Pre-v0.39 sessions stay valid.** The session JWT structure
+  didn't change, so v0.38 cookies are accepted. The first
+  authenticated request (the app's `/api/auth/me` poll on mount)
+  receives the backfilled `othoni_csrf` cookie via
+  `csrf.ensureCookie()`, so the subsequent state-changing request
+  has the cookie to echo. No re-login required.
+- **Login isn't itself CSRF-protected.** It's mounted before the
+  cookie wall, so the middleware doesn't see it. That's fine:
+  CSRF on the login endpoint would require an attacker to log
+  the victim *in* — they'd need the credentials, which is its
+  own attack and not what CSRF protects against.
+- Smoke-tested end-to-end against the live VPS:
+  - `/api/health` reports `auth.csrf: true`.
+  - Login Set-Cookie carries both `othoni_session` (HttpOnly) and
+    `othoni_csrf` (not HttpOnly).
+  - `POST /api/keys` with valid session cookie but no CSRF header
+    → 403 `csrf_required`.
+  - Same `POST` with header set to the cookie value → 200.
+  - `DELETE` with mismatched header → 403.
+  - `GET /api/auth/me` → 200 (unaffected).
+  - Session cookie alone (no CSRF cookie) → first GET response
+    Set-Cookie includes a fresh `othoni_csrf`. Subsequent POST
+    without header still 403; with the new header → would be 200.
+  - `POST /api/metrics` with `Authorization: Bearer othoni_…` and
+    no cookies at all → 200 `accepted: 1`.
+
 ## [0.38.0] — 2026-05-12
 
 Active session list + revoke. JWT cookies were stateless before this —

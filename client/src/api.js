@@ -1,8 +1,27 @@
 // Tiny fetch wrapper. The session cookie is sent automatically (same-origin).
+// On state-changing methods (anything other than GET/HEAD), the v0.39
+// CSRF double-submit pattern requires echoing the `othoni_csrf` cookie
+// value back in the `X-Othoni-CSRF` header.
+function readCsrfFromCookie() {
+  if (typeof document === 'undefined') return null;
+  const m = /(?:^|;\s*)othoni_csrf=([^;]+)/.exec(document.cookie || '');
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 async function request(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const csrfHeaders = {};
+  if (method !== 'GET' && method !== 'HEAD') {
+    const tok = readCsrfFromCookie();
+    if (tok) csrfHeaders['X-Othoni-CSRF'] = tok;
+  }
   const res = await fetch(path, {
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...csrfHeaders,
+      ...(options.headers || {}),
+    },
     ...options,
   });
   if (res.status === 401) {
