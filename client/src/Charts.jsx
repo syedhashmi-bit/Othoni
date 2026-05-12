@@ -845,6 +845,137 @@ export function StackedAreaChart({
 
 // Small grid of vertical bars — one per CPU core. Each shows the current
 // load. Cores: [{ load: 0..100 }].
+// v0.45 — Per-core CPU heatmap. `cores` shape:
+//   [{ core: 0, points: [{ t, v }, ...] }, ...]
+// where v is a 0..100 percent. Rows = cores, columns = time buckets,
+// cell hue ramps cool→hot. Pure SVG, no library. Hover shows a tooltip.
+export function Heatmap({
+  cores = [],
+  bucketMs,
+  from,
+  to,
+  cellH = 16,
+  gap = 1,
+  rangeLabel = '',
+}) {
+  const [hover, setHover] = useState(null);
+  const w = useContainerWidth(800);
+
+  if (!cores.length) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No per-core data in this range.</div>;
+  }
+
+  // Build a fixed-width column grid spanning the requested range so
+  // gaps in the data render as empty cells. Each bucket is one
+  // column; the cell positions are derived from (t - from) / bucketMs.
+  const span = Math.max(1, (to || Date.now()) - (from || Date.now()));
+  const nCols = Math.max(1, Math.ceil(span / Math.max(1000, bucketMs || 60000)));
+  // Reserve room on the left for the core labels.
+  const labelW = 32;
+  const gridW = Math.max(120, w - labelW);
+  const cellW = Math.max(1.5, (gridW - (nCols - 1) * gap) / nCols);
+  const rows = cores.length;
+  const height = rows * cellH + (rows - 1) * gap;
+
+  function colorFor(v) {
+    if (v == null || !Number.isFinite(v)) return 'var(--bg-card-2)';
+    // Three stops: cool (0–60) → warn (75) → crit (90+). Linear hue
+    // ramp between them through HSL so the gradient stays perceptually
+    // smooth on dark theme. Saturation/lightness fixed.
+    const x = Math.max(0, Math.min(100, v));
+    // 0 → 220 (cool blue), 60 → 200, 75 → 40 (amber), 100 → 0 (red)
+    let h;
+    if (x <= 60) h = 220 - (220 - 200) * (x / 60);          // 220 → 200
+    else if (x <= 75) h = 200 - (200 - 40) * ((x - 60) / 15); // 200 → 40
+    else h = 40 - 40 * ((x - 75) / 25);                       // 40 → 0
+    const s = 70;
+    const l = 32 + (x / 100) * 18; // 32% → 50% lightness
+    return `hsl(${h.toFixed(0)} ${s}% ${l.toFixed(0)}%)`;
+  }
+
+  return (
+    <div style={{ width: '100%', position: 'relative' }}>
+      <svg
+        viewBox={`0 0 ${labelW + gridW} ${height}`}
+        width="100%"
+        height={height}
+        style={{ display: 'block' }}
+        onMouseLeave={() => setHover(null)}
+      >
+        {cores.map((c, ri) => {
+          const y = ri * (cellH + gap);
+          // Bin points by column index.
+          const valByCol = new Array(nCols).fill(null);
+          for (const p of c.points || []) {
+            const col = Math.floor((p.t - from) / bucketMs);
+            if (col >= 0 && col < nCols) valByCol[col] = p.v;
+          }
+          return (
+            <g key={c.core ?? ri}>
+              <text
+                x={labelW - 6}
+                y={y + cellH / 2 + 3.5}
+                textAnchor="end"
+                fontSize="10"
+                fill="var(--text-muted)"
+                fontFamily="ui-monospace, SF Mono, monospace"
+              >
+                c{c.core ?? ri}
+              </text>
+              {valByCol.map((v, ci) => (
+                <rect
+                  key={ci}
+                  x={labelW + ci * (cellW + gap)}
+                  y={y}
+                  width={cellW}
+                  height={cellH}
+                  fill={colorFor(v)}
+                  onMouseEnter={() => setHover({ core: c.core ?? ri, col: ci, v, t: from + ci * bucketMs })}
+                />
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      {hover && (
+        <div
+          style={{
+            position: 'absolute',
+            right: 6,
+            top: 0,
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '4px 8px',
+            fontSize: 11,
+            color: 'var(--text)',
+            pointerEvents: 'none',
+            fontFamily: 'ui-monospace, SF Mono, monospace',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          core c{hover.core} ·{' '}
+          {hover.v == null ? '—' : `${hover.v.toFixed(1)}%`} ·{' '}
+          {new Date(hover.t).toLocaleTimeString([], { hour12: false })}
+        </div>
+      )}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          marginTop: 4,
+          fontSize: 10,
+          color: 'var(--text-dim)',
+        }}
+      >
+        <span>{from ? new Date(from).toLocaleTimeString([], { hour12: false }) : ''}</span>
+        <span>{rangeLabel}</span>
+        <span>{to ? new Date(to).toLocaleTimeString([], { hour12: false }) : 'now'}</span>
+      </div>
+    </div>
+  );
+}
+
 export function CoreGrid({ cores = [] }) {
   if (!cores.length) return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No core data.</div>;
   return (

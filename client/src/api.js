@@ -119,6 +119,8 @@ export const api = {
     request(`/api/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`),
   historyMetrics: (prefix) =>
     request(`/api/history/metrics${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ''}`),
+  cpuCores: ({ range = '1h', buckets = 120 } = {}) =>
+    request(`/api/history/cpu-cores?range=${encodeURIComponent(range)}&buckets=${buckets}`),
   historyProcesses: ({ range = '1h', sortBy = 'cpu', limit = 10 } = {}) => {
     const qs = new URLSearchParams({ range, sortBy, limit: String(limit) });
     return request(`/api/history/processes?${qs.toString()}`);

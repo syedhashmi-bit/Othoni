@@ -96,6 +96,17 @@ router.get(
   })
 );
 
+// Per-core CPU heatmap data (v0.45). One bucket-averaged series per
+// `cpu.core.<n>` metric, suitable for direct render as a 2-D grid.
+router.get(
+  '/history/cpu-cores',
+  wrap('history_cpu_cores', (req) => {
+    const range = String(req.query.range || '1h');
+    const buckets = parseInt(req.query.buckets || '120', 10) || 120;
+    return history.queryCpuCores({ range, buckets });
+  })
+);
+
 // Distinct metric names currently stored. The History page calls this
 // (with prefix=custom.) to auto-discover externally-pushed series.
 router.get(

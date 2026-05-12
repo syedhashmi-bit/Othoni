@@ -419,6 +419,55 @@ function listMetrics({ prefix } = {}) {
   return rows.map((r) => r.metric);
 }
 
+// Per-core CPU heatmap data (v0.45). Reads every `cpu.core.<n>` series
+// over the range and returns bucket-averaged points per core. Used by
+// the Dashboard's CPU heatmap primitive (one row per core, one column
+// per time bucket).
+function queryCpuCores({ range = '1h', buckets = 120 } = {}) {
+  open();
+  const span = RANGES[range] || RANGES['1h'];
+  const now = Date.now();
+  const from = now - span;
+  const bucketCount = Math.min(600, Math.max(10, parseInt(buckets, 10) || 120));
+  const bucketMs = Math.max(1000, Math.floor(span / bucketCount));
+
+  // Discover the cores that have at least one sample in the window.
+  // Sorted numerically by index so the heatmap rows render in order.
+  const names = db
+    .prepare(
+      `SELECT DISTINCT metric FROM samples
+        WHERE metric LIKE 'cpu.core.%' AND t >= ?
+        ORDER BY metric ASC`
+    )
+    .all(from)
+    .map((r) => r.metric)
+    .sort((a, b) => {
+      const ai = parseInt(a.slice('cpu.core.'.length), 10);
+      const bi = parseInt(b.slice('cpu.core.'.length), 10);
+      return ai - bi;
+    });
+
+  // bucketMs is a server-computed integer; inline it so SQLite uses
+  // INTEGER division. better-sqlite3 binds JS Numbers as REAL by
+  // default, which would turn `t / 30000` into a real divide and
+  // defeat the GROUP BY bucketing.
+  const bucketStmt = db.prepare(
+    `SELECT (t / ${bucketMs}) * ${bucketMs} AS t, AVG(v) AS v
+       FROM samples
+      WHERE metric = ? AND t >= ?
+      GROUP BY (t / ${bucketMs})
+      ORDER BY t ASC`
+  );
+
+  const cores = names.map((m) => {
+    const n = parseInt(m.slice('cpu.core.'.length), 10);
+    const points = bucketStmt.all(m, from);
+    return { metric: m, core: n, points };
+  });
+
+  return { range, from, to: now, bucketMs, cores };
+}
+
 // Trusted internal-only insert. Validates against the broader `isValidMetric`
 // (so it accepts cpu.core.*, check.*, etc.) instead of just the custom-only
 // pattern. Used by server/checks.js to push synthetic-check samples.
@@ -447,6 +496,7 @@ module.exports = {
   start,
   stop,
   query,
+  queryCpuCores,
   RANGES,
   RETENTION_MS,
   isCustomMetric,

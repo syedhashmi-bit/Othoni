@@ -1,9 +1,9 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { usePoller } from '../hooks';
 import { formatBytes, formatRate, formatUptime, statusClass } from '../utils';
 import { useApp } from '../App.jsx';
-import { Sparkline, MultiLineChart, CoreGrid } from '../Charts.jsx';
+import { Sparkline, MultiLineChart, CoreGrid, Heatmap } from '../Charts.jsx';
 import { IconCpu, IconMemory, IconDisk, IconActivity } from '../Icons.jsx';
 
 function useSpark(metric, range = '15m', refreshMs = 15000) {
@@ -44,6 +44,74 @@ function DashboardSkeleton() {
       <div className="grid cols-4">
         {[0, 1, 2, 3].map((i) => <SkelCard key={i} />)}
       </div>
+    </div>
+  );
+}
+
+// v0.45 CPU heatmap. Polls /api/history/cpu-cores for bucketed per-core
+// data over the selected range and renders via the Heatmap primitive.
+function CpuHeatmapCard() {
+  const [range, setRange] = useState('1h');
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let cancel = false;
+    function refresh() {
+      api.cpuCores({ range })
+        .then((r) => { if (!cancel) setData(r); })
+        .catch((e) => { if (!cancel) setErr(e.message); });
+    }
+    refresh();
+    const id = setInterval(refresh, 30_000);
+    return () => { cancel = true; clearInterval(id); };
+  }, [range]);
+
+  const ranges = [
+    { value: '15m', label: '15m' },
+    { value: '1h',  label: '1h'  },
+    { value: '6h',  label: '6h'  },
+    { value: '24h', label: '24h' },
+  ];
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">CPU heatmap</div>
+          <div className="card-sub">
+            Per-core load over time. Cool → hot ramps cold blue (idle) →
+            amber (~75%) → red (90%+). Hover for the bucket value.
+          </div>
+        </div>
+        <div className="toolbar" style={{ margin: 0, gap: 4 }}>
+          {ranges.map((r) => (
+            <button
+              key={r.value}
+              type="button"
+              className={`btn ghost ${range === r.value ? 'active' : ''}`}
+              onClick={() => setRange(r.value)}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+      {!err && data && (
+        <div style={{ marginTop: 12 }}>
+          <Heatmap
+            cores={data.cores || []}
+            bucketMs={data.bucketMs}
+            from={data.from}
+            to={data.to}
+            rangeLabel={range}
+          />
+        </div>
+      )}
+      {!err && !data && (
+        <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>Loading…</div>
+      )}
     </div>
   );
 }
@@ -178,11 +246,16 @@ export default function Dashboard() {
 
       <div className="spacer-md" />
 
+      {/* CPU heatmap (over time) */}
+      <CpuHeatmapCard />
+
+      <div className="spacer-md" />
+
       {/* Per-core CPU + Disk I/O */}
       <div className="grid" style={{ gridTemplateColumns: '2fr 1fr', gap: 16 }}>
         <div className="card">
           <div className="card-header">
-            <div className="card-title">CPU per core</div>
+            <div className="card-title">CPU per core (now)</div>
             <div className="card-sub">
               {cpu.cores?.length} logical · {cpu.physicalCores} physical
               {cpu.temperatureC != null ? ` · ${cpu.temperatureC} °C` : ''}

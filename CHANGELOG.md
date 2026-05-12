@@ -8,6 +8,63 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.45.0] — 2026-05-12
+
+Per-core CPU heatmap — opens Phase 4 (visualization, storage & ops).
+The existing `<CoreGrid>` shows the *current* per-core load; this
+adds a 2-D heatmap of per-core load *over time* on the Dashboard
+hero area. Pure SVG, no library — fits the no-chart-library
+convention. Hot/cold ramps cool blue (idle) → amber (~75%) →
+red (90%+).
+
+### Added
+
+- **`<Heatmap>` primitive in `client/src/Charts.jsx`.** Rows =
+  cores, columns = time buckets. HSL hue ramp for cell color (220→
+  200→40→0 across 0→60→75→100%). Hover tooltip with bucket
+  timestamp + value. Time-axis labels along the bottom edge. Pure
+  SVG, ~160 lines including the color ramp.
+- **`GET /api/history/cpu-cores?range=&buckets=`** endpoint.
+  Discovers every `cpu.core.<n>` series with samples in the range,
+  bucket-averages each over the requested range, returns
+  `{ range, from, to, bucketMs, cores: [{ metric, core, points }] }`.
+  Server caps buckets at 600 to keep payloads bounded.
+- **CPU heatmap card on the Dashboard hero area.** Range picker
+  (15m / 1h / 6h / 24h); refresh every 30s; mounted between the
+  top stat tiles and the existing CoreGrid (now relabeled "CPU
+  per core (now)" to disambiguate). Uses the new
+  `api.cpuCores({ range, buckets })` helper.
+
+### Changed
+
+- `package.json` bumped to `0.45.0`.
+- `server/history.js` — new `queryCpuCores()`. Inlines the
+  bucket-ms literal into the SQL so SQLite does INTEGER division
+  on the bucket math; better-sqlite3 binds JS Numbers as REAL by
+  default, which would otherwise turn `t / 30000` into a real
+  divide and one row per raw sample. (The existing `query()`
+  function has the same latent issue; left alone here since fixing
+  it risks subtly changing the History page; tracked for a
+  separate cleanup.)
+- `server/routes/index.js` — mounts the new endpoint.
+- `client/src/api.js` — `api.cpuCores({ range, buckets })`.
+- `client/src/Charts.jsx` — `<Heatmap>` export.
+- `client/src/pages/Dashboard.jsx` — `<CpuHeatmapCard>` between
+  the top stat tiles and CPU-per-core/Disk-I/O row.
+
+### Notes
+
+- Smoke-tested live: `GET /api/history/cpu-cores?range=15m&buckets=30`
+  returned 31 points per core with exact 30-second gaps between
+  bucket centers. Range fallback for invalid input
+  (`range=bogus`) defaults to 1h cleanly. 2-core test box; 24h
+  request returned 121 buckets per core at 12-minute width as
+  expected.
+- The color ramp uses `hsl()` directly rather than the theme
+  tokens because the gradient needs a smooth interpolation that
+  CSS variables can't express. Saturation/lightness fixed; only
+  hue changes with value.
+
 ## [0.44.0] — 2026-05-12
 
 Per-host detail page — **closes Phase 3 (per-host depth)**. Clicking
