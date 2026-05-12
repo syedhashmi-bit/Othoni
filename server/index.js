@@ -19,6 +19,7 @@ const metricsRouter = require('./routes/metrics');
 const promExport = require('./prom-export');
 const history = require('./history');
 const sessions = require('./sessions');
+const vacuum = require('./vacuum');
 const processHistory = require('./process-history');
 const alerts = require('./alerts');
 const webhooks = require('./webhooks');
@@ -129,6 +130,9 @@ app.listen(PORT, HOST, () => {
   // before the last restart stay revoked.
   sessions.ensureSchema();
   sessions.loadRevokedFromDb();
+  // Nightly SQLite VACUUM scheduler. Disabled when OTHONI_VACUUM_TIME
+  // is unset or set to "off".
+  vacuum.start();
   // Process trends sampler — slower cadence (default 30s), shares the same
   // SQLite handle via history.getDb() so it must start after history.start().
   processHistory.start();
@@ -145,6 +149,7 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
   process.once(sig, () => {
     checks.stop();
     alerts.stop();
+    vacuum.stop();
     processHistory.stop();
     history.stop();
     process.exit(0);

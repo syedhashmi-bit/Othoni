@@ -29,6 +29,7 @@ const actionHistory = require('../action-history');
 const sessions = require('../sessions');
 const hostMeta = require('../host-meta');
 const retention = require('../retention');
+const vacuum = require('../vacuum');
 
 const router = express.Router();
 
@@ -419,6 +420,27 @@ router.get('/retention', (req, res) => {
     overrides: retention.list(),
     bounds: { minMs: retention.MIN_TTL_MS, maxMs: retention.MAX_TTL_MS },
   });
+});
+
+// ---------- vacuum (v0.48) ----------
+router.get('/vacuum', (req, res) => {
+  res.json(vacuum.snapshot());
+});
+
+router.post('/vacuum/run', (req, res) => {
+  const before = vacuum.snapshot();
+  const result = vacuum.runNow({ source: req.user?.username || 'manual' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'vacuum.run',
+    metadata: {
+      ok: !!result.ok,
+      reclaimedBytes: result.reclaimedBytes || null,
+      durationMs: result.durationMs || null,
+      error: result.error || null,
+    },
+  });
+  res.json(result);
 });
 
 router.put('/retention', (req, res) => {

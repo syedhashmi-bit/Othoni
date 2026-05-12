@@ -8,6 +8,81 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.48.0] — 2026-05-12
+
+Nightly SQLite VACUUM scheduler. SQLite never reclaims pages from
+deleted rows on its own — the 24h retention cleanup deletes rows but
+the freed pages stay in the WAL and the main file grows steadily.
+v0.48 adds a configurable nightly job that runs `VACUUM` + a
+`wal_checkpoint(TRUNCATE)` to defragment + reclaim. Surfaces last-run
++ reclaimed bytes on the Storage card, with an admin-only "Run now"
+button.
+
+### Added
+
+- **`server/vacuum.js`** scheduler. `start()` ticks every 60s and
+  fires when the local clock crosses into the configured HH:MM.
+  A "fired this minute" flag prevents double-runs; reset when the
+  clock leaves the scheduled minute so the next day's tick fires
+  again. The run pre-flight checkpoint flushes the WAL into the
+  main file; `VACUUM` defragments; a post-flight checkpoint folds
+  the post-VACUUM rewrites back so the measured size reflects
+  steady-state rather than the transient WAL bulge.
+- **`OTHONI_VACUUM_TIME`** env var (HH:MM 24-hour local, default
+  `03:30`). Accepts `off` / `false` / empty to disable. Documented
+  in `.env.example`. Invalid values (bad hour/minute) → disabled
+  with a logged warning.
+- **`GET /api/vacuum`** — `{ enabled, scheduledLocal, lastRunAt,
+  reclaimedBytes, durationMs, error, source, running }`. Cookie-
+  auth, viewer-readable.
+- **`POST /api/vacuum/run`** — admin-only manual trigger. Captured
+  in the audit log with the post-run stats as metadata.
+- **`vacuum.run` audit action.**
+- **State persistence at `data/vacuum-state.json`** so the Storage
+  card can show "last vacuum X hours ago" even after a service
+  restart.
+- **Vacuum panel on the Storage card.** Three-tile row below the
+  existing config tiles: scheduled time, last run + reclaimed, and
+  an admin-only Run-now button. Pulls `/api/vacuum` alongside
+  `/api/db/stats` on every 30s refresh.
+
+### Changed
+
+- `package.json` bumped to `0.48.0`.
+- `server/index.js` — boots `vacuum.start()` after history is up;
+  registers stop on `SIGTERM`/`SIGINT`.
+- `server/audit.js` — `vacuum.run` added.
+- `server/routes/index.js` — two new routes.
+- `.env.example` — documents `OTHONI_VACUUM_TIME`.
+- `client/src/api.js` — `api.vacuum.{status,run}`.
+- `client/src/pages/Settings.jsx` — `<StorageCard>` grows the
+  vacuum panel + Run-now action.
+
+### Notes
+
+- **Footprint = main `.db` file only.** First pass measured `.db
+  + -wal + -shm`, which made the reported "reclaimed" go strongly
+  negative because every page touched by VACUUM gets logged in
+  the WAL — the WAL briefly grew ~equal to the rewrites. The
+  fix: a second `wal_checkpoint(TRUNCATE)` *after* VACUUM folds
+  those pages back, and we report only the main file delta. WAL
+  is transient and not interesting as a "reclaimed" number.
+- **Single tick of 60s granularity.** A more precise scheduler
+  (cron parser etc.) would add a dep or ~200 lines of hand-rolled
+  parsing; the existing pattern is one cron-style time per
+  deployment, the operator just picks an off-hours minute. 60s
+  resolution is plenty.
+- **Manual trigger doesn't pause the sampler.** better-sqlite3 is
+  synchronous so VACUUM blocks; the sample tick that lands during
+  VACUUM just waits its turn. Smoke-tested 326ms total run time
+  on a ~34 MB database — well under the 5s sample cadence.
+- Smoke-tested live: `/api/vacuum` reports `enabled:true,
+  scheduledLocal:"03:30"`. Manual POST returned `ok:true,
+  reclaimedBytes:184320, durationMs:324`. State file persisted
+  the run. Audit log captured `vacuum.run` with the metadata.
+  Env-flag handling verified for `off`, invalid `25:00`, and
+  shorthand `3:30` (padded to `03:30`).
+
 ## [0.47.0] — 2026-05-12
 
 Per-metric retention overrides. Every metric shares the global

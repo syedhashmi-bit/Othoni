@@ -45,6 +45,8 @@ const VALID_ACTIONS = new Set([
   'host.meta.delete',
   // Phase 4 retention overrides (v0.47).
   'retention.update',
+  // Phase 4 vacuum scheduler (v0.48).
+  'vacuum.run',
 ]);
 
 let insertStmt = null;

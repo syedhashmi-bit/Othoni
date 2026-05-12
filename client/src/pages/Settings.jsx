@@ -38,13 +38,18 @@ function formatAbsTime(ms) {
 }
 
 function StorageCard() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
   const [stats, setStats] = useState(null);
+  const [vac, setVac] = useState(null);
   const [err, setErr] = useState(null);
+  const [vacBusy, setVacBusy] = useState(false);
 
   function refresh() {
     api.dbStats()
       .then(setStats)
       .catch((e) => setErr(e.message));
+    api.vacuum.status().then(setVac).catch(() => {});
   }
   useEffect(() => {
     refresh();
@@ -54,6 +59,19 @@ function StorageCard() {
     const id = setInterval(refresh, 30_000);
     return () => clearInterval(id);
   }, []);
+
+  async function runVacuum() {
+    if (!confirm('Run SQLite VACUUM now? Briefly blocks new samples while it runs.')) return;
+    setVacBusy(true);
+    try {
+      await api.vacuum.run();
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setVacBusy(false);
+    }
+  }
 
   if (err) {
     return (
@@ -125,6 +143,41 @@ function StorageCard() {
           <div className="mono">{formatHours(config.retentionMs)}</div>
         </div>
       </div>
+
+      {vac && (
+        <div className="grid cols-3" style={{ marginTop: 10, gap: 10 }}>
+          <div className="stat-tile">
+            <div className="muted" style={{ fontSize: 11 }}>vacuum scheduled</div>
+            <div className="mono">{vac.enabled ? vac.scheduledLocal : 'off'}</div>
+          </div>
+          <div className="stat-tile">
+            <div className="muted" style={{ fontSize: 11 }}>last vacuum</div>
+            <div className="mono">{vac.lastRunAt ? formatRelative(vac.lastRunAt) : 'never'}</div>
+            {vac.reclaimedBytes != null && (
+              <div className="dim" style={{ fontSize: 11 }}>
+                {vac.error
+                  ? <span className="crit">{vac.error}</span>
+                  : `reclaimed ${formatBytes(Math.max(0, vac.reclaimedBytes))}`}
+              </div>
+            )}
+          </div>
+          <div className="stat-tile">
+            <div className="muted" style={{ fontSize: 11 }}>vacuum</div>
+            {isAdmin ? (
+              <button
+                type="button"
+                className="btn tiny"
+                onClick={runVacuum}
+                disabled={vacBusy || vac.running}
+              >
+                {vac.running ? 'running…' : vacBusy ? '…' : 'Run now'}
+              </button>
+            ) : (
+              <span className="muted" style={{ fontSize: 12 }}>admin only</span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="table-wrap" style={{ marginTop: 18 }}>
         <table className="t">
@@ -237,6 +290,7 @@ const AUDIT_ACTION_LABELS = {
   'host.meta.update': { label: 'host meta ~', tone: 'accent' },
   'host.meta.delete': { label: 'host meta −', tone: 'warn' },
   'retention.update': { label: 'retention ~', tone: 'accent' },
+  'vacuum.run':       { label: 'vacuum',      tone: 'dim' },
 };
 
 function AuditLogCard() {

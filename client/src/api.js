@@ -62,6 +62,10 @@ export const api = {
       method: 'PUT', body: JSON.stringify({ overrides }),
     }),
   },
+  vacuum: {
+    status: () => request('/api/vacuum'),
+    run:    () => request('/api/vacuum/run', { method: 'POST' }),
+  },
   hostMeta: {
     list:   () => request('/api/host-meta'),
     upsert: (host, patch) => request(`/api/host-meta/${encodeURIComponent(host)}`, {
