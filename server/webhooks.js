@@ -19,6 +19,27 @@ const RETRY_AFTER_MS = 1500; // single retry delay
 
 const VALID_FORMATS = ['generic', 'slack', 'discord'];
 
+// v0.42 host filter. Allowed characters: same DNS-style host alphabet
+// plus `*` for glob and `.` for compound names. Empty / unset = all
+// alerts (back-compat). Pattern `*` is also "all". Otherwise, glob-
+// matched against `event.rule.host || 'local'` so `local` matches only
+// local-box rules and `db-*` routes the database team's alerts.
+const HOST_FILTER_RE = /^[a-z0-9*][a-z0-9*\-.]{0,79}$/;
+function isValidHostFilter(s) {
+  if (s == null || s === '') return true;
+  return typeof s === 'string' && HOST_FILTER_RE.test(s);
+}
+function matchesHostFilter(filter, alertHost) {
+  if (!filter || filter === '*') return true;
+  const target = alertHost || 'local';
+  if (filter === target) return true;
+  // Simple glob: `*` → `.*`. Escape every other regex metachar.
+  const re = new RegExp(
+    '^' + filter.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'
+  );
+  return re.test(target);
+}
+
 let cache = null;
 
 function ensureDir(p) {
@@ -67,6 +88,7 @@ function sanitize(w, { withStrip = true, stripN = 12 } = {}) {
     format: w.format,
     enabled: w.enabled !== false,
     host,
+    hostFilter: w.hostFilter || '',
     createdAt: w.createdAt,
     lastFiredAt: w.lastFiredAt || null,
     lastError: w.lastError || null,
@@ -83,12 +105,18 @@ function listWebhooks() {
   return cache.webhooks.map(sanitize);
 }
 
-function createWebhook({ label, url, format }) {
+function createWebhook({ label, url, format, hostFilter }) {
   if (typeof label !== 'string' || !label.trim() || label.length > 80) {
     throw Object.assign(new Error('label must be 1–80 chars'), { code: 'invalid_label' });
   }
   if (!isValidUrl(url)) {
     throw Object.assign(new Error('url must be http:// or https://'), { code: 'invalid_url' });
+  }
+  if (!isValidHostFilter(hostFilter)) {
+    throw Object.assign(
+      new Error('hostFilter must be empty or match [a-z0-9*][a-z0-9*\\-.]{0,79}'),
+      { code: 'invalid_host_filter' }
+    );
   }
   const fmt = VALID_FORMATS.includes(format) ? format : 'generic';
   load();
@@ -98,6 +126,7 @@ function createWebhook({ label, url, format }) {
     url,
     format: fmt,
     enabled: true,
+    hostFilter: hostFilter || '',
     createdAt: Date.now(),
     lastFiredAt: null,
     lastError: null,
@@ -114,6 +143,15 @@ function updateWebhook(id, patch) {
   if (typeof patch.enabled === 'boolean') w.enabled = patch.enabled;
   if (typeof patch.label === 'string' && patch.label.trim() && patch.label.length <= 80) {
     w.label = patch.label.trim();
+  }
+  if (patch.hostFilter !== undefined) {
+    if (!isValidHostFilter(patch.hostFilter)) {
+      throw Object.assign(
+        new Error('hostFilter must be empty or match [a-z0-9*][a-z0-9*\\-.]{0,79}'),
+        { code: 'invalid_host_filter' }
+      );
+    }
+    w.hostFilter = patch.hostFilter || '';
   }
   persist();
   return sanitize(w);
@@ -141,7 +179,8 @@ function durationStr(ms) {
 function defaultText(event) {
   const r = event.rule;
   const sev = (r.severity || 'warn').toUpperCase();
-  return `[${sev}] ${r.label || r.metric} — ${event.valueFmt} ${r.comparator === 'gt' ? '>' : '<'} ${event.thresholdFmt} (sustained ${durationStr(event.sustainedFor)})`;
+  const hostSuffix = r.host ? ` on ${r.host}` : '';
+  return `[${sev}] ${r.label || r.metric}${hostSuffix} — ${event.valueFmt} ${r.comparator === 'gt' ? '>' : '<'} ${event.thresholdFmt} (sustained ${durationStr(event.sustainedFor)})`;
 }
 
 function formatPayload(format, event) {
@@ -158,11 +197,15 @@ function formatPayload(format, event) {
       comparator: event.rule.comparator,
       threshold: event.rule.threshold,
       severity: event.rule.severity,
+      // v0.41 — null for local-box rules.
+      host: event.rule.host || null,
     },
     value: event.value,
     valueFmt: event.valueFmt,
     sustainedMs: event.sustainedFor,
     timestamp: Date.now(),
+    // The dashboard's own hostname. `rule.host` above is the alert's
+    // origin host (the agent that pushed the samples).
     host: require('os').hostname(),
   };
 }
@@ -234,11 +277,15 @@ async function fireOne(w, event) {
 }
 
 // Called by the alert engine on each rule fire. Fires every enabled webhook
-// in parallel (don't await — let them race; failures are logged).
+// whose hostFilter matches the alert's origin host in parallel (don't
+// await — let them race; failures are logged). Empty hostFilter = match
+// every alert (back-compat with pre-v0.42 webhooks).
 function dispatch(event) {
   load();
+  const alertHost = event && event.rule && event.rule.host;
   for (const w of cache.webhooks) {
     if (!w.enabled) continue;
+    if (!matchesHostFilter(w.hostFilter || '', alertHost)) continue;
     fireOne(w, event).catch(() => { /* already logged by fireOne */ });
   }
 }

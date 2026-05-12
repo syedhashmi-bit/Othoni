@@ -220,19 +220,20 @@ router.get('/webhooks', (req, res) => {
 router.post('/webhooks', (req, res) => {
   try {
     const created = webhooks.createWebhook({
-      label:  req.body && req.body.label,
-      url:    req.body && req.body.url,
-      format: req.body && req.body.format,
+      label:      req.body && req.body.label,
+      url:        req.body && req.body.url,
+      format:     req.body && req.body.format,
+      hostFilter: req.body && req.body.hostFilter,
     });
     audit.log({
       ...audit.fromReq(req),
       action: 'webhook.create',
       target: created.id,
-      metadata: { label: created.label, format: created.format },
+      metadata: { label: created.label, format: created.format, hostFilter: created.hostFilter },
     });
     res.json({ webhook: created });
   } catch (e) {
-    if (e.code === 'invalid_label' || e.code === 'invalid_url') {
+    if (e.code === 'invalid_label' || e.code === 'invalid_url' || e.code === 'invalid_host_filter') {
       return res.status(400).json({ error: e.code, message: e.message });
     }
     logger.error('webhooks create failed:', e.message);
@@ -241,7 +242,15 @@ router.post('/webhooks', (req, res) => {
 });
 
 router.patch('/webhooks/:id', (req, res) => {
-  const updated = webhooks.updateWebhook(req.params.id, req.body || {});
+  let updated;
+  try {
+    updated = webhooks.updateWebhook(req.params.id, req.body || {});
+  } catch (e) {
+    if (e.code === 'invalid_host_filter') {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    throw e;
+  }
   if (!updated) return res.status(404).json({ error: 'not_found' });
   audit.log({
     ...audit.fromReq(req),

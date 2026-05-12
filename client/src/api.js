@@ -131,8 +131,8 @@ export const api = {
   },
   webhooks: {
     list:    () => request('/api/webhooks'),
-    create:  ({ label, url, format }) => request('/api/webhooks', {
-      method: 'POST', body: JSON.stringify({ label, url, format }),
+    create:  ({ label, url, format, hostFilter }) => request('/api/webhooks', {
+      method: 'POST', body: JSON.stringify({ label, url, format, hostFilter }),
     }),
     update:  (id, patch) => request(`/api/webhooks/${encodeURIComponent(id)}`, {
       method: 'PATCH', body: JSON.stringify(patch),

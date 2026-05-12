@@ -8,6 +8,101 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.42.0] — 2026-05-12
+
+Per-host webhook subscriptions. v0.41 let alert rules target a
+specific host; this release lets a webhook destination opt into
+*receiving* only that host's fires. Use case from the roadmap:
+route `db-*` alerts to the database team's Slack channel and
+`app-*` to the app team's. New optional `hostFilter` on each
+webhook — empty / `*` keeps the existing "all alerts" behaviour,
+exact name or glob filters by `event.rule.host`. The webhook
+payload also surfaces the host attribution so downstream
+consumers can route after the fact.
+
+### Added
+
+- **`hostFilter` field on each webhook.** Stored alongside
+  `label`, `url`, `format`, `enabled`. Accepted shapes:
+  - empty / `null` / `*` — match every alert (back-compat).
+  - `local` — match only local-box rules (where `rule.host` is
+    null).
+  - `<glob>` — `*` is the only wildcard. Matched against
+    `rule.host || 'local'`. So `db-*` catches `db-1`, `db-2`;
+    `app-srv-*` catches `app-srv-2`; an exact name catches only
+    that name.
+  - Validation: `[a-z0-9*][a-z0-9*\-.]{0,79}` so a filter can
+    only reference characters the host pattern itself allows.
+- **`POST /api/webhooks` and `PATCH /api/webhooks/:id` accept
+  `hostFilter`.** Persisted; surfaced by `GET /api/webhooks` on
+  every list response.
+- **`rule.host` field on the generic-format webhook payload.**
+  `null` for local-box rules; the agent host for per-host rules.
+  Downstream consumers can route on it without parsing the
+  human-readable `text`.
+- **Host annotation in `text`.** Slack/Discord/generic all now
+  carry `on <host>` in the human text when the rule has a host:
+  `[WARN] PH3 host CPU on db-1 — 92.0% > 90.0% (sustained 5m)`.
+- **`invalid_host_filter` error code** on create / update for a
+  malformed filter (400).
+- **Inline host-filter editor on the Webhooks card.** Tiny mono
+  input below the label; saves on blur. Read-only for viewers
+  (admin-only via the existing `requireAdmin` guard). The
+  create-webhook form grows the same field.
+
+### Changed
+
+- `package.json` bumped to `0.42.0`.
+- `server/webhooks.js` — `HOST_FILTER_RE` + `isValidHostFilter` +
+  `matchesHostFilter` (the actual gate). `createWebhook` /
+  `updateWebhook` accept and validate `hostFilter`. `sanitize`
+  surfaces it. `dispatch` filters by it before calling
+  `fireOne`. `defaultText` includes `on <host>` when set. Generic
+  payload exposes `rule.host`.
+- `server/routes/index.js` — passes `hostFilter` through both
+  create + update; surfaces the new validation error code; audits
+  the field on creation.
+- `client/src/api.js` — `api.webhooks.create` forwards
+  `hostFilter`.
+- `client/src/pages/Alerts.jsx` — `<WebhooksCard>` gains the
+  filter UI; viewer sessions see a read-only chip when set.
+
+### Notes
+
+- **Filter syntax stays tiny on purpose** — single wildcard `*`,
+  no negation, no comma-separated alternatives. The roadmap was
+  clear that this is a "small ops team" feature, not a routing
+  engine. If someone needs richer routing later, the natural step
+  is v0.60's on-call rotation (cron-based scheduling).
+- **Filter is matched against the *alert's* host, not the
+  *dashboard's* host.** Per-host rule fires → `rule.host` set
+  → matched against the filter. Local-box rule fires →
+  `rule.host` null, treated as the literal `local` string for
+  matching → `local` filter catches it, `*` filter catches it,
+  any other filter doesn't.
+- **No `host` filter migration needed** — the field defaults to
+  empty string in `sanitize` and read-back code, so existing
+  webhooks on disk (no `hostFilter` key) just behave like
+  `hostFilter: ""` until they're edited.
+- Smoke-tested end-to-end on the live VPS:
+  - In-process unit test of `matchesHostFilter` over 13 cases
+    (empty, `*`, `local`, exact, glob, glob-spans-hyphens,
+    glob-doesn't-match-other-prefix, mismatch) — all pass.
+  - HTTP: bad filter (uppercase) → 400 `invalid_host_filter`.
+  - Created three webhooks pointing at a local Node listener on
+    `:9988/{any,host1,local}` with `hostFilter` `""`,
+    `smoketesthost1`, `local` respectively.
+  - Pushed `custom.smoketesthost1.cpu=95` samples + installed two
+    alert rules: a local-box always-fire (`cpu > -1`) and a
+    per-host always-fire on `smoketesthost1` (`cpu > 50`).
+  - After the next 10s tick, the listener log showed exactly
+    what was expected: `/local` got only the null-host rule,
+    `/host1` got only the `smoketesthost1` rule, `/any` got
+    both. Generic-payload `rule.host` carried the host
+    attribution. Slack-style text included `on smoketesthost1`.
+  - Cleaned up all 3 webhooks + the 2 test rules + the test API
+    key after.
+
 ## [0.41.0] — 2026-05-12
 
 Per-host alert rules — opens Phase 3 (per-host depth). Until now,

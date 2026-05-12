@@ -656,11 +656,12 @@ function WebhooksCard() {
   const isAdmin = user?.role === 'admin';
   const [list, setList] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ label: '', url: '', format: 'generic' });
+  const [form, setForm] = useState({ label: '', url: '', format: 'generic', hostFilter: '' });
   const [err, setErr] = useState(null);
   const [testing, setTesting] = useState(null); // id being tested
   const [testResult, setTestResult] = useState({}); // { [id]: { ok, error } }
   const [expandedId, setExpandedId] = useState(null);
+  const [filterDraft, setFilterDraft] = useState({}); // { [id]: pendingHostFilter }
 
   function refresh() {
     api.webhooks.list().then((r) => setList(r.webhooks || [])).catch((e) => setErr(e.message));
@@ -673,7 +674,7 @@ function WebhooksCard() {
     if (!form.label.trim() || !form.url.trim()) return;
     try {
       await api.webhooks.create(form);
-      setForm({ label: '', url: '', format: 'generic' });
+      setForm({ label: '', url: '', format: 'generic', hostFilter: '' });
       setAdding(false);
       refresh();
     } catch (e) {
@@ -684,6 +685,17 @@ function WebhooksCard() {
   async function toggle(w) {
     try { await api.webhooks.update(w.id, { enabled: !w.enabled }); refresh(); }
     catch (e) { setErr(e.message); }
+  }
+
+  async function saveHostFilter(w) {
+    const next = (filterDraft[w.id] ?? w.hostFilter ?? '').trim();
+    try {
+      await api.webhooks.update(w.id, { hostFilter: next });
+      setFilterDraft((s) => { const c = { ...s }; delete c[w.id]; return c; });
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    }
   }
   async function remove(w) {
     if (!confirm(`Remove webhook "${w.label}"?`)) return;
@@ -731,7 +743,7 @@ function WebhooksCard() {
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
 
       {adding && (
-        <form onSubmit={create} className="toolbar" style={{ marginTop: 14 }}>
+        <form onSubmit={create} className="toolbar" style={{ marginTop: 14, flexWrap: 'wrap' }}>
           <input
             type="text"
             placeholder="Label (e.g. ops-slack)"
@@ -755,11 +767,21 @@ function WebhooksCard() {
           >
             {FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
+          <input
+            type="text"
+            placeholder="Host filter (blank = all, e.g. db-* or local)"
+            value={form.hostFilter}
+            maxLength={80}
+            onChange={(e) => setForm({ ...form, hostFilter: e.target.value })}
+            className="input mono"
+            style={{ width: 220 }}
+            title="Empty / * = all alerts. 'local' = local-box rules only. 'db-*' = glob match against rule.host. Exact name = only that host."
+          />
           <button type="submit" className="btn compact">Save</button>
           <button
             type="button"
             className="btn ghost"
-            onClick={() => { setAdding(false); setForm({ label: '', url: '', format: 'generic' }); }}
+            onClick={() => { setAdding(false); setForm({ label: '', url: '', format: 'generic', hostFilter: '' }); }}
           >
             Cancel
           </button>
@@ -803,7 +825,32 @@ function WebhooksCard() {
                           disabled={!isAdmin}
                         />
                       </td>
-                      <td>{w.label}</td>
+                      <td>
+                        {w.label}
+                        {isAdmin ? (
+                          <div style={{ marginTop: 2, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <span className="dim" style={{ fontSize: 11 }}>host:</span>
+                            <input
+                              type="text"
+                              value={filterDraft[w.id] ?? w.hostFilter ?? ''}
+                              placeholder="all"
+                              maxLength={80}
+                              onChange={(e) => setFilterDraft((s) => ({ ...s, [w.id]: e.target.value }))}
+                              onBlur={() => {
+                                const draft = filterDraft[w.id];
+                                if (draft != null && draft !== (w.hostFilter || '')) saveHostFilter(w);
+                              }}
+                              className="input mono"
+                              style={{ width: 130, padding: '1px 6px', fontSize: 11 }}
+                              title="Empty / * = all. 'local' = local-box only. 'db-*' = glob."
+                            />
+                          </div>
+                        ) : (
+                          w.hostFilter ? (
+                            <div className="dim mono" style={{ fontSize: 11 }}>host: {w.hostFilter}</div>
+                          ) : null
+                        )}
+                      </td>
                       <td className="mono dim" style={{ fontSize: 12 }}>{w.host}</td>
                       <td className="muted">{w.format}</td>
                       <td>
