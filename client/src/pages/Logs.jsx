@@ -60,7 +60,7 @@ function DisabledHint() {
       </ol>
       <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 0 }}>
         The collector reads via <code>journalctl --output=json</code> (no shell).
-        The othoni process must have permission to read the journal — that's
+        The Othoni process must have permission to read the journal — that's
         automatic when running as <code>root</code>; otherwise add the service
         user to the <code>systemd-journal</code> group.
       </p>

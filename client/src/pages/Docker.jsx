@@ -171,8 +171,8 @@ export default function Docker() {
             {data.message}
           </p>
           <p className="dim" style={{ marginTop: 12, fontSize: 13 }}>
-            Add the user that runs othoni to the <span className="mono">docker</span>{' '}
-            group, or run othoni as a user with socket access.
+            Add the user that runs Othoni to the <span className="mono">docker</span>{' '}
+            group, or run Othoni as a user with socket access.
           </p>
         </div>
       </div>

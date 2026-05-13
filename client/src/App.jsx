@@ -182,7 +182,7 @@ function Shell({ user, onLogout, children, refreshMs, activeAlerts, onShortcutsC
       <aside className="sidebar">
         <div className="brand">
           <Logo size={22} />
-          othoni
+          Othoni
         </div>
         <ul className="nav">
           {NAV.map(({ to, label, end, Icon }) => (

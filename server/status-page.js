@@ -113,7 +113,7 @@ function render(title, body) {
 </head>
 <body>
 ${body}
-<footer>othoni · public status page · auto-refresh every 30s</footer>
+<footer>Othoni · public status page · auto-refresh every 30s</footer>
 <script>
   // Plain auto-refresh — keeps the bundle empty and the surface boring.
   setTimeout(function () { location.reload(); }, 30000);

@@ -1104,7 +1104,7 @@ function ApiKeysCard() {
         >
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
             <strong style={{ color: 'var(--accent)' }}>Copy this now.</strong>{' '}
-            othoni stores only a hash — you won't see the key again.
+            Othoni stores only a hash — you won't see the key again.
           </div>
           <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
             <code style={{ flex: 1, padding: '6px 10px', wordBreak: 'break-all', background: 'var(--bg)', border: '1px solid var(--border)' }}>
@@ -1218,7 +1218,7 @@ export default function Settings() {
   return (
     <div className="page-fade-in">
       <h1 className="page-title">Settings</h1>
-      <p className="subtitle">Configuration for this othoni instance.</p>
+      <p className="subtitle">Configuration for this Othoni instance.</p>
 
       <div className="grid cols-3">
         <div className="card">

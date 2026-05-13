@@ -39,7 +39,7 @@ export async function setNotifyEnabled(enabled) {
 export function notifyFire(active) {
   if (!notifyEnabled()) return;
   try {
-    new Notification(`othoni · ${active.severity === 'crit' ? 'CRITICAL' : 'warning'}`, {
+    new Notification(`Othoni · ${active.severity === 'crit' ? 'CRITICAL' : 'warning'}`, {
       body: `${active.label || active.metricLabel} — currently ${active.valueFmt}`,
       tag: `othoni-${active.id}`,
     });

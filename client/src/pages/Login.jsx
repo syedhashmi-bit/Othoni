@@ -52,7 +52,7 @@ export default function Login({ onLogin }) {
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
         <h1>
-          <Logo size={24} /> othoni
+          <Logo size={24} /> Othoni
         </h1>
         <p className="hint">
           Sign in to view VPS monitoring data.
