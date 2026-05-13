@@ -114,6 +114,13 @@ export const api = {
   processTree: () => request('/api/processes/tree'),
   docker: () => request('/api/docker'),
   services: () => request('/api/services'),
+  projects: {
+    list: () => request('/api/projects'),
+    control: (name, action) => request(`/api/projects/${encodeURIComponent(name)}/control`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    }),
+  },
   settings: () => request('/api/settings'),
   dbStats: () => request('/api/db/stats'),
   sessions: {
@@ -175,5 +182,7 @@ export const api = {
     }),
     remove:  (id) => request(`/api/checks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     runNow:  (id) => request(`/api/checks/${encodeURIComponent(id)}/run`, { method: 'POST' }),
+    stats:   (id, range = '24h') =>
+      request(`/api/checks/${encodeURIComponent(id)}/stats?range=${encodeURIComponent(range)}`),
   },
 };

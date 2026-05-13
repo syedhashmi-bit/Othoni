@@ -30,6 +30,7 @@ const sessions = require('../sessions');
 const hostMeta = require('../host-meta');
 const retention = require('../retention');
 const vacuum = require('../vacuum');
+const projects = require('../projects');
 
 const router = express.Router();
 
@@ -313,6 +314,11 @@ router.get('/checks', (req, res) => {
   res.json({ checks: checks.listChecks() });
 });
 
+const CHECK_VALIDATION_CODES = new Set([
+  'invalid_label', 'invalid_type', 'invalid_target',
+  'invalid_assertion', 'invalid_steps',
+]);
+
 router.post('/checks', (req, res) => {
   try {
     const c = checks.createCheck(req.body || {});
@@ -324,7 +330,7 @@ router.post('/checks', (req, res) => {
     });
     res.json({ check: c });
   } catch (e) {
-    if (['invalid_label', 'invalid_type', 'invalid_target'].includes(e.code)) {
+    if (CHECK_VALIDATION_CODES.has(e.code)) {
       return res.status(400).json({ error: e.code, message: e.message });
     }
     logger.error('checks create failed:', e.message);
@@ -333,15 +339,23 @@ router.post('/checks', (req, res) => {
 });
 
 router.patch('/checks/:id', (req, res) => {
-  const updated = checks.updateCheck(req.params.id, req.body || {});
-  if (!updated) return res.status(404).json({ error: 'not_found' });
-  audit.log({
-    ...audit.fromReq(req),
-    action: 'check.update',
-    target: req.params.id,
-    metadata: Object.keys(req.body || {}),
-  });
-  res.json({ check: updated });
+  try {
+    const updated = checks.updateCheck(req.params.id, req.body || {});
+    if (!updated) return res.status(404).json({ error: 'not_found' });
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'check.update',
+      target: req.params.id,
+      metadata: Object.keys(req.body || {}),
+    });
+    res.json({ check: updated });
+  } catch (e) {
+    if (CHECK_VALIDATION_CODES.has(e.code)) {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    logger.error('checks update failed:', e.message);
+    res.status(500).json({ error: 'checks_failed' });
+  }
 });
 
 router.delete('/checks/:id', (req, res) => {
@@ -365,6 +379,19 @@ router.post('/checks/:id/run', async (req, res) => {
     metadata: { up: c.lastResult?.up ?? null },
   });
   res.json({ check: c });
+});
+
+// Per-check SLA stats — latency percentiles + uptime % over a range. Cached
+// 30s so the Checks page polling doesn't redo a full percentile sort every tick.
+router.get('/checks/:id/stats', (req, res) => {
+  try {
+    const range = req.query.range || '1h';
+    const stats = checks.getCheckStats(req.params.id, { range });
+    res.json({ stats });
+  } catch (e) {
+    logger.error('checks stats failed:', e.message);
+    res.status(500).json({ error: 'stats_failed' });
+  }
 });
 
 // Per-host snapshot. Auto-discovers hosts from `custom.<host>.*` metric
@@ -608,6 +635,26 @@ router.delete('/sessions/:sid', (req, res) => {
     metadata: { self: req.params.sid === req.user.sid },
   });
   res.json({ ok: true });
+});
+
+// ---------- Projects (/var/www directories with matching systemd services) ----------
+
+router.get('/projects', wrap('projects', () => projects.getProjects()));
+
+router.post('/projects/:name/control', async (req, res) => {
+  const { name } = req.params;
+  const { action } = req.body || {};
+  if (!action) return res.status(400).json({ error: 'missing_action', message: 'action required' });
+  try {
+    const result = await projects.controlProject(name, action);
+    res.json(result);
+  } catch (e) {
+    if (e.code === 'invalid_action' || e.code === 'invalid_target') {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    logger.error('projects control failed:', e.message);
+    res.status(500).json({ error: 'control_failed', message: e.message });
+  }
 });
 
 // Settings (server-side bits the UI may want to display)

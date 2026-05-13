@@ -247,6 +247,16 @@ export function IconActions(props) {
   );
 }
 
+// Folder with play chevron — /projects page (manage /var/www services)
+export function IconProjects(props) {
+  return (
+    <svg {...baseProps} {...props}>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+      <path d="m10 11 4 2.5-4 2.5V11Z" />
+    </svg>
+  );
+}
+
 // Stack of three servers — /hosts page (multi-host overview)
 export function IconHosts(props) {
   return (

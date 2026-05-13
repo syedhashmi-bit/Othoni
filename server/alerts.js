@@ -277,8 +277,13 @@ async function tick() {
   load();
   if (rules.length === 0) { activeCache = []; return; }
   let snap;
-  try { snap = await snapshot(); }
-  catch (e) { logger.warn(`alerts: snapshot failed: ${e.message}`); return; }
+  const cached = history.getLastSnap();
+  if (cached && Date.now() - cached.t < TICK_MS) {
+    snap = cached;
+  } else {
+    try { snap = await snapshot(); }
+    catch (e) { logger.warn(`alerts: snapshot failed: ${e.message}`); return; }
+  }
 
   const now = Date.now();
   const fires = [];

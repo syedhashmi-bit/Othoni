@@ -7,6 +7,7 @@ const TYPES = [
   { value: 'http', label: 'HTTP', placeholder: 'https://example.com/health' },
   { value: 'tcp',  label: 'TCP',  placeholder: 'host:port (e.g. db.internal:5432)' },
   { value: 'ping', label: 'Ping', placeholder: 'host or IP (e.g. 1.1.1.1)' },
+  { value: 'dns',  label: 'DNS',  placeholder: 'example.com|A (or just example.com)' },
 ];
 
 const INTERVALS = [
@@ -31,6 +32,12 @@ function relativeTime(ms) {
   return `${Math.round(d / 86_400_000)}d ago`;
 }
 
+function fmtMs(ms) {
+  if (ms == null) return '—';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
 function StatusChip({ check }) {
   if (check.lastUp == null) {
     return <span className="chip"><span className="dot" />pending</span>;
@@ -53,6 +60,115 @@ function StatusChip({ check }) {
   );
 }
 
+// Lazy-loaded SLA stats row. Fetched once on expand, cached server-side 30s.
+function StatsRow({ checkId }) {
+  const [range, setRange] = useState('24h');
+  const [stats, setStats] = useState(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    setStats(null); setErr(null);
+    api.checks.stats(checkId, range)
+      .then((r) => setStats(r.stats))
+      .catch((e) => setErr(e.body?.message || e.message));
+  }, [checkId, range]);
+
+  return (
+    <div style={{ padding: '8px 16px 12px', background: 'var(--bg-card-2)' }}>
+      <div className="toolbar" style={{ marginBottom: 8, gap: 4 }}>
+        <span className="muted" style={{ fontSize: 11, marginRight: 4 }}>Window:</span>
+        {['15m', '1h', '6h', '24h'].map((r) => (
+          <button
+            key={r}
+            type="button"
+            className={`btn tiny ${r === range ? '' : 'ghost'}`}
+            onClick={() => setRange(r)}
+            style={{ padding: '2px 8px' }}
+          >
+            {r}
+          </button>
+        ))}
+      </div>
+      {err && <div className="error">{err}</div>}
+      {!stats && !err && <div className="muted" style={{ fontSize: 12 }}>loading…</div>}
+      {stats && (
+        <div style={{
+          display: 'grid', gap: 12,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
+          fontSize: 12,
+        }}>
+          <Stat label="Samples" value={stats.samples ?? 0} />
+          <Stat label="Uptime"  value={stats.uptimePercent != null ? `${stats.uptimePercent.toFixed(2)}%` : '—'} />
+          <Stat label="p50"     value={fmtMs(stats.p50)} />
+          <Stat label="p95"     value={fmtMs(stats.p95)} />
+          <Stat label="p99"     value={fmtMs(stats.p99)} />
+          <Stat label="min"     value={fmtMs(stats.min)} />
+          <Stat label="max"     value={fmtMs(stats.max)} />
+        </div>
+      )}
+    </div>
+  );
+}
+function Stat({ label, value }) {
+  return (
+    <div>
+      <div className="muted" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</div>
+      <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{value}</div>
+    </div>
+  );
+}
+
+// Optional body-assertion inputs. Shown only for HTTP / DNS types since the
+// other types don't have a meaningful "body" to match against.
+function AssertionFields({ form, setForm }) {
+  if (form.type !== 'http' && form.type !== 'dns') return null;
+  return (
+    <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 8, gridTemplateColumns: '1fr 1fr' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 12 }}>
+        <span style={{ minWidth: 90 }}>Body regex</span>
+        <input
+          type="text"
+          value={form.bodyRegex || ''}
+          maxLength={256}
+          onChange={(e) => setForm({ ...form, bodyRegex: e.target.value })}
+          className="input mono"
+          placeholder='e.g. "status":\s*"ok"'
+          style={{ flex: 1, fontSize: 12 }}
+        />
+      </label>
+      {form.type === 'http' && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 12 }}>
+          <span style={{ minWidth: 90 }}>JSON path</span>
+          <input
+            type="text"
+            value={form.jsonPath || ''}
+            maxLength={256}
+            onChange={(e) => setForm({ ...form, jsonPath: e.target.value })}
+            className="input mono"
+            placeholder="e.g. status or data.health"
+            style={{ flex: 1, fontSize: 12 }}
+          />
+        </label>
+      )}
+      {form.type === 'http' && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 12 }}>
+          <span style={{ minWidth: 90 }}>… equals</span>
+          <input
+            type="text"
+            value={form.jsonPathEquals || ''}
+            maxLength={256}
+            onChange={(e) => setForm({ ...form, jsonPathEquals: e.target.value })}
+            className="input mono"
+            placeholder="optional — exact match"
+            style={{ flex: 1, fontSize: 12 }}
+            disabled={!form.jsonPath}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
+
 function AddCheckForm({ onCreated, onCancel }) {
   const [form, setForm] = useState({
     label: '',
@@ -62,6 +178,9 @@ function AddCheckForm({ onCreated, onCancel }) {
     timeoutMs: 5000,
     alertAfterFailures: 3,
     alertSeverity: 'warn',
+    bodyRegex: '',
+    jsonPath: '',
+    jsonPathEquals: '',
   });
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -70,8 +189,13 @@ function AddCheckForm({ onCreated, onCancel }) {
     e.preventDefault();
     setBusy(true);
     setErr(null);
+    // Strip empty assertion fields so they're saved as null server-side.
+    const payload = { ...form };
+    if (!payload.bodyRegex)      delete payload.bodyRegex;
+    if (!payload.jsonPath)       delete payload.jsonPath;
+    if (!payload.jsonPathEquals) delete payload.jsonPathEquals;
     try {
-      const r = await api.checks.create(form);
+      const r = await api.checks.create(payload);
       onCreated(r.check);
     } catch (e) {
       setErr(e.body?.message || e.message);
@@ -106,6 +230,7 @@ function AddCheckForm({ onCreated, onCancel }) {
           className="input mono"
           style={{ gridColumn: '1 / -1' }}
         />
+        <AssertionFields form={form} setForm={setForm} />
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 13 }}>
           Interval
           <select
@@ -170,13 +295,13 @@ export default function Checks() {
   const [err, setErr] = useState(null);
   const [adding, setAdding] = useState(false);
   const [running, setRunning] = useState(null);
+  const [expanded, setExpanded] = useState(null); // check id with stats panel open
 
   function refresh() {
     api.checks.list().then((r) => setList(r.checks || [])).catch((e) => setErr(e.message));
   }
   useEffect(() => {
     refresh();
-    // Auto-refresh every 5s so the live state column stays fresh.
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, []);
@@ -210,9 +335,10 @@ export default function Checks() {
     <div className="page-fade-in">
       <h1 className="page-title">Checks</h1>
       <p className="subtitle">
-        Synthetic probes — HTTP / TCP / ICMP — recorded into the same history
-        store as built-in metrics (`check.&lt;id&gt;.up` and `.latency_ms`).
-        Consecutive failures dispatch to your configured webhooks.
+        Synthetic probes — HTTP / TCP / ICMP / DNS — recorded into the same
+        history store as built-in metrics (<code>check.&lt;id&gt;.up</code> and{' '}
+        <code>.latency_ms</code>). Click a row to see latency percentiles and
+        uptime over a window.
       </p>
 
       {summary && (
@@ -245,7 +371,7 @@ export default function Checks() {
 
       {list != null && list.length === 0 && !adding && (
         <div className="card empty" style={{ padding: 32 }}>
-          No checks yet. Click <strong>Add check</strong> to set up an HTTP, TCP, or ping probe.
+          No checks yet. Click <strong>Add check</strong> to set up an HTTP, TCP, ping, or DNS probe.
         </div>
       )}
 
@@ -267,49 +393,61 @@ export default function Checks() {
               </thead>
               <tbody>
                 {list.map((c) => (
-                  <tr key={c.id} style={{ opacity: c.enabled ? 1 : 0.5 }}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={c.enabled}
-                        onChange={() => toggle(c)}
-                        aria-label="Enable check"
-                        disabled={!isAdmin}
-                      />
-                    </td>
-                    <td>{c.label}</td>
-                    <td className="mono muted" style={{ fontSize: 12 }}>{c.type}</td>
-                    <td className="mono" style={{ fontSize: 12, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.target}>
-                      {c.target}
-                    </td>
-                    <td className="muted" style={{ fontSize: 12 }}>{c.intervalSec}s</td>
-                    <td><StatusChip check={c} /></td>
-                    <td className="muted" style={{ fontSize: 12 }}>{relativeTime(c.lastRunAt)}</td>
-                    <td>
-                      {isAdmin && (
-                        <>
-                          <button
-                            type="button"
-                            className="btn tiny"
-                            onClick={() => runNow(c)}
-                            disabled={running === c.id || !c.enabled}
-                            style={{ marginRight: 6 }}
-                          >
-                            {running === c.id ? '…' : 'Run now'}
-                          </button>
-                          <button
-                            type="button"
-                            className="icon-btn"
-                            onClick={() => remove(c)}
-                            title="Remove check"
-                            aria-label="Remove check"
-                          >
-                            <IconTrash />
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
+                  <React.Fragment key={c.id}>
+                    <tr
+                      style={{ opacity: c.enabled ? 1 : 0.5, cursor: 'pointer' }}
+                      onClick={() => setExpanded(expanded === c.id ? null : c.id)}
+                    >
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={c.enabled}
+                          onChange={() => toggle(c)}
+                          aria-label="Enable check"
+                          disabled={!isAdmin}
+                        />
+                      </td>
+                      <td>{c.label}{c.steps?.length ? <span className="dim" style={{ marginLeft: 6, fontSize: 11 }}>{c.steps.length}-step</span> : null}</td>
+                      <td className="mono muted" style={{ fontSize: 12 }}>{c.type}</td>
+                      <td className="mono" style={{ fontSize: 12, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.target}>
+                        {c.target || (c.steps?.length ? `${c.steps.length} chained requests` : '—')}
+                      </td>
+                      <td className="muted" style={{ fontSize: 12 }}>{c.intervalSec}s</td>
+                      <td><StatusChip check={c} /></td>
+                      <td className="muted" style={{ fontSize: 12 }}>{relativeTime(c.lastRunAt)}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        {isAdmin && (
+                          <>
+                            <button
+                              type="button"
+                              className="btn tiny"
+                              onClick={() => runNow(c)}
+                              disabled={running === c.id || !c.enabled}
+                              style={{ marginRight: 6 }}
+                            >
+                              {running === c.id ? '…' : 'Run now'}
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              onClick={() => remove(c)}
+                              title="Remove check"
+                              aria-label="Remove check"
+                            >
+                              <IconTrash />
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                    {expanded === c.id && (
+                      <tr>
+                        <td colSpan={8} style={{ padding: 0 }}>
+                          <StatsRow checkId={c.id} />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>

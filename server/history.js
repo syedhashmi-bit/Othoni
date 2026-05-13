@@ -10,7 +10,7 @@ const { getMemory } = require('./collectors/memory');
 const { getNetwork } = require('./collectors/network');
 const { getDisks } = require('./collectors/disks');
 const { getDiskIO } = require('./collectors/diskio');
-const { getConnections } = require('./collectors/connections');
+const { getConnectionsSummary } = require('./collectors/connections');
 
 const DB_PATH = process.env.OTHONI_DB || path.join(__dirname, '..', 'data', 'othoni.db');
 const SAMPLE_INTERVAL_MS = parseInt(process.env.OTHONI_SAMPLE_MS || '5000', 10);
@@ -99,6 +99,11 @@ const RANGES = {
 let db = null;
 let sampleTimer = null;
 let cleanupTimer = null;
+let lastSnap = null;
+// Tracks every metric name we've ever inserted. Seeded once at startup from
+// SELECT DISTINCT so restarts don't miss metrics added in prior runs. Updated
+// incrementally on every sample/insert so cleanup never needs SELECT DISTINCT.
+let seenMetrics = null;
 
 function ensureDir(p) {
   const dir = path.dirname(p);
@@ -220,8 +225,10 @@ async function takeSample() {
     getNetwork().catch((e) => (logger.warn('history net:', e.message), null)),
     getDisks().catch((e) => (logger.warn('history disk:', e.message), null)),
     getDiskIO().catch((e) => (logger.warn('history diskio:', e.message), null)),
-    getConnections().catch((e) => (logger.warn('history conn:', e.message), null)),
+    getConnectionsSummary().catch((e) => (logger.warn('history conn:', e.message), null)),
   ]);
+
+  lastSnap = { cpu, memory, network, disks, diskio, t };
 
   const nonLo = (network?.interfaces || []).filter((i) => !i.isLoopback);
   const netRx = nonLo.reduce((s, i) => s + (i.rxBytesPerSec || 0), 0);
@@ -274,6 +281,7 @@ async function takeSample() {
   }
 
   if (rows.length) {
+    if (seenMetrics) for (const r of rows) seenMetrics.add(r.metric);
     const tx = db.transaction((items) => {
       const stmt = insertStmt();
       for (const r of items) stmt.run(r.metric, r.t, r.v);
@@ -293,7 +301,9 @@ function cleanup() {
   let info = { changes: 0 };
   if (retention) {
     const dbh = open();
-    const metrics = dbh.prepare('SELECT DISTINCT metric FROM samples').all().map((r) => r.metric);
+    const metrics = seenMetrics
+      ? [...seenMetrics]
+      : dbh.prepare('SELECT DISTINCT metric FROM samples').all().map((r) => r.metric);
     const groups = new Map(); // ttlMs -> [metric]
     for (const name of metrics) {
       const override = retention.effectiveTtl(name);
@@ -335,6 +345,13 @@ function cleanup() {
 
 function start() {
   open();
+  // Seed the metric name cache once so cleanup never needs SELECT DISTINCT.
+  try {
+    const rows = db.prepare('SELECT DISTINCT metric FROM samples').all();
+    seenMetrics = new Set(rows.map((r) => r.metric));
+  } catch (_e) {
+    seenMetrics = new Set();
+  }
   // First sample shortly after startup so users see fresh data quickly.
   setTimeout(() => takeSample().catch((e) => logger.warn('sample failed:', e.message)), 1500);
   sampleTimer = setInterval(
@@ -404,6 +421,7 @@ function insertCustom(name, value, t = Date.now()) {
   const ts = Number.isFinite(t) ? Math.floor(t) : Date.now();
   open();
   insertStmt().run(name, ts, value);
+  if (seenMetrics) seenMetrics.add(name);
   return { metric: name, t: ts, v: value };
 }
 
@@ -431,6 +449,7 @@ function insertCustomBatch(rows) {
     }
   });
   tx(rows);
+  if (seenMetrics) for (const r of rows) seenMetrics.add(r.name);
   return rows.length;
 }
 
@@ -519,6 +538,10 @@ function getDb() {
   return open();
 }
 
+// Returns the raw collector outputs from the most recent takeSample() run,
+// with the timestamp t. Null until the first sample completes.
+function getLastSnap() { return lastSnap; }
+
 module.exports = {
   start,
   stop,
@@ -532,4 +555,5 @@ module.exports = {
   insertSample,
   listMetrics,
   getDb,
+  getLastSnap,
 };

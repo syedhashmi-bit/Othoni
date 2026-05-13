@@ -21,13 +21,14 @@ import History from './pages/History.jsx';
 import Hosts from './pages/Hosts.jsx';
 import HostDetail from './pages/HostDetail.jsx';
 import Actions from './pages/Actions.jsx';
+import Projects from './pages/Projects.jsx';
 import { Logo } from './Logo.jsx';
 import { Cheatsheet } from './Cheatsheet.jsx';
 import {
   IconDashboard, IconHistory, IconStorage, IconProcesses,
   IconDocker, IconServices, IconNetwork, IconConnections, IconAlerts,
   IconChecks, IconLogs, IconSettings, IconHosts, IconActions,
-  IconClock, IconSignOut,
+  IconClock, IconSignOut, IconProjects,
 } from './Icons.jsx';
 
 // Two-key navigation chords: press `g` then one of these.
@@ -45,6 +46,7 @@ const G_CHORDS = {
   l: '/logs',
   o: '/hosts',
   r: '/actions',
+  j: '/projects',
   ',': '/settings',
 };
 const CHORD_TIMEOUT_MS = 1500;
@@ -140,6 +142,7 @@ const NAV = [
   { to: '/processes', label: 'Processes', Icon: IconProcesses },
   { to: '/docker', label: 'Docker', Icon: IconDocker },
   { to: '/services', label: 'Services', Icon: IconServices },
+  { to: '/projects', label: 'Projects', Icon: IconProjects },
   { to: '/network', label: 'Network', Icon: IconNetwork },
   { to: '/connections', label: 'Connections', Icon: IconConnections },
   { to: '/alerts', label: 'Alerts', Icon: IconAlerts },
@@ -407,6 +410,7 @@ function AuthedAppBody({ refreshMs, alerts, user, handleLogout }) {
         <Route path="/processes" element={<Processes />} />
         <Route path="/docker" element={<Docker />} />
         <Route path="/services" element={<Services />} />
+        <Route path="/projects" element={<Projects />} />
         <Route path="/network" element={<Network />} />
         <Route path="/connections" element={<Connections />} />
         <Route path="/alerts" element={<Alerts />} />

@@ -43,10 +43,22 @@ async function checkOne(name) {
   return { name, status: 'inactive' };
 }
 
+const SERVICES_CACHE_TTL = 30_000;
+let servicesCache = null;
+let servicesCacheKey = '';
+let servicesCacheAt = 0;
+
 async function getServices(list = DEFAULT_SERVICES) {
-  // Run them sequentially-ish via Promise.all but with a concurrency cap.
+  const key = list.join(',');
+  const now = Date.now();
+  if (servicesCache && key === servicesCacheKey && now - servicesCacheAt < SERVICES_CACHE_TTL) {
+    return servicesCache;
+  }
   const results = await Promise.all(list.map(checkOne));
-  return { services: results };
+  servicesCache = { services: results };
+  servicesCacheKey = key;
+  servicesCacheAt = now;
+  return servicesCache;
 }
 
 module.exports = { getServices, DEFAULT_SERVICES };

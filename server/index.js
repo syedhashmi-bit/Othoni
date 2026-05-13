@@ -99,6 +99,13 @@ app.get('/metrics', (req, res) => promExport.handleRequest(req, res));
 // a token.
 app.get('/api/export', (req, res) => exportEndpoint.handleRequest(req, res));
 
+// Optional public status page (v0.55). Token-gated via
+// `OTHONI_STATUS_PAGE_TOKEN`; off by default (returns 404 when unset).
+// Mounted before the cookie wall so it can be reached without a
+// dashboard session — that's the whole point.
+const statusPage = require('./status-page');
+app.get('/status', (req, res) => statusPage.handleRequest(req, res));
+
 // Protected API routes. `requireAdmin` runs after `auth` so the viewer
 // can still GET everything but is 403'd on PUT/POST/PATCH/DELETE. CSRF
 // is gated on non-GET methods after the role check.

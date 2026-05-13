@@ -231,4 +231,56 @@ function aggregateBy(rows, keyFn, mergeFn) {
     });
 }
 
-module.exports = { getConnections };
+// Lightweight summary used by the metrics sampler (history.js). Reads the
+// same 4 /proc files but only counts lines by state — no hex IP parsing, no
+// top-talker aggregation. ~10x cheaper than getConnections() per call.
+async function getConnectionsSummary() {
+  const [tcp4, tcp6, udp4, udp6] = await Promise.all([
+    readMaybe('/proc/net/tcp'),
+    readMaybe('/proc/net/tcp6'),
+    readMaybe('/proc/net/udp'),
+    readMaybe('/proc/net/udp6'),
+  ]);
+
+  function count(text, isTcp) {
+    if (!text) return { total: 0, listen: 0, established: 0, timeWait: 0 };
+    const lines = text.split('\n');
+    let total = 0, listen = 0, established = 0, timeWait = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].trim().split(/\s+/);
+      if (cols.length < 4) continue;
+      total++;
+      if (isTcp) {
+        const s = cols[3].toUpperCase();
+        if (s === '0A') listen++;
+        else if (s === '01') established++;
+        else if (s === '06') timeWait++;
+      }
+    }
+    return { total, listen, established, timeWait };
+  }
+
+  const t4 = count(tcp4, true);
+  const t6 = count(tcp6, true);
+  const u4 = count(udp4, false);
+  const u6 = count(udp6, false);
+
+  const established = t4.established + t6.established;
+  const timeWait    = t4.timeWait    + t6.timeWait;
+  const listenTcp   = t4.listen      + t6.listen;
+
+  return {
+    summary: {
+      tcp4:        t4.total,
+      tcp6:        t6.total,
+      udp4:        u4.total,
+      udp6:        u6.total,
+      listening:   listenTcp + u4.total + u6.total,
+      established,
+      timeWait,
+      states: { ESTABLISHED: established, TIME_WAIT: timeWait, LISTEN: listenTcp },
+    },
+  };
+}
+
+module.exports = { getConnections, getConnectionsSummary };

@@ -8,6 +8,175 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.53.0] — 2026-05-13
+
+Phase 5 — synthetic checks depth. Five features that turn the
+HTTP / TCP / ICMP probe surface into a real probe system: body
+assertions, latency percentiles, DNS resolution checks, multi-step
+HTTP chains, and an opt-in public status page. **Closes Phase 5.**
+
+### Added
+
+- **HTTP body assertions (was v0.51 in roadmap).** Each HTTP check
+  now accepts optional `bodyRegex` and `jsonPath` (+ `jsonPathEquals`)
+  fields. The check is "up" only when the request succeeds AND the
+  assertion matches — catches "site returns 200 with a maintenance
+  page" failures that simple status-code checks miss. Body is capped
+  at 256 KB before evaluation, regex compiled with a 256-char ceiling.
+  Minimal JSON-path resolver supports dotted keys + bracketed indexes
+  (`data.users[0].name`, `["key with spaces"]`, optional leading `$`).
+- **SLA tracking (was v0.52).** New `GET /api/checks/:id/stats?range=`
+  returns p50/p95/p99 latency + uptime % + min/max + sample count
+  over a configurable window (15m/1h/6h/24h). Computed from the
+  existing `check.<id>.latency_ms` + `check.<id>.up` history series
+  via nearest-rank percentile. Results cached 30 s server-side so the
+  Checks-page polling doesn't redo a full sort every tick. Per-check
+  expandable row in the UI with a window-picker.
+- **DNS resolution checks (was v0.53).** New `dns` check type. Target
+  format: `host[|TYPE]` (e.g. `cloudflare.com|A`, `example.com|MX`).
+  Supported types: A, AAAA, MX, TXT, CNAME, NS, SRV, PTR. Asserts
+  at least one record returned; optional `bodyRegex` matches against
+  the joined result list (so `example.com|TXT` + `v=spf1` catches
+  SPF regressions). Uses Node's built-in `dns.promises` — no new deps.
+- **Multi-step HTTP checks (was v0.54).** A check can now chain up to
+  8 sequential HTTP requests via a `steps: [{ url, method?, headers?,
+  bodyRegex?, jsonPath?, jsonPathEquals? }]` array. Each step has its
+  own assertion; the chain bails on the first failure and reports
+  which step (1-indexed) tripped. Useful for end-to-end smoke testing
+  (login → fetch resource → logout). Per-step timeout is `timeoutMs /
+  steps.length` so one slow step can't starve the rest.
+- **Public status page (was v0.55).** New `server/status-page.js`.
+  Single URL `GET /status?token=<OTHONI_STATUS_PAGE_TOKEN>`. Server-
+  rendered HTML (no JS bundle), per-check current state + 24 h
+  uptime %. Constant-time token compare; returns 404 (not 401) when
+  the token is wrong or unset, so the endpoint is invisible by
+  default. Auto-refreshes every 30 s via inline `setTimeout`. No
+  metrics, no alerts, no admin controls — intentionally tiny surface.
+
+### Changed
+
+- `package.json` bumped to `0.53.0`.
+- `server/checks.js` — new validation helpers (`validateAssertions`,
+  `validateSteps`, `compileRegex`, `resolveJsonPath`); single
+  per-request executor `runHttpOnce()` shared by single-step and
+  chain modes; `runOnce()` dispatches on `c.type` + presence of
+  `steps`.
+- `server/routes/index.js` — `POST/PATCH /api/checks` now wrap a
+  shared `CHECK_VALIDATION_CODES` set so the new validation errors
+  (`invalid_assertion`, `invalid_steps`) round-trip cleanly as 400s.
+- `server/index.js` — `/status` mounted before the cookie-auth wall
+  (next to `/metrics`, `/api/export`).
+- `client/src/pages/Checks.jsx` — adds DNS to the type selector,
+  inline assertion fields for HTTP/DNS, click-to-expand stats row
+  with window picker, n-step indicator on chain checks.
+- `client/src/api.js` — new `checks.stats(id, range)` wrapper.
+
+### Notes
+
+- **Phase 5 numbering.** The roadmap originally allocated v0.51–v0.55
+  for these features. v0.51/v0.52 were used for this session's
+  performance optimizations and the Projects tab; Phase 5 ships
+  bundled as v0.53 since all five features touch the same files and
+  separating them buys nothing for users.
+- **Body assertions are HTTP-only by default** (and DNS for regex-
+  against-results). TCP / ping don't have a meaningful "body" to
+  match against.
+- **Multi-step is HTTP-only.** Chaining a TCP probe + an HTTP probe
+  in one check would need a different shape; out of scope here.
+- **No new dependencies.** DNS uses `dns.promises` built-in; status
+  page renders via template literals.
+- **Status page is intentionally crude.** No CSS framework, no
+  build step, no client-side router. Designed to keep working when
+  everything else is on fire.
+
+## [0.52.0] — 2026-05-13
+
+Projects tab. Manage systemd services for projects under `/var/www/`
+directly from the dashboard — start / stop / restart with an audit
+trail. Otho-itself (`othoni.service`) appears in the list but the
+`stop` action is server-side blocked (stopping it would make the
+dashboard unreachable; `restart` is fine since systemd brings it
+back).
+
+### Added
+
+- **`server/projects.js`** — scans `/var/www/` for directories,
+  cross-references each with systemd (`systemctl show -p
+  LoadState,ActiveState`), returns only those with a matching loaded
+  unit. Cached 8 s. `controlProject(name, action)` validates the
+  name is a real `/var/www/` directory before invoking systemctl;
+  invalidates the discovery cache so the next GET reflects the new
+  state immediately.
+- **`GET /api/projects`** — returns `{ projects: [{ name, unit,
+  status }], root }`.
+- **`POST /api/projects/:name/control`** — accepts `{ action:
+  "start"|"stop"|"restart" }`. Admin-only (inherits from the global
+  `requireAdmin` middleware on `/api`).
+- **Projects tab** — cards per project with status pill + context-
+  aware action buttons. Auto-refreshes from the parent app's
+  `refreshMs`. Keyboard shortcut `g j`.
+- **`data/projects.json` overrides** — map directory names to
+  systemd unit names when they differ. Format:
+  `{ "pipsqueeze": "vpn-dashboard" }`. Empty / missing file = direct
+  mapping (dir name == unit name).
+- **`IconProjects`** — new folder-with-play-chevron icon.
+
+### Notes
+
+- **Default safety: self-unit `stop` is refused** even when admin.
+  Restart is allowed; systemd brings othoni back within seconds.
+- **No new dependencies.** Reuses the existing `collectors/exec.js`
+  `run()` wrapper.
+
+## [0.51.0] — 2026-05-13
+
+Performance optimizations across the recurring background work.
+Idle-CPU footprint of the dashboard process drops significantly,
+especially on hosts with many connections, many distinct metrics, or
+frequent dashboard refreshes. No behavior changes user-visible to
+the operator — pure efficiency.
+
+### Changed
+
+- **Alert engine reuses sampler snapshot.** `server/alerts.js`'s
+  10 s tick used to re-collect a full CPU / memory / network / disk /
+  diskio snapshot — duplicating work the 5 s sampler had just done.
+  Now reads the sampler's cached snapshot via `history.getLastSnap()`
+  if it's <10 s old, falling back to a fresh collection only during
+  the startup window. Eliminates 5+ redundant collector runs per
+  minute.
+- **Connections sampler uses summary-only path.** New
+  `getConnectionsSummary()` in `collectors/connections.js` counts
+  /proc/net/{tcp,tcp6,udp,udp6} lines by state without parsing hex
+  IPs or computing top-talkers. ~10× cheaper than the full
+  `getConnections()` (still used by the Connections page API). Hot
+  on every 5 s sample tick.
+- **Skip `SELECT DISTINCT metric` on every cleanup.**
+  `server/history.js` now maintains a `seenMetrics` Set, seeded
+  once at startup and kept in sync as samples are inserted. The
+  10-min cleanup pass uses the Set directly instead of issuing a
+  full-index DISTINCT scan against `samples`.
+- **Single `ps` spawn for process trends.** `process-history.js`
+  used to spawn `ps` twice per 30 s tick (one CPU-sorted, one
+  memory-sorted) and dedupe. Now spawns once with the combined
+  limit and sorts both rankings in JS. Halves child-process
+  forks for the process-trends path.
+- **Vacuum scheduler uses precise `setTimeout`.** `server/vacuum.js`
+  used to wake up every 60 s just to compare `HH:MM` strings (1440
+  wakeups/day). Now computes ms until the next scheduled run and
+  uses a single `setTimeout`, rescheduling once per fire.
+- **Services collector caches results 30 s.**
+  `collectors/services.js`'s 12 parallel `systemctl show` spawns
+  used to fire on every Services page poll. Now memoized by service
+  list with a 30 s TTL.
+
+### Notes
+
+- **No new dependencies.** All changes are local.
+- **Memory.** `seenMetrics` is unbounded in theory but bounded by
+  the metric-name validators in `isValidMetric` + `isCustomMetric`,
+  which cap distinct names per host at a few hundred.
+
 ## [0.50.0] — 2026-05-12
 
 Dashboard layout customization — **closes Phase 4 (visualization,

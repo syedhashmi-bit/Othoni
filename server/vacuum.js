@@ -27,7 +27,6 @@ const STATE_PATH = process.env.OTHONI_VACUUM_STATE_PATH || DEFAULT_PATH;
 const TIME_RE = /^([0-1]?\d|2[0-3]):([0-5]\d)$/;
 
 let timer = null;
-let firedThisMinute = null; // 'HH:MM' last fired
 let state = null; // { lastRunAt, reclaimedBytes, durationMs, error }
 let running = false;
 
@@ -82,9 +81,14 @@ function dbFootprint() {
   return fileSize(dbPath());
 }
 
-function nowHHMM() {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+// Milliseconds until the next occurrence of the scheduled HH:MM time.
+function msUntilNext() {
+  const [h, m] = scheduledHHMM().split(':').map(Number);
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(h, m, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next - now;
 }
 
 // Synchronous (better-sqlite3). Returns the snapshot for callers that
@@ -129,19 +133,12 @@ function runNow({ source = 'scheduler' } = {}) {
   }
 }
 
-function tick() {
-  const target = scheduledHHMM();
-  if (!target) return;
-  const now = nowHHMM();
-  if (now !== target) {
-    // Reset the flag when we leave the scheduled minute so the next
-    // day's run can fire again.
-    if (firedThisMinute && firedThisMinute !== now) firedThisMinute = null;
-    return;
-  }
-  if (firedThisMinute === target) return; // already fired this minute
-  firedThisMinute = target;
-  runNow({ source: 'scheduler' });
+function scheduleNext() {
+  const delay = msUntilNext();
+  timer = setTimeout(() => {
+    runNow({ source: 'scheduler' });
+    scheduleNext();
+  }, delay);
 }
 
 function start() {
@@ -150,13 +147,16 @@ function start() {
     logger.info('vacuum: disabled (set OTHONI_VACUUM_TIME=HH:MM to enable)');
     return;
   }
-  logger.info(`vacuum: scheduled daily at ${scheduledHHMM()} local`);
-  // Tick every 60s. Cheap; we just compare HH:MM strings.
-  timer = setInterval(tick, 60_000);
+  const target = scheduledHHMM();
+  const delay = msUntilNext();
+  const hStr = Math.floor(delay / 3600000);
+  const mStr = Math.floor((delay % 3600000) / 60000);
+  logger.info(`vacuum: scheduled daily at ${target} local (next run in ${hStr}h ${mStr}m)`);
+  scheduleNext();
 }
 
 function stop() {
-  if (timer) clearInterval(timer);
+  if (timer) clearTimeout(timer);
   timer = null;
 }
 
@@ -174,4 +174,4 @@ function snapshot() {
   };
 }
 
-module.exports = { start, stop, tick, runNow, snapshot, isEnabled };
+module.exports = { start, stop, runNow, snapshot, isEnabled };

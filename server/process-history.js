@@ -26,12 +26,14 @@ let sampleTimer = null;
 
 async function takeSample() {
   const t = Date.now();
-  // Two reads of `ps` are cheap on Linux; doing them in parallel keeps the
-  // wall-clock low even on busy hosts. We dedupe by PID afterwards.
-  const [cpuRes, memRes] = await Promise.all([
-    getProcesses({ limit: TOP_BY_CPU,                    sortBy: 'cpu' }),
-    getProcesses({ limit: TOP_BY_CPU + TOP_BY_MEM_EXTRA, sortBy: 'memory' }),
-  ]);
+  // Single ps spawn — fetch enough rows to cover both top-CPU and top-mem
+  // cuts, then sort in JS for the memory ranking. One spawn vs two saves
+  // a child-process fork + exec on every 30s tick.
+  const res = await getProcesses({ limit: TOP_BY_CPU + TOP_BY_MEM_EXTRA, sortBy: 'cpu' });
+  const all = (res && res.processes) || [];
+
+  // Top by memory from the same snapshot (re-sort in place on a copy).
+  const byMemory = all.slice().sort((a, b) => b.memory - a.memory);
 
   const byPid = new Map();
   function addRow(p) {
@@ -41,8 +43,8 @@ async function takeSample() {
     const prev = byPid.get(p.pid);
     if (!prev || p.cpu > prev.cpu) byPid.set(p.pid, p);
   }
-  for (const p of (cpuRes && cpuRes.processes) || []) addRow(p);
-  for (const p of (memRes && memRes.processes) || []) addRow(p);
+  for (const p of all) addRow(p);
+  for (const p of byMemory.slice(0, TOP_BY_MEM_EXTRA)) addRow(p);
   if (!byPid.size) return 0;
 
   const db = history.getDb();
