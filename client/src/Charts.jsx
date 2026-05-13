@@ -116,8 +116,8 @@ export function Sparkline({
           />
         </>
       )}
-      <path d={areaPath} fill={`url(#${id})`} />
-      <path d={linePath} stroke={color} strokeWidth="1.5" fill="none" vectorEffect="non-scaling-stroke" />
+      <path className="spark-area" d={areaPath} fill={`url(#${id})`} />
+      <path className="spark-line" d={linePath} stroke={color} strokeWidth="1.5" fill="none" vectorEffect="non-scaling-stroke" />
     </svg>
   );
   return showStats ? <div>{svg}{statsRow}</div> : svg;

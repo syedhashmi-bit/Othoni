@@ -48,6 +48,26 @@ export function usePoller(loader, intervalMs = 5000, deps = []) {
   return { data, error, loading, refresh: tick };
 }
 
+// Triggers a one-shot CSS class for `durationMs` whenever `value` changes.
+// The first render does NOT trigger (so cards don't all flash on mount);
+// subsequent value changes briefly add `className` to whatever element
+// renders the returned `flash` prop. Use with the .value-flash CSS class.
+export function useFlashOnChange(value, durationMs = 600) {
+  const [flashing, setFlashing] = useState(false);
+  const prevRef = useRef(value);
+  const tidRef = useRef(null);
+  useEffect(() => {
+    // Skip the first run — initial mount shouldn't flash everything.
+    if (prevRef.current === value) return;
+    prevRef.current = value;
+    setFlashing(true);
+    clearTimeout(tidRef.current);
+    tidRef.current = setTimeout(() => setFlashing(false), durationMs);
+    return () => clearTimeout(tidRef.current);
+  }, [value, durationMs]);
+  return flashing;
+}
+
 // Local-storage-backed setting.
 export function useLocalSetting(key, defaultValue) {
   const [value, setValue] = useState(() => {

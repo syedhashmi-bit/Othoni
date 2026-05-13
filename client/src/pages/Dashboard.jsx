@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import { usePoller, useLocalSetting } from '../hooks';
+import { Link } from 'react-router-dom';
+import { usePoller, useLocalSetting, useFlashOnChange } from '../hooks';
 import { formatBytes, formatRate, formatUptime, statusClass } from '../utils';
 import { useApp } from '../App.jsx';
 import { Sparkline, MultiLineChart, CoreGrid, Heatmap } from '../Charts.jsx';
@@ -242,16 +243,21 @@ function CpuHeatmapCard() {
   );
 }
 
-function StatCard({ title, value, sub, percent, spark, sparkMax, sparkFormat, sparkStats, icon: Icon }) {
+function StatCard({ title, value, sub, percent, spark, sparkMax, sparkFormat, sparkStats, icon: Icon, to }) {
+  const flashing = useFlashOnChange(value);
+  // When `to` is set, the entire card becomes a navigation link with the
+  // .clickable affordance (hover lift + accent border + → arrow on hover).
+  const Wrapper = to ? Link : 'div';
+  const wrapperProps = to ? { to, className: 'card clickable' } : { className: 'card' };
   return (
-    <div className="card">
+    <Wrapper {...wrapperProps}>
       <div className="card-header">
         <div className="card-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           {Icon && <Icon style={{ color: 'var(--text-dim)' }} />}
           <span>{title}</span>
         </div>
       </div>
-      <div className="card-value">{value}</div>
+      <div className={`card-value${flashing ? ' value-flash' : ''}`}>{value}</div>
       {sub && <div className="card-sub">{sub}</div>}
       {percent != null && <Bar percent={percent} />}
       {spark && (
@@ -265,7 +271,7 @@ function StatCard({ title, value, sub, percent, spark, sparkMax, sparkFormat, sp
           />
         </div>
       )}
-    </div>
+    </Wrapper>
   );
 }
 
@@ -338,6 +344,7 @@ export default function Dashboard() {
           sparkMax={100}
           sparkFormat="percent"
           sparkStats
+          to="/processes"
         />
         <StatCard
           icon={IconMemory}
@@ -349,6 +356,7 @@ export default function Dashboard() {
           sparkMax={100}
           sparkFormat="percent"
           sparkStats
+          to="/history"
         />
         <StatCard
           icon={IconDisk}
@@ -360,6 +368,7 @@ export default function Dashboard() {
           sparkMax={100}
           sparkFormat="percent"
           sparkStats
+          to="/storage"
         />
         <StatCard
           icon={IconActivity}
@@ -369,6 +378,7 @@ export default function Dashboard() {
           spark={netRxSpark}
           sparkFormat="rate"
           sparkStats
+          to="/network"
         />
       </div>
     ),

@@ -1010,3 +1010,388 @@ body[data-density="compact"] .subtitle {
 body[data-density="compact"] .spacer-md {
   height: 12px;
 }
+
+/* ============================================================
+ * Polish & Interactivity
+ * Additive layer of micro-interactions, transitions, and depth.
+ * Nothing here is required for layout / function — comment out
+ * any block and the UI still works, just feels flatter.
+ * ============================================================ */
+
+/* ---------- Ambient background depth ----------
+   A pair of very soft radial gradients in the corners turns the
+   flat #0b0f17 body into something with a hint of atmosphere.
+   Fixed position so it doesn't scroll with content. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(900px 500px at 15% -10%, rgba(91, 140, 255, 0.08), transparent 60%),
+    radial-gradient(700px 400px at 100% 110%, rgba(91, 140, 255, 0.05), transparent 60%);
+}
+.app { position: relative; z-index: 1; }
+
+/* ---------- Themed scrollbars ----------
+   WebKit-only (Firefox uses scrollbar-color). Slim, hover-aware,
+   matches the surface tokens. Keeps the dark theme cohesive
+   instead of leaking the OS default. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+  border: 2px solid var(--bg);
+  transition: background var(--transition);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------- Glassy topbar ----------
+   Translucent + backdrop-blur instead of opaque. Subtle, but
+   makes the topbar feel like it floats over content as users
+   scroll. Falls back to opaque on browsers without
+   backdrop-filter (the same color tokens are used). */
+.topbar {
+  background: linear-gradient(180deg,
+    rgba(18, 24, 38, 0.78),
+    rgba(18, 24, 38, 0.65));
+  backdrop-filter: saturate(140%) blur(10px);
+  -webkit-backdrop-filter: saturate(140%) blur(10px);
+  position: relative;
+  z-index: 10;
+}
+.topbar::after {
+  /* Hairline accent line at the bottom for visual depth. */
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(91, 140, 255, 0.2),
+    transparent);
+  pointer-events: none;
+}
+
+/* ---------- Card shimmer on hover ----------
+   On hover, a faint diagonal highlight sweeps across the card.
+   Pure CSS gradient on a ::before pseudo. The card already moves
+   up 1px — this adds the sense that light is moving with the
+   gesture. */
+.card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg,
+    transparent 35%,
+    rgba(91, 140, 255, 0.08) 50%,
+    transparent 65%);
+  opacity: 0;
+  transform: translateX(-30%);
+  transition: opacity 400ms ease, transform 600ms cubic-bezier(0.2, 0, 0, 1);
+  pointer-events: none;
+  z-index: 0;
+}
+.card:hover::before {
+  opacity: 1;
+  transform: translateX(30%);
+}
+.card > * { position: relative; z-index: 1; }
+
+/* Match for stat tiles. */
+.stat-tile {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.stat-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg,
+    transparent 35%,
+    rgba(91, 140, 255, 0.08) 50%,
+    transparent 65%);
+  opacity: 0;
+  transform: translateX(-30%);
+  transition: opacity 400ms ease, transform 600ms cubic-bezier(0.2, 0, 0, 1);
+  pointer-events: none;
+  z-index: 0;
+}
+.stat-tile:hover::before {
+  opacity: 1;
+  transform: translateX(30%);
+}
+.stat-tile > * { position: relative; z-index: 1; }
+
+/* ---------- Clickable variant ----------
+   When a card or stat tile becomes a navigation hook (Dashboard
+   links to /processes, /storage, etc.), we want a strong "this is
+   clickable" affordance: cursor change, accent border on hover,
+   and a small chevron-like indicator on hover. */
+.card.clickable,
+.stat-tile.clickable {
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+.card.clickable:hover,
+.stat-tile.clickable:hover {
+  border-color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3),
+              0 0 0 1px rgba(91, 140, 255, 0.15),
+              0 8px 24px rgba(91, 140, 255, 0.08);
+  transform: translateY(-2px);
+}
+.card.clickable::after,
+.stat-tile.clickable::after {
+  /* Tiny → arrow that fades in on hover, signaling "open" */
+  content: '→';
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity var(--transition), transform var(--transition);
+  z-index: 2;
+}
+.card.clickable:hover::after,
+.stat-tile.clickable:hover::after {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* ---------- Value flash on update ----------
+   Applied via a brief class added to the value element when its
+   number changes. The class is removed by JS after the animation
+   completes so the next change re-triggers it. */
+@keyframes value-flash {
+  0%   { color: var(--accent); text-shadow: 0 0 14px rgba(91, 140, 255, 0.45); }
+  100% { color: inherit;       text-shadow: none; }
+}
+.value-flash {
+  animation: value-flash 600ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ---------- Sparkline draw-in ----------
+   The first time a sparkline renders, the line strokes from left
+   to right. Subsequent re-renders aren't re-animated (key prop
+   keeps the same node) so this only fires once on entry. */
+@keyframes spark-draw {
+  from { stroke-dashoffset: 240; }
+  to   { stroke-dashoffset: 0;   }
+}
+.spark-line {
+  stroke-dasharray: 240;
+  stroke-dashoffset: 240;
+  animation: spark-draw 900ms cubic-bezier(0.2, 0, 0, 1) forwards;
+}
+@keyframes spark-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.spark-area {
+  opacity: 0;
+  animation: spark-fade 800ms ease-out 200ms forwards;
+}
+
+/* ---------- Nav: smoother active accent ----------
+   Existing accent bar already has a glow; tighten the transition
+   so switching pages slides the indicator into place. */
+.nav-item a::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  transform: translateY(-50%) scaleY(0);
+  width: 3px;
+  height: 18px;
+  background: linear-gradient(var(--accent), var(--accent-strong));
+  border-radius: 0 2px 2px 0;
+  box-shadow: 0 0 8px rgba(91, 140, 255, 0.6);
+  transition: transform 220ms cubic-bezier(0.5, 0, 0, 1);
+}
+.nav-item a.active::before {
+  /* Override the original `::before` positioning rules above with
+     the scaleY-driven slide-in. The original rule used top:7px /
+     bottom:7px so it just appeared; this version animates in. */
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%) scaleY(1);
+}
+
+/* Subtle text-shadow on the active item label for a touch of glow */
+.nav-item a.active {
+  text-shadow: 0 0 14px rgba(91, 140, 255, 0.25);
+}
+
+/* Sidebar brand: soft glow on the wordmark */
+.brand {
+  text-shadow: 0 0 24px rgba(91, 140, 255, 0.18);
+}
+
+/* ---------- Live indicator: subtle ambient halo ----------
+   Adds a soft outer glow under the existing pulse so the indicator
+   reads as "alive" rather than just "decorated". */
+.live-indicator {
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.15),
+              0 0 16px rgba(34, 197, 94, 0.08);
+  transition: box-shadow var(--transition);
+}
+.live-indicator:hover {
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.3),
+              0 0 22px rgba(34, 197, 94, 0.16);
+}
+
+/* ---------- Button press feedback ----------
+   Tighter active-state visual: scale down very slightly + remove
+   the subtle bounce. Gives buttons a satisfying "click" feel. */
+.btn:not(:disabled):active {
+  transform: scale(0.97);
+}
+.btn.tiny:not(:disabled):active,
+.btn.ghost:not(:disabled):active,
+.btn.compact:not(:disabled):active {
+  transform: scale(0.96);
+}
+
+/* ---------- Page transition refinement ----------
+   Slightly longer fade-up + a tiny scale gives pages a sense of
+   "settling into place" rather than a hard cut. */
+.page-fade-in {
+  animation: fadeUp 320ms cubic-bezier(0.2, 0, 0, 1);
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px) scale(0.995); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ---------- Table row left-accent on hover ----------
+   Adds a tiny vertical accent to hovered rows. Cheap visual cue
+   that the row is "active" without changing the cursor. */
+table.t tbody tr {
+  position: relative;
+}
+table.t tbody tr::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+table.t tbody tr:hover::before {
+  opacity: 0.8;
+}
+
+/* ---------- Pill animations ----------
+   Critical pills get a slow ambient pulse to draw the eye, but
+   only on the live-data pills (status indicators on the Services
+   / Projects / Docker pages). Skip when user prefers reduced motion. */
+@keyframes pill-pulse-crit {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.08); }
+}
+.pill.crit {
+  animation: pill-pulse-crit 2.8s ease-in-out infinite;
+}
+
+/* ---------- Empty state ----------
+   Add a subtle icon-like accent so empty states don't read as
+   "page hasn't loaded yet". */
+.card.empty {
+  background:
+    radial-gradient(400px 200px at 50% -20%, rgba(91, 140, 255, 0.06), transparent 70%),
+    var(--bg-card);
+}
+
+/* ---------- Sparkline draw-in container hover ----------
+   When hovering a chart card, gently desaturate everything except
+   the hovered card — no, just a subtle scale on the chart itself. */
+
+/* ---------- Loading: replace "Loading…" text with dots ----------
+   The original .loading rule centers a text node. Add an animated
+   triple-dot for a softer wait UX. */
+.loading::after {
+  content: '';
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  vertical-align: bottom;
+  animation: loading-dots 1.5s steps(4, end) infinite;
+}
+@keyframes loading-dots {
+  to { width: 18px; }
+}
+.loading {
+  font-size: 14px;
+}
+
+/* ---------- Focus rings (sharper) ----------
+   Make the keyboard focus ring slightly thicker + add a soft
+   accent halo so it stands out clearly on dark backgrounds. */
+button:focus-visible,
+a:focus-visible,
+.icon-btn:focus-visible,
+.btn:focus-visible,
+.btn.tiny:focus-visible,
+.btn.ghost:focus-visible,
+.stat-tile.clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgba(91, 140, 255, 0.15);
+}
+
+/* ---------- Topbar items hover state ----------
+   Tiny lift on the user chip + clock so the topbar feels more
+   interactive without being noisy. */
+.topbar-clock {
+  transition: background var(--transition), border-color var(--transition), transform var(--transition);
+}
+.topbar-clock:hover {
+  background: var(--bg-card-2);
+  border-color: var(--border-strong);
+}
+
+/* ---------- Reduced-motion safety net ----------
+   The earlier prefers-reduced-motion rule covers most cases, but
+   the new infinite animations need an explicit override too. */
+@media (prefers-reduced-motion: reduce) {
+  .pill.crit,
+  .live-dot,
+  .loading::after {
+    animation: none !important;
+  }
+  .card::before,
+  .stat-tile::before {
+    display: none;
+  }
+}
