@@ -31,6 +31,7 @@ const hostMeta = require('../host-meta');
 const retention = require('../retention');
 const vacuum = require('../vacuum');
 const projects = require('../projects');
+const securityAudit = require('../security-audit');
 
 const router = express.Router();
 
@@ -635,6 +636,20 @@ router.delete('/sessions/:sid', (req, res) => {
     metadata: { self: req.params.sid === req.user.sid },
   });
   res.json({ ok: true });
+});
+
+// ---------- Security audit ----------
+// Read-only checks across the VPS surface: open ports, SSH config,
+// firewall, OS updates, auth state. Cached 60s; ?force=1 bypasses.
+router.get('/security-audit', async (req, res) => {
+  try {
+    const force = req.query.force === '1' || req.query.force === 'true';
+    const result = await securityAudit.runAudit({ force });
+    res.json(result);
+  } catch (e) {
+    logger.error('security-audit failed:', e.message);
+    res.status(500).json({ error: 'audit_failed', message: e.message });
+  }
 });
 
 // ---------- Projects (/var/www directories with matching systemd services) ----------

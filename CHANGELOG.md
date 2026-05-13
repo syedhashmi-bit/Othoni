@@ -8,6 +8,82 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.54.0] — 2026-05-13
+
+Security audit tab. A read-only set of checks across the VPS
+surface: open ports, SSH configuration, firewall state, OS
+package updates, and authentication. Nothing here probes, scans
+the network, or modifies state — every finding is derived from
+local files (`/proc/net/*`, `/etc/ssh/sshd_config`) or short
+read-only command invocations (`ufw status`, `apt list
+--upgradable`, `who`, `lastb`).
+
+### Added
+
+- **`server/security-audit.js`** — five check categories, each
+  isolated so one failing doesn't break the others:
+  - **Network:** re-uses `getConnections()` to enumerate
+    listening sockets. Categorises bindings as public
+    (`0.0.0.0` / `::`) vs localhost-only; flags a curated list
+    of risky-when-public ports (Telnet, SMB, Docker daemon TCP
+    without TLS, MySQL/Postgres/Redis/MongoDB, etc.) with
+    per-port rationale.
+  - **SSH:** parses `/etc/ssh/sshd_config` (respecting comments
+    and stopping at the first `Match` block — first-directive-
+    wins per OpenSSH semantics). Flags `PermitRootLogin yes`
+    (crit), `PasswordAuthentication yes` (warn),
+    `PermitEmptyPasswords yes` (crit), and default port 22
+    (info). Surfaces `ok` findings too, so a hardened config
+    shows positively.
+  - **Firewall:** probes ufw → firewalld → nftables → iptables
+    in order. Stops at the first one with rules; flags "no
+    active firewall" as crit if none respond.
+  - **Updates:** `apt list --upgradable` (Debian/Ubuntu) with
+    a dnf fallback. Separates security updates from generic
+    ones for severity ranking.
+  - **Authentication:** `who` for active sessions, `lastb -n
+    200` for recent failed logins aggregated by source IP and
+    targeted user (top 5 each). Detects fail2ban presence as
+    a separate ok-finding.
+- **`GET /api/security-audit`** — returns `{ ranAt, durationMs,
+  summary, findings, categories }`. Cached 60 s; `?force=1`
+  bypasses for the "Re-run audit" button. Admin-only via the
+  global `/api` middleware.
+- **Security tab** — summary header with overall score chip,
+  per-severity filter pills (clickable), `↻ Re-run audit`
+  button, and findings grouped by category. Each finding card
+  has a severity-coloured left border, title, detail, and
+  optional evidence block (monospace, wrapped). Categories are
+  sorted worst-severity-first so the most-actionable group is
+  always at the top.
+- **`IconShield`** — new shield-with-check icon for the nav.
+- Keyboard chord: `g u` jumps to /security.
+
+### Notes
+
+- **All checks are read-only.** The audit never writes, never
+  sends traffic, never opens a socket. Worst case: a binary
+  like `ufw` isn't installed and that check returns `info`
+  ("no firewall detected" → crit only when ALL four firewall
+  fronts report absent).
+- **Root-readable files.** `lastb` reads `/var/log/btmp` and
+  `/etc/ssh/sshd_config` is typically root-only — the othoni
+  service runs as root in our default deployment, so these
+  succeed. On non-root deployments, those specific findings
+  degrade gracefully ("config unreadable" info-level finding).
+- **No new dependencies.** All checks use shell binaries
+  already present on a typical VPS (`ufw`, `apt`, `who`,
+  `lastb`, `iptables` / `nft` / `firewall-cmd`).
+- **Cached 60 s server-side.** Repeated polls don't re-shell;
+  the page itself polls once a minute, aligned with the TTL.
+- **Severity ranking** is stable (`crit`/`warn`/`info`/`ok`).
+  Future expansion: SUID-binary scan, world-writable dirs,
+  certificate-expiry on local-bound HTTPS services.
+
+### Changed
+
+- `package.json` bumped to `0.54.0`.
+
 ## [0.53.0] — 2026-05-13
 
 Phase 5 — synthetic checks depth. Five features that turn the

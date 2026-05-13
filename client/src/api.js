@@ -114,6 +114,8 @@ export const api = {
   processTree: () => request('/api/processes/tree'),
   docker: () => request('/api/docker'),
   services: () => request('/api/services'),
+  securityAudit: ({ force = false } = {}) =>
+    request(`/api/security-audit${force ? '?force=1' : ''}`),
   projects: {
     list: () => request('/api/projects'),
     control: (name, action) => request(`/api/projects/${encodeURIComponent(name)}/control`, {
