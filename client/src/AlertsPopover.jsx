@@ -64,15 +64,12 @@ export function AlertsPopover({ activeAlerts, onClose }) {
   return (
     <div
       ref={ref}
+      className="popover"
       style={{
         position: 'absolute',
         top: 52,
         right: 12,
         width: 340,
-        background: 'var(--bg-elevated)',
-        border: '1px solid var(--border-strong)',
-        borderRadius: 'var(--radius)',
-        boxShadow: 'var(--shadow-lg)',
         zIndex: 50,
         padding: 12,
       }}

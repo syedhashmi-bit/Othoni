@@ -319,7 +319,7 @@ export default function Connections() {
         </span>
       </div>
 
-      <div className="toolbar">
+      <div className="toolbar sticky">
         <input
           type="text"
           placeholder="Filter by IP, port, or state…"

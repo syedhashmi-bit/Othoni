@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, createContext, useContext } from 'react';
 import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import { api } from './api';
-import { useLocalSetting } from './hooks';
+import { useLocalSetting, useInFlightCount } from './hooks';
 import { notifyFire } from './alerts';
 import { AlertBadge, AlertsPopover } from './AlertsPopover.jsx';
 
@@ -169,6 +169,14 @@ function ServerClock() {
   );
 }
 
+// 2px sweep bar pinned to the top of the viewport. Visible whenever any
+// usePoller fetch is in flight. The CSS sweep animation runs constantly;
+// the active/idle class just toggles opacity for a clean fade in/out.
+function TopProgressBar() {
+  const n = useInFlightCount();
+  return <div className={`poll-progress ${n > 0 ? 'active' : 'idle'}`} aria-hidden="true" />;
+}
+
 function LiveIndicator({ refreshMs }) {
   return (
     <span className="live-indicator" title={`refreshing every ${refreshMs / 1000}s`}>
@@ -178,9 +186,43 @@ function LiveIndicator({ refreshMs }) {
   );
 }
 
-function Shell({ user, onLogout, children, refreshMs, activeAlerts, onShortcutsClick }) {
+// Topbar quick-toggle for density. Same backing key as the Settings card
+// (`othoni.density` via useApp()), so the two stay in sync. Lets users
+// flip layout mid-page without going to /settings first.
+function DensityToggle({ density, setDensity }) {
+  const isCompact = density === 'compact';
+  return (
+    <span
+      className="density-toggle"
+      role="group"
+      aria-label="Layout density"
+      title="Layout density"
+    >
+      <button
+        type="button"
+        className={isCompact ? '' : 'active'}
+        onClick={() => setDensity('comfortable')}
+        aria-pressed={!isCompact}
+      >
+        cozy
+      </button>
+      <button
+        type="button"
+        className={isCompact ? 'active' : ''}
+        onClick={() => setDensity('compact')}
+        aria-pressed={isCompact}
+      >
+        dense
+      </button>
+    </span>
+  );
+}
+
+function Shell({ user, onLogout, children, refreshMs, density, setDensity, activeAlerts, onShortcutsClick }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   return (
+    <>
+    <TopProgressBar />
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
@@ -226,6 +268,7 @@ function Shell({ user, onLogout, children, refreshMs, activeAlerts, onShortcutsC
             </span>
           )}
           <AlertBadge activeAlerts={activeAlerts} onClick={() => setPopoverOpen((v) => !v)} />
+          <DensityToggle density={density} setDensity={setDensity} />
           <LiveIndicator refreshMs={refreshMs} />
           <ServerClock />
           <button
@@ -248,6 +291,7 @@ function Shell({ user, onLogout, children, refreshMs, activeAlerts, onShortcutsC
       </header>
       <main className="main">{children}</main>
     </div>
+    </>
   );
 }
 
@@ -395,11 +439,14 @@ export default function App() {
 // content and shouldn't install global key listeners.
 function AuthedAppBody({ refreshMs, alerts, user, handleLogout }) {
   const { cheatsheetOpen, setCheatsheetOpen } = useKeyboardShortcuts();
+  const { density, setDensity } = useApp();
   return (
     <Shell
       user={user}
       onLogout={handleLogout}
       refreshMs={refreshMs}
+      density={density}
+      setDensity={setDensity}
       activeAlerts={alerts.activeAlerts}
       onShortcutsClick={() => setCheatsheetOpen((v) => !v)}
     >

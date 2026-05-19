@@ -70,22 +70,10 @@ export function Cheatsheet({ open, onClose }) {
   if (!open) return null;
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(8, 12, 20, 0.55)',
-        backdropFilter: 'blur(2px)',
-        zIndex: 60,
-        display: 'grid',
-        placeItems: 'center',
-        padding: 24,
-      }}
-    >
+    <div onClick={onClose} className="modal-backdrop">
       <div
         onClick={(e) => e.stopPropagation()}
-        className="card"
+        className="popover"
         style={{
           width: 'min(640px, 100%)',
           maxHeight: '80vh',

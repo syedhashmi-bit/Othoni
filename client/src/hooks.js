@@ -1,4 +1,24 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from 'react';
+
+// ---------- Global in-flight tracker ----------
+// Every active usePoller invocation bumps this counter while its fetch
+// is pending. The top progress bar subscribes via useInFlightCount().
+// Module-scoped so it survives unrelated component remounts.
+let inFlight = 0;
+const inFlightSubs = new Set();
+function notifyInFlight() {
+  for (const fn of inFlightSubs) fn();
+}
+function subscribeInFlight(fn) {
+  inFlightSubs.add(fn);
+  return () => inFlightSubs.delete(fn);
+}
+function getInFlight() {
+  return inFlight;
+}
+export function useInFlightCount() {
+  return useSyncExternalStore(subscribeInFlight, getInFlight, getInFlight);
+}
 
 // Polls `loader` every `intervalMs`. Returns { data, error, loading, refresh }.
 // Pause when document is hidden so we don't spam the server.
@@ -10,6 +30,7 @@ export function usePoller(loader, intervalMs = 5000, deps = []) {
   const timer = useRef(null);
 
   const tick = useCallback(async () => {
+    inFlight++; notifyInFlight();
     try {
       const d = await loader();
       if (!stopped.current) {
@@ -20,6 +41,7 @@ export function usePoller(loader, intervalMs = 5000, deps = []) {
       if (!stopped.current) setError(e);
     } finally {
       if (!stopped.current) setLoading(false);
+      inFlight = Math.max(0, inFlight - 1); notifyInFlight();
     }
   }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -66,6 +88,49 @@ export function useFlashOnChange(value, durationMs = 600) {
     return () => clearTimeout(tidRef.current);
   }, [value, durationMs]);
   return flashing;
+}
+
+// ---------- useCountUp ----------
+// Smoothly tween between numeric values when `value` changes.
+// `format` is a function `(n) => string` so callers can keep their
+// existing display formatting (percent, bytes, etc.) intact.
+// On mount, returns the value immediately (no tween from zero).
+export function useCountUp(value, { durationMs = 320, format = (n) => String(n) } = {}) {
+  const [shown, setShown] = useState(value);
+  const fromRef = useRef(value);
+  const startRef = useRef(0);
+  const rafRef = useRef(0);
+
+  useEffect(() => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      setShown(value);
+      return undefined;
+    }
+    // First mount or a non-numeric previous: snap.
+    if (typeof fromRef.current !== 'number' || !Number.isFinite(fromRef.current)) {
+      fromRef.current = value;
+      setShown(value);
+      return undefined;
+    }
+    if (fromRef.current === value) return undefined;
+    const from = fromRef.current;
+    const to = value;
+    startRef.current = performance.now();
+    cancelAnimationFrame(rafRef.current);
+    const step = (t) => {
+      const p = Math.min(1, (t - startRef.current) / durationMs);
+      // ease-out cubic
+      const eased = 1 - Math.pow(1 - p, 3);
+      const next = from + (to - from) * eased;
+      setShown(next);
+      if (p < 1) rafRef.current = requestAnimationFrame(step);
+      else fromRef.current = to;
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [value, durationMs]);
+
+  return typeof shown === 'number' ? format(shown) : shown;
 }
 
 // Local-storage-backed setting.

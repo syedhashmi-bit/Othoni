@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { Link } from 'react-router-dom';
-import { usePoller, useLocalSetting, useFlashOnChange } from '../hooks';
+import { usePoller, useLocalSetting, useFlashOnChange, useCountUp } from '../hooks';
 import { formatBytes, formatRate, formatUptime, statusClass } from '../utils';
 import { useApp } from '../App.jsx';
 import { Sparkline, MultiLineChart, CoreGrid, Heatmap } from '../Charts.jsx';
@@ -55,15 +55,12 @@ function LayoutEditor({ open, onClose, layout, setLayout }) {
   if (!open) return null;
   return (
     <div
+      className="popover"
       style={{
         position: 'absolute',
         right: 0,
         top: '100%',
         marginTop: 6,
-        background: 'var(--bg-card)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)',
-        boxShadow: 'var(--shadow-md)',
         zIndex: 20,
         minWidth: 360,
         padding: 10,
@@ -243,8 +240,16 @@ function CpuHeatmapCard() {
   );
 }
 
-function StatCard({ title, value, sub, percent, spark, sparkMax, sparkFormat, sparkStats, icon: Icon, to }) {
+function StatCard({ title, value, numericValue, format, sub, percent, spark, sparkMax, sparkFormat, sparkStats, icon: Icon, to }) {
   const flashing = useFlashOnChange(value);
+  // When `numericValue` is provided, animate it to the new value over ~320 ms
+  // using the count-up tween. Falls back to the pre-formatted string in
+  // `value` for callers that don't have a clean numeric (e.g. "1.2 / 0.7 / 0.5").
+  const animated = useCountUp(
+    typeof numericValue === 'number' ? numericValue : 0,
+    { format: format || ((n) => n.toFixed(1)) }
+  );
+  const displayValue = typeof numericValue === 'number' ? animated : value;
   // When `to` is set, the entire card becomes a navigation link with the
   // .clickable affordance (hover lift + accent border + → arrow on hover).
   const Wrapper = to ? Link : 'div';
@@ -257,7 +262,7 @@ function StatCard({ title, value, sub, percent, spark, sparkMax, sparkFormat, sp
           <span>{title}</span>
         </div>
       </div>
-      <div className={`card-value${flashing ? ' value-flash' : ''}`}>{value}</div>
+      <div className={`card-value count-up${flashing ? ' value-flash' : ''}`}>{displayValue}</div>
       {sub && <div className="card-sub">{sub}</div>}
       {percent != null && <Bar percent={percent} />}
       {spark && (
@@ -337,7 +342,8 @@ export default function Dashboard() {
         <StatCard
           icon={IconCpu}
           title="CPU usage"
-          value={`${cpu.usage.toFixed(1)}%`}
+          numericValue={cpu.usage}
+          format={(n) => `${n.toFixed(1)}%`}
           sub={`${cpu.physicalCores} cores · load ${cpu.loadAverage.join(' / ')}`}
           percent={cpu.usage}
           spark={cpuSpark}
@@ -349,7 +355,8 @@ export default function Dashboard() {
         <StatCard
           icon={IconMemory}
           title="RAM usage"
-          value={`${memory.usagePercent.toFixed(1)}%`}
+          numericValue={memory.usagePercent}
+          format={(n) => `${n.toFixed(1)}%`}
           sub={`${formatBytes(memory.active)} / ${formatBytes(memory.total)}`}
           percent={memory.usagePercent}
           spark={memSpark}
@@ -361,7 +368,9 @@ export default function Dashboard() {
         <StatCard
           icon={IconDisk}
           title="Disk (/)"
-          value={root ? `${root.usagePercent.toFixed(1)}%` : '—'}
+          numericValue={root ? root.usagePercent : null}
+          format={(n) => `${n.toFixed(1)}%`}
+          value={root ? undefined : '—'}
           sub={root ? `${formatBytes(root.used)} / ${formatBytes(root.size)}` : 'no data'}
           percent={root?.usagePercent}
           spark={diskSpark}

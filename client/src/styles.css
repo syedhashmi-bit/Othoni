@@ -1395,3 +1395,288 @@ a:focus-visible,
     display: none;
   }
 }
+
+/* ============================================================
+ * v0.55.0 — Cluster A polish
+ * Glass popovers, lighter table dividers, refined primary button,
+ * subtle nav-active gradient. Pure CSS, no JS coupling.
+ * ============================================================ */
+
+/* ---------- Reusable glass popover ----------
+   Used by AlertsPopover, the Dashboard layout editor, the
+   keyboard cheatsheet, and any future floating panel. The
+   important pieces: translucent surface, backdrop blur,
+   strong border for definition against any background. */
+.popover {
+  background: rgba(18, 24, 38, 0.72);
+  backdrop-filter: saturate(140%) blur(14px);
+  -webkit-backdrop-filter: saturate(140%) blur(14px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow:
+    var(--shadow-lg),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+/* Modal overlay used to dim the page behind a popover (cheatsheet etc.) */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 12, 20, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  animation: backdrop-fade 180ms ease-out;
+}
+@keyframes backdrop-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ---------- Softer table row dividers ----------
+   The earlier 1px solid var(--border) was a strong horizontal line.
+   Switch to a faint inset hairline so rows feel like a continuous
+   surface rather than a stack of separated bands. */
+table.t th,
+table.t td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+}
+table.t thead th {
+  border-bottom: 1px solid var(--border);
+}
+
+/* ---------- Primary button: subtle gradient + sheen ----------
+   The flat accent reads fine but a one-stop gradient gives the
+   primary call-to-action a touch more presence without changing
+   the brand color. */
+.btn:not(.ghost):not(.tiny):not(:disabled) {
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.btn:not(.ghost):not(.tiny):not(:disabled):hover {
+  background: linear-gradient(180deg, #6a98ff, var(--accent-strong));
+}
+
+/* ---------- Nav: active item gets a subtle gradient pad ----------
+   The existing accent-soft background is uniform; this layers a
+   very gentle highlight so the active row reads more dimensional. */
+.nav-item a.active {
+  background: linear-gradient(90deg,
+    rgba(91, 140, 255, 0.18) 0%,
+    rgba(91, 140, 255, 0.08) 100%);
+}
+
+/* ---------- Section title: a touch more refined ----------
+   Same 11.5px small caps, but slightly tighter letter-spacing
+   and a fade-in animation so it doesn't fight with card-title /
+   th visually. */
+.section-title {
+  letter-spacing: 0.65px;
+}
+
+/* ---------- Card refinements ----------
+   The hover state already lifts; tighten the rest state border so
+   the lift reads as a stronger transition. */
+.card {
+  border-color: rgba(255, 255, 255, 0.05);
+}
+.card:hover {
+  border-color: rgba(91, 140, 255, 0.22);
+}
+.stat-tile {
+  border-color: rgba(255, 255, 255, 0.05);
+}
+.stat-tile:hover {
+  border-color: rgba(91, 140, 255, 0.22);
+}
+
+/* ---------- Empty-state card: clearer separation ----------
+   Subtle dashed border feels more "intentional empty" rather than
+   "missing data". */
+.card.empty {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* ============================================================
+ * v0.56.0 — Cluster B loading feedback
+ * Top progress bar driven by usePoller in-flight count, skeleton
+ * row helper, and count-up readability.
+ * ============================================================ */
+
+/* ---------- Top progress bar ----------
+   Animates while any poller is in flight; idle state collapses
+   the bar to zero width with a fast fade. Mounted at the top of
+   the viewport in App.jsx (above .app), pinned via fixed positioning
+   so the gradient sweeps across the whole screen during refresh. */
+.poll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 200;
+  pointer-events: none;
+  background: transparent;
+  overflow: hidden;
+}
+.poll-progress.idle {
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.poll-progress.active {
+  opacity: 1;
+}
+.poll-progress::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--accent) 35%,
+    #7aa4ff 50%,
+    var(--accent) 65%,
+    transparent 100%);
+  animation: poll-progress-sweep 1.4s linear infinite;
+}
+@keyframes poll-progress-sweep {
+  from { transform: translateX(-60%); }
+  to   { transform: translateX(60%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poll-progress::before {
+    animation: none;
+    background: var(--accent);
+    opacity: 0.5;
+  }
+}
+
+/* ---------- Skeleton row helper ----------
+   Renders a faux table row with shimmer-animated cells. Drops
+   into <tbody> while data is loading so the table never empty-
+   flashes. The cells share the `.skeleton` shimmer animation
+   already defined above. */
+.skel-row td {
+  padding: 11px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+}
+.skel-row td > span {
+  display: block;
+  height: 10px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-xs);
+  position: relative;
+  overflow: hidden;
+}
+.skel-row td > span::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 50%,
+    transparent 100%
+  );
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Stagger the cell widths so the row looks like real data, not
+   a uniform block. Nth-child widths chosen for typical 5–7 col
+   tables. Extra cells just inherit the default 80%. */
+.skel-row td:nth-child(1) > span { width: 70%; }
+.skel-row td:nth-child(2) > span { width: 90%; }
+.skel-row td:nth-child(3) > span { width: 50%; }
+.skel-row td:nth-child(4) > span { width: 60%; }
+.skel-row td:nth-child(5) > span { width: 85%; }
+.skel-row td:nth-child(6) > span { width: 55%; }
+.skel-row td:nth-child(7) > span { width: 65%; }
+
+/* ---------- Count-up: use tabular figures so the digit jitter
+   during the tween doesn't shift surrounding layout. */
+.count-up {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ============================================================
+ * v0.57.0 — Cluster C density & sticky filters
+ * Topbar density quick-toggle, sticky filter toolbar variant.
+ * ============================================================ */
+
+/* ---------- Topbar density toggle ----------
+   Tiny pill in the topbar that flips between Comfortable / Compact
+   without leaving the current page. State is the same `density`
+   localStorage key as the Settings card, so they stay in sync. */
+.density-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  transition: border-color var(--transition);
+}
+.density-toggle:hover {
+  border-color: var(--border-strong);
+}
+.density-toggle button {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: background var(--transition), color var(--transition);
+}
+.density-toggle button:hover {
+  color: var(--text);
+}
+.density-toggle button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---------- Sticky filter toolbar ----------
+   When `.toolbar.sticky` is applied, the row pins to the top of the
+   scrolling .main container while you scroll a long table below it.
+   The translucent surface + backdrop blur keep content readable
+   underneath (same recipe as the topbar). */
+.toolbar.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: rgba(11, 15, 23, 0.78);
+  backdrop-filter: saturate(140%) blur(8px);
+  -webkit-backdrop-filter: saturate(140%) blur(8px);
+  margin-left: -28px;
+  margin-right: -28px;
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+body[data-density="compact"] .toolbar.sticky {
+  margin-left: -18px;
+  margin-right: -18px;
+  padding: 8px 18px;
+  margin-bottom: 8px;
+}
+@media (max-width: 768px) {
+  .toolbar.sticky {
+    margin-left: -16px;
+    margin-right: -16px;
+    padding: 10px 16px;
+  }
+}

@@ -71,6 +71,15 @@
 - Settings page for tuning the refresh interval per browser
 - Polished dark UI: nav icons, pulsing live indicator, server clock,
   card hover lift, gradient bars, skeleton loaders, page fade-up
+- **Refined polish pass** (v0.55–v0.57) — glass-blur popovers
+  (alerts dropdown, layout editor, keyboard cheatsheet); gradient
+  Logo + primary buttons; lighter table dividers; **top progress
+  bar** above the page that sweeps while any poller is in flight;
+  smooth count-up tween on dashboard hero numbers; skeleton rows /
+  cards on first load so tables never empty-flash; **density quick-
+  toggle** in the topbar (cozy / dense) that swaps tighter spacing
+  in place; **sticky filter toolbars** on Logs / Processes / Alerts /
+  Connections so the filter row stays visible while data scrolls
 - **Keyboard shortcuts** — two-key chords (`g d`, `g h`, etc.) to jump
   between pages, `?` for the cheatsheet
 

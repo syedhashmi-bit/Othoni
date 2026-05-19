@@ -1053,7 +1053,7 @@ export default function Alerts() {
         10s. Edits are buffered locally until you click <strong>Save rules</strong>.
       </p>
 
-      <div className="toolbar">
+      <div className="toolbar sticky">
         {isAdmin && (
           <>
             <button

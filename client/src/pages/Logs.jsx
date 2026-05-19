@@ -425,7 +425,7 @@ export default function Logs() {
         )}
       </p>
 
-      <div className="toolbar">
+      <div className="toolbar sticky">
         <select value={priority} onChange={(e) => setPriority(parseInt(e.target.value, 10))} className="select">
           {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>

@@ -8,6 +8,153 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.57.0] — 2026-05-19
+
+Cluster C — density and sticky filters. Third and final cluster of the
+UI refinement pass. Topbar gains a quick density toggle so layout
+swapping doesn't require a trip to Settings; long filter-heavy pages
+get a sticky filter bar that pins to the top of the scrolling main
+area while the data scrolls under it. Saved-view-style state
+persistence was already covered by Logs presets (v0.16.0) and
+History saved views (v0.18.0), so no net-new work there.
+
+### Added
+
+- **`<DensityToggle />`** in `App.jsx` — small pill in the topbar
+  (`.density-toggle`) that flips between Comfortable and Compact
+  in-place. Reads / writes the same `othoni.density` localStorage
+  key as the Settings card, so the two stay in sync.
+- **`.toolbar.sticky`** CSS variant — when applied, the filter row
+  pins to the top of the scrolling `.main` container while you
+  scroll a long table or feed below it. Backdrop blur + translucent
+  surface keeps content readable underneath. Negative side margins
+  fade it into the page edges; density-mode override tightens
+  padding when compact is active.
+
+### Changed
+
+- **`Shell`** now receives `density` + `setDensity` and renders
+  `<DensityToggle />` between the alerts bell and the live
+  indicator in the topbar.
+- **`Logs`, `Processes`, `Alerts`, `Connections`** — the main
+  filter row now uses `.toolbar.sticky` so it stays visible while
+  the table / feed scrolls.
+
+### Notes
+
+- The density quick-toggle replaces the need to navigate to
+  Settings → Density for routine swaps. The full description and
+  comfortable/compact buttons remain on the Settings page.
+- Sticky toolbars use `position: sticky` with `top: 0` against the
+  scrolling `.main` element (the entire app shell lives in a CSS
+  grid where `.main` is the only scrolling region). On the mobile
+  breakpoint the body itself scrolls; `position: sticky` still
+  works there but the negative margins are slightly reduced for
+  the narrower padding.
+- `package.json` bumped to `0.57.0`.
+
+## [0.56.0] — 2026-05-19
+
+Cluster B — loading feedback. Second of the three-cluster UI refinement
+pass. Every long-running poll now communicates its in-flight state
+through a 2px top progress bar; dashboard hero numbers smoothly tween
+between values; high-traffic listing pages render skeleton rows
+during their first fetch so the table doesn't empty-flash.
+
+### Added
+
+- **Global in-flight tracker.** `usePoller` in `hooks.js` bumps a
+  module-scoped counter on every fetch start / end. `useInFlightCount()`
+  is a `useSyncExternalStore` subscription so any component can react
+  to whether any poller is currently in flight. Zero coupling between
+  pages — the bar in App.jsx subscribes once and reflects every
+  poller in the tree.
+- **`<TopProgressBar />`** — fixed 2px gradient sweep pinned to the
+  top of the viewport, mounted at the app shell. Sweeps left→right
+  while any poller is in flight; fades out cleanly on idle. Pure CSS
+  animation, no JS-driven rAF. Respects `prefers-reduced-motion`.
+- **`useCountUp(value, { durationMs, format })`** — easeOut-cubic
+  rAF tween between numeric values. Snaps on first mount (no
+  startup tween from zero), tweens only on subsequent updates.
+  Returns a formatted string so callers keep their existing display
+  formatting (percent / bytes / rate).
+- **`<SkeletonRows count cols />`** and **`<SkeletonCards count />`**
+  in a new `client/src/Skeleton.jsx`. Wired into Processes (table
+  rows), Checks (table rows), and Services (card grid).
+- **`.poll-progress`, `.skel-row`, `.count-up`** CSS classes covering
+  the new components.
+
+### Changed
+
+- **Dashboard hero stat cards** (`CPU usage`, `RAM usage`, `Disk (/)`)
+  now pass a `numericValue` + `format` prop pair into `StatCard`.
+  `StatCard` tweens through `useCountUp` when `numericValue` is set;
+  falls back to the existing pre-formatted string for callers that
+  don't have a clean numeric (e.g. load-average "1.2 / 0.7 / 0.5").
+- **Processes / Checks / Services** initial-load UX: skeleton rows
+  or cards replace the "Loading…" centred placeholder. Pages keep
+  their header + filter chrome visible during first load instead
+  of full-page-blank.
+- **`Shell`** in `App.jsx` now wraps children in a fragment so the
+  fixed-position `<TopProgressBar />` can mount alongside the grid
+  layout without polluting it.
+
+### Notes
+
+- The progress bar is intentionally subtle — short polls finish in
+  well under one sweep cycle, so for a 5 s refresh you'll mostly see
+  a faint flicker at the top. The point is "yes, the data is being
+  refreshed right now" without stealing attention.
+- `useSyncExternalStore` was introduced in React 18 — the existing
+  pin already meets that.
+- `package.json` bumped to `0.56.0`.
+
+## [0.55.0] — 2026-05-19
+
+Cluster A — aesthetic polish. Pure-CSS pass (plus a small Logo + popover
+rewire) targeting the 1-2 papercuts left after the 2026-05-13 polish
+commit: opaque floating panels, heavy table dividers, flat primary
+buttons. No new dependencies, no JS coupling. Three planned clusters
+(A polish → B loading feedback → C density & saved views) tracked
+separately; this is the first.
+
+### Added
+
+- **`.popover` utility class** — reusable translucent + backdrop-blur
+  surface. Used by `AlertsPopover`, the dashboard `LayoutEditor`, and
+  `Cheatsheet`. Replaces three near-identical inline-style blocks. Frees
+  future popovers (saved-views dropdown, command palette) from
+  re-defining surface tokens.
+- **`.modal-backdrop`** — companion class for full-screen overlays.
+  Adds the page-dim + 3px backdrop blur + fade-in.
+
+### Changed
+
+- **`Logo.jsx`** — switched from a single-color stroke to a 2-stop
+  linear gradient (`#7aa4ff → #4477ff`) on the concentric rings.
+  Pure-SVG; per-instance `defs` id so multiple Logos on a page don't
+  collide.
+- **Table row dividers** softened from `1px solid var(--border)` to
+  `1px solid rgba(255,255,255,0.035)`. Thead retains the stronger
+  border for header/body separation.
+- **Primary `.btn`** now uses a vertical gradient + inset top
+  highlight + drop shadow. Ghost/tiny variants unchanged.
+- **Active nav item** background shifted from flat `accent-soft` to a
+  90° gradient (`rgba(91,140,255,0.18) → rgba(91,140,255,0.08)`). Reads
+  more dimensional next to the accent rail.
+- **Card border** at rest is now `rgba(255,255,255,0.05)`; on hover,
+  shifts to `rgba(91,140,255,0.22)`. Same pattern for `.stat-tile`.
+  Lighter rest state makes the existing lift-on-hover read stronger.
+- **Empty cards** (`.card.empty`) gained a dashed border so they read
+  as "intentional empty" rather than "missing data".
+
+### Notes
+
+- All changes are additive — comment out the new "v0.55.0 Cluster A
+  polish" CSS block at the bottom of `styles.css` and the UI returns
+  to the pre-release look.
+- `package.json` bumped to `0.55.0`.
+
 ## [0.54.0] — 2026-05-13
 
 Security audit tab. A read-only set of checks across the VPS
@@ -3252,6 +3399,9 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.57.0]: #0570--2026-05-19
+[0.56.0]: #0560--2026-05-19
+[0.55.0]: #0550--2026-05-19
 [0.36.0]: #0360--2026-05-11
 [0.35.0]: #0350--2026-05-11
 [0.34.0]: #0340--2026-05-11

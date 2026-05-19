@@ -3,6 +3,7 @@ import { api } from '../api';
 import { usePoller } from '../hooks';
 import { pillClass } from '../utils';
 import { useApp } from '../App.jsx';
+import { SkeletonCards } from '../Skeleton.jsx';
 
 // Restart button for a single systemd unit. Only renders when:
 //   (a) /api/actions reports enabled:true,
@@ -129,7 +130,15 @@ export default function Services() {
   const allowedSet = new Set(restartKind?.allowedTargets || []);
   const canRestart = !!actionsState?.enabled && !!restartKind;
 
-  if (loading && !data) return <div className="loading">Loading services…</div>;
+  if (loading && !data) {
+    return (
+      <div className="page-fade-in">
+        <h1 className="page-title">Services</h1>
+        <p className="subtitle">Common systemd units on this server.</p>
+        <SkeletonCards count={6} />
+      </div>
+    );
+  }
   if (error && !data) return <div className="error">Could not query systemctl.</div>;
 
   // Hide near-duplicate entries (ssh + sshd, redis + redis-server, etc.) when

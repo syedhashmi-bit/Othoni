@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import { SkeletonRows } from '../Skeleton.jsx';
 import { usePoller } from '../hooks';
 import { useApp } from '../App.jsx';
 import { Sparkline } from '../Charts.jsx';
@@ -425,7 +426,7 @@ export default function Processes() {
         )}
       </p>
 
-      <div className="toolbar">
+      <div className="toolbar sticky">
         <button
           className={`btn ghost ${sortBy === 'cpu' ? 'active' : ''}`}
           onClick={() => setSortBy('cpu')}
@@ -461,10 +462,9 @@ export default function Processes() {
 
       {view === 'tree' && <ProcessTree />}
 
-      {view === 'list' && loading && !data && <div className="loading">Loading…</div>}
       {view === 'list' && error && !data && <div className="error">Could not load process list.</div>}
 
-      {view === 'list' && data?.processes && (
+      {view === 'list' && (data?.processes || (loading && !data)) && (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div className="table-wrap" style={{ border: 'none' }}>
             <table className="t">
@@ -480,7 +480,10 @@ export default function Processes() {
                 </tr>
               </thead>
               <tbody>
-                {data.processes.map((p) => (
+                {loading && !data && (
+                  <SkeletonRows rows={8} cols={canSignal ? 7 : 6} />
+                )}
+                {data?.processes && data.processes.map((p) => (
                   <tr key={p.pid}>
                     <td className="mono">{p.pid}</td>
                     <td>{p.name}</td>

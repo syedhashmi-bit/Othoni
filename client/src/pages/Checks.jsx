@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { IconPlus, IconTrash } from '../Icons.jsx';
 import { useApp } from '../App.jsx';
+import { SkeletonRows } from '../Skeleton.jsx';
 
 const TYPES = [
   { value: 'http', label: 'HTTP', placeholder: 'https://example.com/health' },
@@ -368,6 +369,30 @@ export default function Checks() {
       {err && <div className="error">{err}</div>}
 
       {adding && <AddCheckForm onCreated={() => { setAdding(false); refresh(); }} onCancel={() => setAdding(false)} />}
+
+      {list == null && !adding && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div className="table-wrap" style={{ border: 'none' }}>
+            <table className="t">
+              <thead>
+                <tr>
+                  <th style={{ width: 40 }}>On</th>
+                  <th>Label</th>
+                  <th style={{ width: 60 }}>Type</th>
+                  <th>Target</th>
+                  <th>Interval</th>
+                  <th>Status</th>
+                  <th>Last run</th>
+                  <th style={{ width: 130 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                <SkeletonRows rows={5} cols={8} />
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {list != null && list.length === 0 && !adding && (
         <div className="card empty" style={{ padding: 32 }}>
