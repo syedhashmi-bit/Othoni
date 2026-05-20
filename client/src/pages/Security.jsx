@@ -93,9 +93,22 @@ function AckDialog({ finding, onClose, onConfirm }) {
   );
 }
 
-function RemediationButton({ finding, busy, onRemediate }) {
+function RemediationButton({ finding, busy, onRemediate, actionsEnabled }) {
   const [confirming, setConfirming] = useState(false);
   if (!finding.remediation) return null;
+  if (!actionsEnabled) {
+    return (
+      <button
+        type="button"
+        className="btn compact"
+        disabled
+        style={{ fontSize: 11, opacity: 0.55 }}
+        title="Actions framework is disabled. Set OTHONI_ACTIONS_ENABLED=true in .env and restart othoni to enable Remediate."
+      >
+        Remediate · off
+      </button>
+    );
+  }
   if (!confirming) {
     return (
       <button
@@ -167,7 +180,7 @@ function SnoozeMenu({ onPick }) {
   );
 }
 
-function Finding({ f, isAdmin, onAck, onUnack, onSnooze, onRemediate, remediateBusy }) {
+function Finding({ f, isAdmin, onAck, onUnack, onSnooze, onRemediate, remediateBusy, actionsEnabled }) {
   const accentBar = SEV_COLOR[f.severity] || 'var(--text-dim)';
   return (
     <div
@@ -227,7 +240,12 @@ function Finding({ f, isAdmin, onAck, onUnack, onSnooze, onRemediate, remediateB
         {isAdmin && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
             {f.remediation && !f.acked && (
-              <RemediationButton finding={f} busy={remediateBusy === f.id} onRemediate={onRemediate} />
+              <RemediationButton
+                finding={f}
+                busy={remediateBusy === f.id}
+                onRemediate={onRemediate}
+                actionsEnabled={actionsEnabled}
+              />
             )}
             {f.severity !== 'ok' && (
               f.acked ? (
@@ -358,6 +376,10 @@ export default function Security() {
   const [ackTarget, setAckTarget] = useState(null);
   const [remediateBusy, setRemediateBusy] = useState(null);
   const [actionMsg, setActionMsg] = useState(null);
+  // /api/actions returns { enabled: false } when OTHONI_ACTIONS_ENABLED
+  // is unset. We use that to dim the Remediate button + show a hint
+  // instead of letting clicks 404 silently.
+  const [actionsEnabled, setActionsEnabled] = useState(true);
 
   function loadAudit({ force = false } = {}) {
     if (force) setRunning(true);
@@ -376,6 +398,9 @@ export default function Security() {
   useEffect(() => {
     loadAudit();
     loadHistory(historyRange);
+    api.actions.list()
+      .then((r) => setActionsEnabled(!!r.enabled))
+      .catch(() => setActionsEnabled(false));
     const id = setInterval(() => { loadAudit(); loadHistory(historyRange); }, 60_000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -416,7 +441,11 @@ export default function Security() {
         loadAudit({ force: true });
       })
       .catch((e) => {
-        setActionMsg({ ok: false, text: e.body?.message || e.message || 'unknown error' });
+        const code = e.body?.error || e.message;
+        const text = code === 'not_found'
+          ? 'Actions framework is disabled. Set OTHONI_ACTIONS_ENABLED=true in .env and restart othoni.'
+          : (e.body?.message || e.message || 'unknown error');
+        setActionMsg({ ok: false, text });
       })
       .finally(() => setRemediateBusy(null));
   }
@@ -569,6 +598,7 @@ export default function Security() {
               onSnooze={snooze}
               onRemediate={remediate}
               remediateBusy={remediateBusy}
+              actionsEnabled={actionsEnabled}
             />
           ))}
         </div>
