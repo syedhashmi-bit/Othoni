@@ -1680,3 +1680,36 @@ body[data-density="compact"] .toolbar.sticky {
     padding: 10px 16px;
   }
 }
+
+/* ---------- Logo (v0.61) ----------
+   EKG-style pulse mark. The path uses `pathLength="100"` so the
+   keyframes can talk in normalized units regardless of the SVG's
+   actual coordinate-space length.
+   Default state shows the trace fully drawn (stroke-dashoffset: 0).
+   The animation sweeps through: invisible → drawn → wiped → invisible
+   on a 2.8s cycle, with the ring's opacity breathing in sync.
+   Under prefers-reduced-motion the global clamp at line 914 zeroes
+   the duration, leaving the static fully-drawn line. */
+.othoni-logo-pulse {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 0;
+  animation: othoni-logo-pulse-sweep 2.8s linear infinite;
+}
+.othoni-logo-ring {
+  animation: othoni-logo-ring-breathe 2.8s ease-in-out infinite;
+}
+@keyframes othoni-logo-pulse-sweep {
+  /* draw left → right */
+  0%   { stroke-dashoffset:  100; }
+  30%  { stroke-dashoffset:    0; }
+  /* hold briefly so the eye registers the shape */
+  50%  { stroke-dashoffset:    0; }
+  /* sweep off the right edge */
+  80%  { stroke-dashoffset: -100; }
+  /* pause invisible before the next cycle */
+  100% { stroke-dashoffset: -100; }
+}
+@keyframes othoni-logo-ring-breathe {
+  0%, 100% { opacity: 0.4;  }
+  40%      { opacity: 0.75; }
+}

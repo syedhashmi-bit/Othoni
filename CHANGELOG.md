@@ -8,6 +8,48 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.61.0] — 2026-05-20
+
+Brand refresh — the concentric-rings mark gets swapped for an EKG
+pulse line inside a soft ring. The trace animates in a continuous
+draw → hold → wipe sweep, with the outer ring breathing in sync.
+Quieter at small sizes, more "monitoring app" at large ones.
+
+### Added
+
+- **`.othoni-logo-pulse` + `.othoni-logo-ring`** CSS animations in
+  `client/src/styles.css`. The path uses `pathLength="100"` so the
+  keyframes work in normalized 0–100 units regardless of the SVG's
+  actual coordinate length. 2.8s linear sweep on the trace + ease-
+  in-out breathe on the ring, both `infinite` and synced to a
+  common period.
+- **Reduced-motion fallback** — the path's default state has
+  `stroke-dashoffset: 0` (fully drawn), so the existing global
+  `prefers-reduced-motion: reduce` clamp leaves a static, readable
+  EKG line instead of the animated sweep.
+
+### Changed
+
+- **`client/src/Logo.jsx`** rewritten — concentric rings + dot
+  replaced by a single soft ring + EKG trace path. The drop-shadow
+  glow is unchanged. The gradient definition stays at the same
+  `#7aa4ff → #4477ff` so existing usages of `var(--accent)` next to
+  the logo keep matching.
+- **`client/index.html`** favicon data: URI updated to match the
+  new mark (static — favicons can't reliably animate this way
+  across browsers). Same dark rounded-rect background + same
+  `#5b8cff` accent colour as before; the inner glyph is now the
+  EKG path.
+
+### Notes
+
+- All 20+ `<Logo>` usages across the app inherit the new mark
+  automatically — no per-page edits needed. The animation only
+  attaches to the topbar / login Logo instance via class selectors;
+  no impact on bundle size beyond a few CSS keyframes.
+- Tested live on the VPS: build clean, `/api/health` returns
+  v0.61.0, new path + keyframes verified in the deployed bundle.
+
 ## [0.60.0] — 2026-05-20
 
 Multi-user accounts. The env-based `OTHONI_ADMIN_USER` slot remains the
