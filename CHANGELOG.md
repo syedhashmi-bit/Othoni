@@ -8,6 +8,108 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.58.0] — 2026-05-20
+
+Security audit expansion — the v0.54 read-only audit grows into a real
+hardening surface. Six new check categories, persistent run history
+with diff-vs-previous, an acknowledge / suppress mechanism with TTL,
+crit findings dispatched through the webhook pipeline on diff edges,
+and a `security.remediate` action kind for one-click fixes (gated by
+the `OTHONI_ACTIONS_ENABLED` opt-in).
+
+### Added
+
+- **Six new check categories** in `server/security-audit.js`:
+  - **Filesystem** — world-writable non-sticky directories under
+    `/etc` and `/var/www` (warn).
+  - **Filesystem (SUID)** — SUID binaries outside a conservative
+    Debian/Ubuntu baseline (warn).
+  - **TLS** — cert expiry under `/etc/letsencrypt/live` (and
+    operator-managed certs under `/etc/ssl/certs`). Parsed via
+    Node's built-in `crypto.X509Certificate`. 7 days = crit,
+    30 days = warn.
+  - **Sudoers** — `NOPASSWD` entries in `/etc/sudoers` and
+    `/etc/sudoers.d/*` (crit if `NOPASSWD: ALL`, warn otherwise).
+  - **Docker** — `/var/run/docker.sock` permissions (world-writable
+    = crit; group-writable surfaces the docker group membership as
+    info).
+  - **Updates (auto)** — `unattended-upgrades` configured + enabled
+    via `/etc/apt/apt.conf.d/20auto-upgrades` (warn if missing or
+    disabled).
+- **Run history persistence.** Two new SQLite tables:
+  - `audit_runs(t, duration_ms, total, crit, warn, info, ok, added,
+    fixed, escalated)` — one row per audit invocation (manual or
+    auto-tick).
+  - `audit_findings(t, finding_id, category, severity, title)` —
+    non-ok findings per run, denormalized so the diff stays cheap.
+  Both pruned at the existing 24h retention sweep when the
+  retention module evicts old rows from other tables. New
+  `GET /api/security-audit/history?range={24h,7d,30d}` powers the
+  History card on the Security page.
+- **Diff vs the previous run.** `runAudit()` computes
+  `{ added, fixed, escalated }` against the most recent stored run
+  and includes it in the response payload. The new `<DiffStrip />`
+  on the Security page surfaces it; new crit findings (added or
+  escalated) dispatch through the webhook pipeline on diff edges
+  only — no spam for findings that persist across runs.
+- **Acknowledge / suppress.** `data/audit-acks.json` (atomic write)
+  stores `{ findingId → { reason, actor, ackedAt, expiresAt } }`.
+  Acked findings are excluded from the visible crit / warn counts
+  and demoted in the list. TTL defaults to 30 days, capped at 365;
+  expired acks auto-prune. New endpoints:
+  - `GET /api/security-audit/acks` — list current acks.
+  - `POST /api/security-audit/ack` — accept `{ id, reason?, ttlDays? }`.
+  - `DELETE /api/security-audit/ack/:id` — unack.
+- **`security.remediate` action kind** in `server/actions.js`. Writes
+  a scoped `/etc/ssh/sshd_config.d/99-othoni-hardening.conf` drop-in
+  and runs `sshd -t` validation before `systemctl reload ssh`. Three
+  safe targets: `ssh.disable-root-login`, `ssh.disable-password-auth`,
+  `ssh.disable-empty-passwords`. Refuses when `/etc/ssh/sshd_config.d`
+  doesn't exist (sshd may not be reading drop-ins on that host).
+  Validation is `sshd -t` *before* reload, so a bad merge never gets
+  applied to the running daemon — operator can't lock themselves
+  out.
+- **Findings → webhook dispatcher.** `securityAudit.setDispatcher(fn)`
+  injected at `index.js` startup; reuses the same webhook fan-out as
+  alert fires and synthetic checks. The dispatched event mimics an
+  alert.fire shape (`rule.id = audit:<finding-id>`) so slack /
+  discord / generic destinations render reasonable text without
+  needing a new payload format.
+- **Audit history page** inline on `/security` — `<HistoryCard>`
+  with crit + warn sparklines (using the existing `<Sparkline>`
+  primitive) and a 24h / 7d / 30d range picker. Shows hardening
+  drift over weeks.
+- **Auto-tick.** `securityAudit.startAutoRun()` schedules a full
+  audit every 10 minutes so the diff-vs-prev row builds up without
+  operator interaction.
+- **API surface.** `api.js` extended with `securityHistory`,
+  `securityAcks`, `securityAck`, `securityUnack`.
+- **Audit log whitelist** gains `audit.ack` / `audit.unack` /
+  `audit.run` / `action.security.remediate`.
+
+### Changed
+
+- **`Security.jsx`** rewritten end-to-end. Adds: diff strip,
+  history card with sparklines, per-finding Ack / Unack buttons
+  (admin-only), Remediate button on findings that declare a
+  `remediation: { kind, target }` (admin-only), confirmation
+  dialog for ack with reason + TTL, "Show acknowledged" toggle in
+  the toolbar, and an action result banner.
+- **`server/index.js`** wires `securityAudit.setDispatcher(...)` +
+  `startAutoRun()` after the alert engine starts, and tears down
+  on SIGTERM / SIGINT.
+
+### Notes
+
+- Acked findings are still rendered (demoted, dimmed) when "Show
+  acknowledged" is toggled on, but never counted toward the
+  severity score chips.
+- `security.remediate` is admin-only and requires
+  `OTHONI_ACTIONS_ENABLED=true` like every other action; remediation
+  buttons hide for viewer sessions automatically.
+- The diff-vs-prev comparison ignores `ok` findings to keep the
+  table small; an OK row never appears in `audit_findings`.
+
 ## [0.57.0] — 2026-05-19
 
 Cluster C — density and sticky filters. Third and final cluster of the

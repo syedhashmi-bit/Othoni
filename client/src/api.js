@@ -116,6 +116,16 @@ export const api = {
   services: () => request('/api/services'),
   securityAudit: ({ force = false } = {}) =>
     request(`/api/security-audit${force ? '?force=1' : ''}`),
+  securityHistory: (range = '7d') =>
+    request(`/api/security-audit/history?range=${encodeURIComponent(range)}`),
+  securityAcks: () => request('/api/security-audit/acks'),
+  securityAck: ({ id, reason, ttlDays }) => request('/api/security-audit/ack', {
+    method: 'POST',
+    body: JSON.stringify({ id, reason, ttlDays }),
+  }),
+  securityUnack: (id) => request(`/api/security-audit/ack/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }),
   projects: {
     list: () => request('/api/projects'),
     control: (name, action) => request(`/api/projects/${encodeURIComponent(name)}/control`, {

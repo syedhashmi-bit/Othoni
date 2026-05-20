@@ -38,6 +38,11 @@ const VALID_ACTIONS = new Set([
   'action.docker.stop',
   'action.docker.restart',
   'action.process.signal',
+  'action.security.remediate',
+  // Phase 6 security audit (v0.58).
+  'audit.ack',
+  'audit.unack',
+  'audit.run',
   // Phase 2 session management (v0.38).
   'session.revoke',
   // Phase 3 host metadata (v0.43).

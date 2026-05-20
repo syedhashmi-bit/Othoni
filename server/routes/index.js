@@ -640,16 +640,79 @@ router.delete('/sessions/:sid', (req, res) => {
 
 // ---------- Security audit ----------
 // Read-only checks across the VPS surface: open ports, SSH config,
-// firewall, OS updates, auth state. Cached 60s; ?force=1 bypasses.
+// firewall, OS updates, auth state, world-writable paths, SUID
+// baseline, TLS cert expiry, sudoers NOPASSWD, Docker socket,
+// unattended-upgrades. Cached 60s; ?force=1 bypasses. Findings →
+// alerts: when a new crit finding appears (vs the previous run) it
+// fires through the configured webhooks via the alert dispatcher.
 router.get('/security-audit', async (req, res) => {
   try {
     const force = req.query.force === '1' || req.query.force === 'true';
-    const result = await securityAudit.runAudit({ force });
+    const source = force ? (req.user?.username || 'manual') : 'cache';
+    const result = await securityAudit.runAudit({ force, source });
+    if (force) {
+      audit.log({
+        ...audit.fromReq(req),
+        action: 'audit.run',
+        metadata: { crit: result.summary.crit, warn: result.summary.warn, total: result.summary.total },
+      });
+    }
     res.json(result);
   } catch (e) {
     logger.error('security-audit failed:', e.message);
     res.status(500).json({ error: 'audit_failed', message: e.message });
   }
+});
+
+// History — time-series of finding counts per severity. Powered by
+// the audit_runs table written on every (manual + auto) run.
+router.get('/security-audit/history', (req, res) => {
+  const range = String(req.query.range || '7d');
+  res.json(securityAudit.listHistory({ range }));
+});
+
+// Ack list (operator UI uses this to render the ack count chip).
+router.get('/security-audit/acks', (req, res) => {
+  res.json({ acks: securityAudit.listAcks() });
+});
+
+// Acknowledge a finding (mark it as accepted). TTL in days, default 30.
+router.post('/security-audit/ack', (req, res) => {
+  const { id, reason, ttlDays } = req.body || {};
+  if (typeof id !== 'string' || !id) {
+    return res.status(400).json({ error: 'invalid_request', message: 'id required' });
+  }
+  const ttlMs = (typeof ttlDays === 'number' && ttlDays > 0)
+    ? Math.min(365, ttlDays) * 24 * 3600_000
+    : undefined;
+  try {
+    const ack = securityAudit.ackFinding({
+      id, reason, ttlMs,
+      actor: req.user?.username || null,
+    });
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'audit.ack',
+      target: id,
+      metadata: { reason: ack.reason, expiresAt: ack.expiresAt },
+    });
+    res.json({ ok: true, ack });
+  } catch (e) {
+    if (e.code === 'invalid_request') return res.status(400).json({ error: e.code, message: e.message });
+    logger.error('security-audit ack failed:', e.message);
+    res.status(500).json({ error: 'ack_failed', message: e.message });
+  }
+});
+
+router.delete('/security-audit/ack/:id', (req, res) => {
+  const ok = securityAudit.unackFinding(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'audit.unack',
+    target: req.params.id,
+  });
+  res.json({ ok: true });
 });
 
 // ---------- Projects (/var/www directories with matching systemd services) ----------

@@ -330,6 +330,7 @@ register('docker.restart', {
 //     override or remove via env.
 
 const fs = require('fs');
+const path = require('path');
 
 const SAFE_SIGNALS = new Set(['TERM', 'INT', 'HUP', 'USR1', 'USR2', 'KILL']);
 const SELF_PID = process.pid;
@@ -421,6 +422,131 @@ function listKindsWithDetail() {
     return k;
   });
 }
+
+// ---------- security.remediate ----------
+// One-click fixes for select audit findings. Each remediation writes a
+// scoped sshd_config.d drop-in (not the main sshd_config — that file
+// stays untouched so distro upgrades don't conflict) and reloads sshd.
+// The drop-in file path is deterministic so re-running just overwrites.
+//
+// Safe set: SSH-only directives that turn risky-on into safe-off.
+//   - ssh.disable-root-login       → PermitRootLogin no
+//   - ssh.disable-password-auth    → PasswordAuthentication no  /  KbdInteractive no
+//   - ssh.disable-empty-passwords  → PermitEmptyPasswords no
+//
+// Refusal is conservative: if /etc/ssh/sshd_config.d is missing or
+// sshd isn't reachable via systemd, we bail out with a clear error
+// instead of silently writing somewhere unexpected.
+
+const SSH_DROPIN_DIR = '/etc/ssh/sshd_config.d';
+const SSH_DROPIN_FILE = path.join(SSH_DROPIN_DIR, '99-othoni-hardening.conf');
+
+// Each target maps to one or more `Directive value` lines. We accumulate
+// every line we've ever written into the drop-in, so applying a second
+// remediation doesn't clobber a previous one.
+const SSH_REMEDIATIONS = {
+  'ssh.disable-root-login':      'PermitRootLogin no',
+  'ssh.disable-password-auth':   'PasswordAuthentication no\nKbdInteractiveAuthentication no',
+  'ssh.disable-empty-passwords': 'PermitEmptyPasswords no',
+};
+
+function readExistingDropin() {
+  try { return fs.readFileSync(SSH_DROPIN_FILE, 'utf8'); }
+  catch (e) { if (e.code === 'ENOENT') return ''; throw e; }
+}
+
+// Merge a directive into the drop-in: if the directive name is already
+// present (anywhere) replace that line; otherwise append.
+function mergeDirectives(existing, addLines) {
+  const existingLines = existing.split('\n');
+  for (const line of addLines.split('\n')) {
+    const directive = line.split(/\s+/)[0];
+    let replaced = false;
+    for (let i = 0; i < existingLines.length; i++) {
+      const trimmed = existingLines[i].trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const name = trimmed.split(/\s+/)[0];
+      if (name === directive) { existingLines[i] = line; replaced = true; break; }
+    }
+    if (!replaced) existingLines.push(line);
+  }
+  // Strip trailing empties.
+  while (existingLines.length && existingLines[existingLines.length - 1].trim() === '') {
+    existingLines.pop();
+  }
+  return existingLines.join('\n') + '\n';
+}
+
+register('security.remediate', {
+  description: 'Apply a scoped security hardening fix (writes a sshd_config.d drop-in and reloads sshd).',
+  auditName: 'action.security.remediate',
+  requiresConfirmation: true,
+  targetValidator: (t) => typeof t === 'string' && Object.prototype.hasOwnProperty.call(SSH_REMEDIATIONS, t),
+  async run({ target }) {
+    const startedAt = Date.now();
+    // Sanity-check the drop-in dir exists. Modern Ubuntu/Debian sshd
+    // includes /etc/ssh/sshd_config.d/*.conf by default; if it's not
+    // there, refuse rather than write a file that won't take effect.
+    if (!fs.existsSync(SSH_DROPIN_DIR)) {
+      return {
+        ok: false, exitCode: 2,
+        stdout: '',
+        stderr: `refused: ${SSH_DROPIN_DIR} does not exist (sshd may not be configured to read drop-ins)`,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+    const addLines = SSH_REMEDIATIONS[target];
+    let existing;
+    try { existing = readExistingDropin(); }
+    catch (e) {
+      return {
+        ok: false, exitCode: 1, stdout: '',
+        stderr: `read ${SSH_DROPIN_FILE} failed: ${e.message}`,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+    const next = mergeDirectives(existing, addLines);
+    const header = '# Managed by othoni — security.remediate drop-in.\n# Edit /etc/ssh/sshd_config or another drop-in to override.\n';
+    const body = next.startsWith('#') ? next : header + next;
+    try {
+      const tmp = `${SSH_DROPIN_FILE}.tmp`;
+      fs.writeFileSync(tmp, body, { mode: 0o644 });
+      fs.renameSync(tmp, SSH_DROPIN_FILE);
+    } catch (e) {
+      return {
+        ok: false, exitCode: 1, stdout: '',
+        stderr: `write ${SSH_DROPIN_FILE} failed: ${e.message}`,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+    // Validate config before restart. `sshd -t` exits non-zero on
+    // bad config without touching the running daemon — critical so
+    // we never apply a config that would lock the operator out.
+    const test = await execRun('sshd', ['-t'], { timeout: 5000 });
+    if (!test.ok) {
+      return {
+        ok: false, exitCode: typeof test.code === 'number' ? test.code : 1,
+        stdout: '',
+        stderr: `sshd config validation failed (NOT reloaded):\n${test.stderr || ''}`,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+    const reload = await execRun('systemctl', ['reload', 'ssh'], { timeout: 5000 });
+    // On older systems the unit is named `sshd`; fall back if reload-ssh
+    // didn't find it.
+    let reloadResult = reload;
+    if (!reload.ok && /Unit (?:ssh\.service)? not found/i.test(reload.stderr || '')) {
+      reloadResult = await execRun('systemctl', ['reload', 'sshd'], { timeout: 5000 });
+    }
+    return {
+      ok: reloadResult.ok,
+      exitCode: reloadResult.ok ? 0 : (typeof reloadResult.code === 'number' ? reloadResult.code : 1),
+      stdout: `Wrote ${SSH_DROPIN_FILE} (target=${target}).\n${reloadResult.stdout || ''}`,
+      stderr: reloadResult.stderr || '',
+      durationMs: Date.now() - startedAt,
+    };
+  },
+});
 
 // ---------- built-in: noop ----------
 // Framework smoke-test kind. Always succeeds; optional `target` like

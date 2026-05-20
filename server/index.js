@@ -25,6 +25,7 @@ const processHistory = require('./process-history');
 const alerts = require('./alerts');
 const webhooks = require('./webhooks');
 const checks = require('./checks');
+const securityAudit = require('./security-audit');
 const logger = require('./logger');
 
 const PORT = parseInt(process.env.PORT || '8088', 10);
@@ -157,10 +158,16 @@ app.listen(PORT, HOST, () => {
   // down N times in a row dispatches an "alert.fire"-shaped event.
   checks.setDispatcher((event) => webhooks.dispatch(event));
   checks.start();
+  // Security audit — auto-runs every 10 min so the diff-vs-prev row
+  // builds up without operator interaction; new crit findings dispatch
+  // through the same webhook pipeline as alert fires.
+  securityAudit.setDispatcher((event) => webhooks.dispatch(event));
+  securityAudit.startAutoRun();
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.once(sig, () => {
+    securityAudit.stopAutoRun();
     checks.stop();
     alerts.stop();
     vacuum.stop();
