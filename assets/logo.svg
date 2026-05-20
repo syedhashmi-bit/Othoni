@@ -2,7 +2,7 @@
   <title>othoni</title>
 
   <defs>
-    <!-- Soft halo behind the rings — gives the logo presence on both light
+    <!-- Soft halo behind the mark — gives the logo presence on both light
          (white) and dark (#0d1117) GitHub themes without needing a variant. -->
     <radialGradient id="halo" cx="50%" cy="50%" r="50%">
       <stop offset="0%"   stop-color="#5b8cff" stop-opacity="0.32" />
@@ -10,7 +10,7 @@
       <stop offset="100%" stop-color="#5b8cff" stop-opacity="0" />
     </radialGradient>
     <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%"   stop-color="#5b8cff" />
+      <stop offset="0%"   stop-color="#7aa4ff" />
       <stop offset="100%" stop-color="#4477ff" />
     </linearGradient>
   </defs>
@@ -18,23 +18,15 @@
   <!-- Ambient halo -->
   <circle cx="128" cy="128" r="124" fill="url(#halo)" />
 
-  <!-- Outer scan ring — dashed, suggests live sampling / radar sweep -->
-  <circle cx="128" cy="128" r="100" fill="none"
-          stroke="#5b8cff" stroke-opacity="0.45"
-          stroke-width="2" stroke-dasharray="3 6"
-          stroke-linecap="round" />
+  <!-- Soft outer ring — matches the in-app <Logo /> ring -->
+  <circle cx="128" cy="128" r="106" fill="none"
+          stroke="url(#brand)" stroke-opacity="0.55"
+          stroke-width="6" />
 
-  <!-- Mid ring — heavy, the dominant 'O' shape -->
-  <circle cx="128" cy="128" r="62" fill="none"
-          stroke="url(#brand)" stroke-opacity="0.92"
-          stroke-width="8" />
-
-  <!-- Solid core — the 'current value' -->
-  <circle cx="128" cy="128" r="20" fill="url(#brand)" />
-
-  <!-- Single live data-point on the outer ring (NE), a small visual hook
-       that distinguishes the icon from generic concentric circles. -->
-  <circle cx="208.6" cy="76"  r="7" fill="#5b8cff" />
-  <circle cx="208.6" cy="76"  r="13" fill="none"
-          stroke="#5b8cff" stroke-opacity="0.35" stroke-width="2" />
+  <!-- EKG pulse trace. Same path as the in-app Logo, scaled from
+       24×24 → 256×256 (factor ≈ 10.67) so the mark and the favicon
+       share the exact same silhouette. -->
+  <path d="M 37 128 L 85 128 L 107 96 L 128 165 L 149 69 L 171 128 L 219 128"
+        fill="none" stroke="url(#brand)" stroke-width="14"
+        stroke-linecap="round" stroke-linejoin="round" />
 </svg>
