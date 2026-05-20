@@ -89,6 +89,7 @@ const FORMATS = [
   { value: 'generic', label: 'Generic JSON' },
   { value: 'slack',   label: 'Slack' },
   { value: 'discord', label: 'Discord' },
+  { value: 'email',   label: 'Email (SMTP)' },
 ];
 
 function newClientId() { return Math.random().toString(36).slice(2, 10); }
@@ -655,6 +656,7 @@ function WebhooksCard() {
   const { user } = useApp();
   const isAdmin = user?.role === 'admin';
   const [list, setList] = useState(null);
+  const [smtp, setSmtp] = useState(null);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ label: '', url: '', format: 'generic', hostFilter: '' });
   const [err, setErr] = useState(null);
@@ -664,7 +666,10 @@ function WebhooksCard() {
   const [filterDraft, setFilterDraft] = useState({}); // { [id]: pendingHostFilter }
 
   function refresh() {
-    api.webhooks.list().then((r) => setList(r.webhooks || [])).catch((e) => setErr(e.message));
+    api.webhooks.list().then((r) => {
+      setList(r.webhooks || []);
+      setSmtp(r.smtp || null);
+    }).catch((e) => setErr(e.message));
   }
   useEffect(() => { refresh(); }, []);
 
@@ -725,7 +730,18 @@ function WebhooksCard() {
           <div className="card-sub" style={{ fontSize: 12 }}>
             Fired by the server when an alert transitions to firing — works
             even when no browser is open. Slack and Discord both accept the
-            same JSON POST shape via incoming-webhook URLs.
+            same JSON POST shape via incoming-webhook URLs. Email uses
+            SMTP submission (OTHONI_SMTP_*).
+            {smtp && smtp.enabled && (
+              <span className="pill ok" style={{ fontSize: 10, marginLeft: 8 }}>
+                SMTP · {smtp.host}:{smtp.port}
+              </span>
+            )}
+            {smtp && !smtp.enabled && list && list.some((w) => w.format === 'email') && (
+              <span className="pill crit" style={{ fontSize: 10, marginLeft: 8 }}>
+                SMTP not configured
+              </span>
+            )}
           </div>
         </div>
         {!adding && isAdmin && (
@@ -754,8 +770,8 @@ function WebhooksCard() {
             style={{ width: 180 }}
           />
           <input
-            type="url"
-            placeholder="https://hooks.slack.com/services/..."
+            type={form.format === 'email' ? 'text' : 'url'}
+            placeholder={form.format === 'email' ? 'ops@example.com (or mailto:…)' : 'https://hooks.slack.com/services/...'}
             value={form.url}
             onChange={(e) => setForm({ ...form, url: e.target.value })}
             className="input grow mono"
@@ -767,6 +783,11 @@ function WebhooksCard() {
           >
             {FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
+          {form.format === 'email' && smtp && !smtp.enabled && (
+            <div className="muted" style={{ width: '100%', fontSize: 11, color: 'var(--warn)' }}>
+              SMTP not configured. Set OTHONI_SMTP_HOST + OTHONI_SMTP_FROM in .env (and SMTP_USER/SMTP_PASS for authenticated submission) and restart.
+            </div>
+          )}
           <input
             type="text"
             placeholder="Host filter (blank = all, e.g. db-* or local)"

@@ -979,7 +979,7 @@ function listAcks() {
   return readAcks();
 }
 
-function ackFinding({ id, reason = '', actor = null, ttlMs = ACK_DEFAULT_TTL_MS }) {
+function ackFinding({ id, reason = '', actor = null, ttlMs = ACK_DEFAULT_TTL_MS, snooze = false }) {
   if (typeof id !== 'string' || !id) throw Object.assign(new Error('id required'), { code: 'invalid_request' });
   const safeTtl = Math.max(60_000, Math.min(ACK_MAX_TTL_MS, ttlMs || ACK_DEFAULT_TTL_MS));
   const acks = readAcks();
@@ -988,6 +988,10 @@ function ackFinding({ id, reason = '', actor = null, ttlMs = ACK_DEFAULT_TTL_MS 
     actor: actor || null,
     ackedAt: Date.now(),
     expiresAt: Date.now() + safeTtl,
+    // `snooze` distinguishes a short-TTL "shut up for a few hours"
+    // from a long-TTL accepted-risk ack. Only used by the UI to pick
+    // labels — the underlying suppression mechanism is identical.
+    snooze: !!snooze,
   };
   acksCache = acks;
   persistAcks();
@@ -1098,6 +1102,7 @@ async function runAudit({ force = false, source = 'manual' } = {}) {
       f.acked = true;
       f.ackReason = a.reason || null;
       f.ackExpiresAt = a.expiresAt || null;
+      f.ackSnooze = !!a.snooze;
     }
   }
 
@@ -1155,7 +1160,28 @@ async function runAudit({ force = false, source = 'manual' } = {}) {
     prevRanAt: prev?.t || null,
   };
   cacheAt = now;
+
+  // v0.59 — persist counts as time-series samples so they show up on
+  // the History page and the alert engine can compare against them
+  // through the same path as any other metric. Use try-catch so a
+  // missed sample never breaks the audit response.
+  try {
+    history.insertSample('security.crit_count', summary.crit, now);
+    history.insertSample('security.warn_count', summary.warn, now);
+    history.insertSample('security.info_count', summary.info, now);
+  } catch (e) {
+    logger.warn(`audit: insertSample failed: ${e.message}`);
+  }
+
   return cache;
+}
+
+// Latest summary, used by the alert engine's snapshot path so a rule
+// like `security_crit > 0` can fire against the most recent audit
+// without re-running the full check sweep on every 10s tick. Returns
+// null until the first audit completes.
+function getLastSummary() {
+  return cache ? { ...cache.summary, ranAt: cache.ranAt } : null;
 }
 
 // ---------- Background auto-tick ----------
@@ -1183,6 +1209,7 @@ function stopAutoRun() {
 
 module.exports = {
   runAudit,
+  getLastSummary,
   setDispatcher,
   startAutoRun, stopAutoRun,
   ackFinding, unackFinding, listAcks,

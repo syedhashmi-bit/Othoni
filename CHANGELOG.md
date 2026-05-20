@@ -8,6 +8,99 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.59.0] — 2026-05-20
+
+Three follow-ups to the v0.58 security-audit pass plus a long-missing
+notification channel: **email/SMTP** as a webhook format,
+**snooze** as a short-TTL flavour of ack, and **audit-driven alert
+comparators** so the existing alert engine can fire on
+`security_crit > 0`.
+
+### Added
+
+- **Email/SMTP notification channel.** New `server/smtp.js` — a
+  ~250-LOC minimal SMTP client built on Node's built-in `net` and
+  `tls` modules (no nodemailer dependency added). Supports STARTTLS
+  on port 587, direct TLS on 465, AUTH PLAIN + AUTH LOGIN, single
+  MAIL FROM + RCPT TO + DATA. Configured via env:
+  - `OTHONI_SMTP_HOST` — required to enable.
+  - `OTHONI_SMTP_PORT` — defaults to 587.
+  - `OTHONI_SMTP_USER` / `OTHONI_SMTP_PASS` — submission auth.
+  - `OTHONI_SMTP_FROM` — required envelope sender.
+  - `OTHONI_SMTP_SECURE=true` — direct TLS instead of STARTTLS.
+  - `OTHONI_SMTP_INSECURE=true` — skip cert validation (escape hatch
+    for self-signed internal relays).
+  Webhook records gain a new `format: 'email'` with the URL field
+  holding either a bare `ops@example.com` or a `mailto:` URI;
+  `webhooks.fireOne()` now branches into either HTTP POST or
+  `smtp.sendMail()` based on format. Email delivery skips the
+  HTTP-style retry on `smtp_not_configured` and `invalid_recipient`
+  errors (no point retrying a config bug). `GET /api/webhooks`
+  surfaces an `smtp` block with the live SMTP status so the UI can
+  warn when an email destination exists but the env isn't set.
+- **Snooze** — a short-TTL flavour of the v0.58 ack. The route
+  accepts `ttlHours` in addition to the existing `ttlDays`, with an
+  explicit `snooze: true` flag stamped onto the stored record so
+  the UI distinguishes "this is a known-acceptable issue for the
+  next 30 days" from "shut up about this for the next hour while I
+  fix it". Quick-snooze chips (1h / 4h / 24h) appear next to the
+  Ack button on each finding card. Snoozed pills show
+  `Snoozed · Xh left`; unsnooze button replaces unack. The full
+  Ack dialog remains for accepted-risk suppressions.
+- **Audit-driven alert comparator.** Two new metric keys in the
+  alert engine's METRICS map: `security_crit` and `security_warn`,
+  with `extract: () => securityAudit.getLastSummary()?.crit ?? null`
+  (and the warn equivalent). The Alerts UI auto-discovers them from
+  `GET /api/alerts/metrics` so they appear in the rule-editor's
+  metric picker with no client changes. A rule like
+  "security_crit > 0 sustained 1m, severity crit" now fires
+  through the same webhook fan-out as any other alert. Each audit
+  run also writes `security.crit_count` / `security.warn_count` /
+  `security.info_count` samples into the existing `samples` table
+  so the History page can chart audit posture over time.
+- **`server/security-audit.js` exports `getLastSummary()`.** Returns
+  `{ crit, warn, info, ok, acked, total, ranAt }` from the in-memory
+  cache that the 10-min auto-tick refreshes. Returns null until the
+  first audit completes (evaluator treats null as "no data → no
+  fire").
+
+### Changed
+
+- **`webhooks.js`** — `VALID_FORMATS` includes `email`; URL
+  validation is now format-aware (mailto/bare-email for email,
+  http(s) for the existing trio); `sanitize()` surfaces the
+  recipient as `host` for email destinations so the table column
+  remains useful.
+- **`Alerts.jsx`** — `WebhooksCard` reads `smtp` from the list
+  response and conditionally renders either an "SMTP · host:port"
+  ok-chip in the card header or a "SMTP not configured" crit-chip
+  when at least one email destination exists. The add-webhook form
+  swaps URL placeholder and input type when format=email.
+- **`Security.jsx`** — `<SnoozeMenu>` component renders the
+  collapsed `Snooze ▾` button that expands to 1h/4h/24h chips. Ack
+  pill copy is conditional on `ackSnooze`.
+- **`history.js`** — `isValidMetric` recognizes
+  `security.{crit,warn,info}_count` as a valid internal metric
+  pattern.
+- **`api.js`** — `securityAck` accepts `{ ttlHours, snooze }` in
+  addition to `ttlDays`.
+
+### Notes
+
+- The new SMTP client lives at module scope — env vars are read at
+  import time, so changing them requires a service restart (same
+  pattern as `OTHONI_ACTIONS_ENABLED`).
+- Snooze and ack share the same on-disk store
+  (`data/audit-acks.json`); the only difference is the TTL and the
+  `snooze: true` flag. Expired snoozes auto-prune on the next read
+  just like long-TTL acks.
+- `security_crit` and `security_warn` use the same `gt`/`lt`
+  comparators as any other gauge — including the existing
+  `durationMs` sustain logic. A rule like
+  "security_crit > 0 sustained 0s" fires immediately when a new
+  crit finding lands; "sustained 10m" fires only when posture
+  stays bad through a full audit cycle.
+
 ## [0.58.0] — 2026-05-20
 
 Security audit expansion — the v0.54 read-only audit grows into a real

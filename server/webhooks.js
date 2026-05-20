@@ -11,13 +11,18 @@ const path = require('path');
 const crypto = require('crypto');
 const logger = require('./logger');
 const webhookHistory = require('./webhook-history');
+const smtp = require('./smtp');
 
 const DEFAULT_PATH = path.join(__dirname, '..', 'data', 'webhooks.json');
 const STORE_PATH = process.env.OTHONI_WEBHOOKS_PATH || DEFAULT_PATH;
 const TIMEOUT_MS = 8000;
 const RETRY_AFTER_MS = 1500; // single retry delay
 
-const VALID_FORMATS = ['generic', 'slack', 'discord'];
+// `email` ships in v0.59 alongside the existing HTTP-POST channels.
+// Destinations using `email` carry a `mailto:foo@bar.com` URL and
+// delivery goes through the minimal SMTP client in server/smtp.js
+// (configured via OTHONI_SMTP_* env vars).
+const VALID_FORMATS = ['generic', 'slack', 'discord', 'email'];
 
 // v0.42 host filter. Allowed characters: same DNS-style host alphabet
 // plus `*` for glob and `.` for compound names. Empty / unset = all
@@ -69,8 +74,13 @@ function persist() {
 
 function newId() { return crypto.randomBytes(6).toString('hex'); }
 
-function isValidUrl(s) {
+function isValidUrl(s, format) {
   if (typeof s !== 'string' || s.length > 2000) return false;
+  if (format === 'email') {
+    // Accept either a bare email address or a mailto: URI; both
+    // round-trip the same once parseMailto normalizes them.
+    return !!smtp.parseMailto(s);
+  }
   try {
     const u = new URL(s);
     return (u.protocol === 'https:' || u.protocol === 'http:') && !!u.hostname;
@@ -78,10 +88,16 @@ function isValidUrl(s) {
 }
 
 function sanitize(w, { withStrip = true, stripN = 12 } = {}) {
-  // Never return the URL through the API — it's the secret. Only the
-  // host portion is exposed so the user can recognize the destination.
+  // Never return the URL through the API — it's the secret. For
+  // HTTP-POST formats we expose only the host portion; for email,
+  // expose the recipient address so the user can recognize the
+  // destination (the secret is the SMTP password, not the To: line).
   let host = '';
-  try { host = new URL(w.url).hostname; } catch { /* ignore */ }
+  if (w.format === 'email') {
+    host = smtp.parseMailto(w.url) || '';
+  } else {
+    try { host = new URL(w.url).hostname; } catch { /* ignore */ }
+  }
   const base = {
     id: w.id,
     label: w.label,
@@ -105,12 +121,20 @@ function listWebhooks() {
   return cache.webhooks.map(sanitize);
 }
 
+function getSmtpStatus() {
+  return smtp.snapshot();
+}
+
 function createWebhook({ label, url, format, hostFilter }) {
   if (typeof label !== 'string' || !label.trim() || label.length > 80) {
     throw Object.assign(new Error('label must be 1–80 chars'), { code: 'invalid_label' });
   }
-  if (!isValidUrl(url)) {
-    throw Object.assign(new Error('url must be http:// or https://'), { code: 'invalid_url' });
+  const fmt = VALID_FORMATS.includes(format) ? format : 'generic';
+  if (!isValidUrl(url, fmt)) {
+    const msg = fmt === 'email'
+      ? 'url must be a valid email address (or mailto: URI)'
+      : 'url must be http:// or https://';
+    throw Object.assign(new Error(msg), { code: 'invalid_url' });
   }
   if (!isValidHostFilter(hostFilter)) {
     throw Object.assign(
@@ -118,7 +142,6 @@ function createWebhook({ label, url, format, hostFilter }) {
       { code: 'invalid_host_filter' }
     );
   }
-  const fmt = VALID_FORMATS.includes(format) ? format : 'generic';
   load();
   const w = {
     id: newId(),
@@ -186,6 +209,25 @@ function defaultText(event) {
 function formatPayload(format, event) {
   if (format === 'slack')   return { text: defaultText(event) };
   if (format === 'discord') return { content: defaultText(event) };
+  if (format === 'email') {
+    // The SMTP transport reads { subject, text } off this payload.
+    const r = event.rule;
+    const sev = (r.severity || 'warn').toUpperCase();
+    const subject = `[othoni ${sev}] ${r.label || r.metric}${r.host ? ` on ${r.host}` : ''}`;
+    const lines = [
+      defaultText(event),
+      '',
+      `Severity:  ${sev}`,
+      `Metric:    ${r.metric}${r.host ? ` (host=${r.host})` : ''}`,
+      `Value:     ${event.valueFmt}`,
+      `Threshold: ${event.thresholdFmt}`,
+      `Sustained: ${durationStr(event.sustainedFor)}`,
+      '',
+      `Time:      ${new Date().toISOString()}`,
+      `Source:    othoni @ ${require('os').hostname()}`,
+    ];
+    return { subject, text: lines.join('\n') };
+  }
   // generic — full payload, useful for custom integrations
   return {
     event: 'alert.fire',
@@ -233,14 +275,31 @@ async function postWithTimeout(url, body) {
   }
 }
 
-async function fireOne(w, event) {
+async function deliverOnce(w, event) {
   const body = formatPayload(w.format, event);
+  if (w.format === 'email') {
+    if (!smtp.isEnabled()) {
+      const e = new Error('SMTP not configured (set OTHONI_SMTP_HOST + OTHONI_SMTP_FROM)');
+      e.statusCode = null;
+      throw e;
+    }
+    const res = await smtp.sendMail({
+      to: w.url,
+      subject: body.subject,
+      text: body.text,
+    });
+    return { status: 250, durationMs: res.durationMs };
+  }
+  return postWithTimeout(w.url, body);
+}
+
+async function fireOne(w, event) {
   const eventLabel = (event && event.rule && (event.rule.label || event.rule.metric)) || null;
   let lastErr = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const startedAt = Date.now();
     try {
-      const result = await postWithTimeout(w.url, body);
+      const result = await deliverOnce(w, event);
       const durationMs = Date.now() - startedAt;
       webhookHistory.record({
         webhookId: w.id,
@@ -266,6 +325,9 @@ async function fireOne(w, event) {
         attempt,
         eventLabel,
       });
+      // Skip the retry for configuration errors — they won't get
+      // better on the second attempt and we'd just double-log.
+      if (e?.code === 'smtp_not_configured' || e?.code === 'invalid_recipient') break;
       if (attempt === 0) await new Promise((r) => setTimeout(r, RETRY_AFTER_MS));
     }
   }
@@ -312,6 +374,7 @@ function reset() { cache = null; }
 
 module.exports = {
   listWebhooks,
+  getSmtpStatus,
   createWebhook,
   updateWebhook,
   revokeWebhook,

@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const logger = require('./logger');
 const history = require('./history');
 const actions = require('./actions');
+const securityAudit = require('./security-audit');
 
 const { getCpu } = require('./collectors/cpu');
 const { getMemory } = require('./collectors/memory');
@@ -37,6 +38,12 @@ const METRICS = {
   net_tx:     { label: 'Network out (B/s)',   unit: 'B/s', extract: (s) => sumNonLoopback(s.network, 'txBytesPerSec'), format: rate, historyKey: 'net_tx' },
   disk_read:  { label: 'Disk read (B/s)',     unit: 'B/s', extract: (s) => s.diskio?.totalReadBytesPerSec ?? null,     format: rate, historyKey: 'disk.read' },
   disk_write: { label: 'Disk write (B/s)',    unit: 'B/s', extract: (s) => s.diskio?.totalWriteBytesPerSec ?? null,    format: rate, historyKey: 'disk.write' },
+  // v0.59 — audit-driven metrics. Powered by the in-memory cache that
+  // securityAudit.runAudit() refreshes every ~10 min (auto-tick) or
+  // sooner on manual re-run. Returns null until the first audit
+  // completes, which the evaluator treats as "no data → no fire".
+  security_crit: { label: 'Security crit findings',    unit: '', extract: () => securityAudit.getLastSummary()?.crit ?? null, format: num2, historyKey: 'security.crit_count' },
+  security_warn: { label: 'Security warn findings',    unit: '', extract: () => securityAudit.getLastSummary()?.warn ?? null, format: num2, historyKey: 'security.warn_count' },
 };
 
 // Rate-comparator support. The value compared against the threshold is

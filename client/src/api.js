@@ -119,9 +119,9 @@ export const api = {
   securityHistory: (range = '7d') =>
     request(`/api/security-audit/history?range=${encodeURIComponent(range)}`),
   securityAcks: () => request('/api/security-audit/acks'),
-  securityAck: ({ id, reason, ttlDays }) => request('/api/security-audit/ack', {
+  securityAck: ({ id, reason, ttlDays, ttlHours, snooze }) => request('/api/security-audit/ack', {
     method: 'POST',
-    body: JSON.stringify({ id, reason, ttlDays }),
+    body: JSON.stringify({ id, reason, ttlDays, ttlHours, snooze }),
   }),
   securityUnack: (id) => request(`/api/security-audit/ack/${encodeURIComponent(id)}`, {
     method: 'DELETE',

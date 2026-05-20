@@ -128,7 +128,46 @@ function RemediationButton({ finding, busy, onRemediate }) {
   );
 }
 
-function Finding({ f, isAdmin, onAck, onUnack, onRemediate, remediateBusy }) {
+function SnoozeMenu({ onPick }) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="btn ghost compact"
+        onClick={() => setOpen(true)}
+        style={{ fontSize: 11 }}
+        title="Suppress this finding for a few hours"
+      >
+        Snooze ▾
+      </button>
+    );
+  }
+  return (
+    <span style={{ display: 'inline-flex', gap: 4 }}>
+      {[
+        { h: 1,  label: '1h'  },
+        { h: 4,  label: '4h'  },
+        { h: 24, label: '24h' },
+      ].map((o) => (
+        <button
+          key={o.h}
+          type="button"
+          className="btn ghost compact"
+          onClick={() => { setOpen(false); onPick(o.h); }}
+          style={{ fontSize: 11, padding: '2px 8px' }}
+        >
+          {o.label}
+        </button>
+      ))}
+      <button type="button" className="btn ghost compact" onClick={() => setOpen(false)} style={{ fontSize: 11, padding: '2px 6px' }}>
+        ×
+      </button>
+    </span>
+  );
+}
+
+function Finding({ f, isAdmin, onAck, onUnack, onSnooze, onRemediate, remediateBusy }) {
   const accentBar = SEV_COLOR[f.severity] || 'var(--text-dim)';
   return (
     <div
@@ -147,7 +186,12 @@ function Finding({ f, isAdmin, onAck, onUnack, onRemediate, remediateBusy }) {
             <div style={{ fontWeight: 600, fontSize: 14 }}>{f.title}</div>
             {f.acked && (
               <span className="pill" style={{ fontSize: 10, background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
-                Acked{f.ackExpiresAt ? ` · ${daysFromNow(f.ackExpiresAt)}d left` : ''}
+                {f.ackSnooze ? 'Snoozed' : 'Acked'}
+                {f.ackExpiresAt && (
+                  f.ackSnooze
+                    ? ` · ${Math.max(1, Math.round((f.ackExpiresAt - Date.now()) / 3_600_000))}h left`
+                    : ` · ${daysFromNow(f.ackExpiresAt)}d left`
+                )}
               </span>
             )}
           </div>
@@ -188,12 +232,15 @@ function Finding({ f, isAdmin, onAck, onUnack, onRemediate, remediateBusy }) {
             {f.severity !== 'ok' && (
               f.acked ? (
                 <button type="button" className="btn ghost compact" onClick={() => onUnack(f)} style={{ fontSize: 11 }}>
-                  Unack
+                  {f.ackSnooze ? 'Unsnooze' : 'Unack'}
                 </button>
               ) : (
-                <button type="button" className="btn ghost compact" onClick={() => onAck(f)} style={{ fontSize: 11 }}>
-                  Ack
-                </button>
+                <span style={{ display: 'inline-flex', gap: 4 }}>
+                  <SnoozeMenu onPick={(hours) => onSnooze(f, hours)} />
+                  <button type="button" className="btn ghost compact" onClick={() => onAck(f)} style={{ fontSize: 11 }}>
+                    Ack
+                  </button>
+                </span>
               )
             )}
           </div>
@@ -345,6 +392,11 @@ export default function Security() {
   }
   function unack(f) {
     api.securityUnack(f.id)
+      .then(() => loadAudit({ force: true }))
+      .catch((e) => setErr(e.body?.message || e.message));
+  }
+  function snooze(f, hours) {
+    api.securityAck({ id: f.id, ttlHours: hours, snooze: true, reason: `Snoozed ${hours}h` })
       .then(() => loadAudit({ force: true }))
       .catch((e) => setErr(e.body?.message || e.message));
   }
@@ -514,6 +566,7 @@ export default function Security() {
               isAdmin={isAdmin}
               onAck={ack}
               onUnack={unack}
+              onSnooze={snooze}
               onRemediate={remediate}
               remediateBusy={remediateBusy}
             />

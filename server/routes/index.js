@@ -231,7 +231,10 @@ router.get('/alerts/history', (req, res) => {
 // ---------- webhooks ----------
 
 router.get('/webhooks', (req, res) => {
-  res.json({ webhooks: webhooks.listWebhooks() });
+  res.json({
+    webhooks: webhooks.listWebhooks(),
+    smtp: webhooks.getSmtpStatus(),
+  });
 });
 
 router.post('/webhooks', (req, res) => {
@@ -676,25 +679,31 @@ router.get('/security-audit/acks', (req, res) => {
   res.json({ acks: securityAudit.listAcks() });
 });
 
-// Acknowledge a finding (mark it as accepted). TTL in days, default 30.
+// Acknowledge a finding (mark it as accepted). TTL accepted either in
+// days (default 30, cap 365) or hours (1–48 = "snooze"). Pass `snooze:
+// true` for the short-TTL flavour so the UI can render it differently.
 router.post('/security-audit/ack', (req, res) => {
-  const { id, reason, ttlDays } = req.body || {};
+  const { id, reason, ttlDays, ttlHours, snooze } = req.body || {};
   if (typeof id !== 'string' || !id) {
     return res.status(400).json({ error: 'invalid_request', message: 'id required' });
   }
-  const ttlMs = (typeof ttlDays === 'number' && ttlDays > 0)
-    ? Math.min(365, ttlDays) * 24 * 3600_000
-    : undefined;
+  let ttlMs;
+  if (typeof ttlHours === 'number' && ttlHours > 0) {
+    ttlMs = Math.min(48, ttlHours) * 3600_000;
+  } else if (typeof ttlDays === 'number' && ttlDays > 0) {
+    ttlMs = Math.min(365, ttlDays) * 24 * 3600_000;
+  }
   try {
     const ack = securityAudit.ackFinding({
       id, reason, ttlMs,
+      snooze: !!snooze || (typeof ttlHours === 'number' && ttlHours > 0),
       actor: req.user?.username || null,
     });
     audit.log({
       ...audit.fromReq(req),
       action: 'audit.ack',
       target: id,
-      metadata: { reason: ack.reason, expiresAt: ack.expiresAt },
+      metadata: { reason: ack.reason, expiresAt: ack.expiresAt, snooze: ack.snooze },
     });
     res.json({ ok: true, ack });
   } catch (e) {
