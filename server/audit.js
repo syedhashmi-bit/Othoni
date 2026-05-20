@@ -43,6 +43,10 @@ const VALID_ACTIONS = new Set([
   'audit.ack',
   'audit.unack',
   'audit.run',
+  // Multi-user management (v0.60).
+  'user.create',
+  'user.update',
+  'user.delete',
   // Phase 2 session management (v0.38).
   'session.revoke',
   // Phase 3 host metadata (v0.43).

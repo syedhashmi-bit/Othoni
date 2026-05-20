@@ -8,6 +8,84 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.60.0] — 2026-05-20
+
+Multi-user accounts. The env-based `OTHONI_ADMIN_USER` slot remains the
+bootstrap admin (always present, can't be deleted from the UI) — on
+top of that, the admin can now create additional viewer (and admin)
+accounts through Settings → Users. Each operator gets their own
+credentials, so the existing audit log and session list attribute
+actions back to a specific person.
+
+### Added
+
+- **`server/users.js`** — stored-user CRUD layered on the env-based
+  admin/viewer. JSON-on-disk store at `data/users.json` (atomic
+  write, 0600 perms) keyed by random `u_<hex>` id. Passwords hashed
+  via the existing scrypt helper (`server/password-hash.js`) — no
+  new dependency. Username validator: lowercase alphanumeric +
+  `._-`, 2–32 chars. Password validator: 8–256 chars. Reserved-name
+  guard refuses any stored user that matches the env-based
+  `OTHONI_ADMIN_USER` / `OTHONI_VIEWER_USER` so a stored row can
+  never shadow an env account.
+- **`/api/users`** (admin-only, GET included):
+  - `GET /api/users` — list all stored users (never includes the
+    password hash, only `id`, `username`, `role`, `disabled`,
+    `createdAt`, `createdBy`, `lastLoginAt`, `passwordUpdatedAt`).
+  - `POST /api/users` — `{ username, password, role }`. Returns the
+    sanitized record. `username_taken` / `invalid_username` /
+    `invalid_password` / `invalid_role` validation errors are
+    400s.
+  - `PATCH /api/users/:id` — accepts `{ password }` (operator reset)
+    and/or `{ disabled }`. Disabling a user **revokes every active
+    session** belonging to them in the same request, so a disabled
+    operator can't keep using their cookie until natural expiry.
+  - `DELETE /api/users/:id` — deletes the row and revokes all the
+    user's active sessions. Returns `{ revokedSessions: N }` for
+    visibility.
+  - The router-level `requireAdmin` only blocks non-GET methods for
+    viewers; user-management endpoints add an explicit admin guard
+    so viewers can't list accounts at all.
+- **`server/auth.js`** login flow now checks stored users after the
+  env-based admin/viewer slots. Timing stays uniform — env checks
+  always run first regardless of whether a stored match exists.
+  Reserved-name guard at create time ensures the stored path can
+  never silently downgrade an env-admin login to viewer.
+- **`Settings.jsx` → `<UsersCard />`** (admin-only, returns null for
+  viewer sessions): table of stored users (username, role pill,
+  status pill, created, last login) + per-row Reset password /
+  Enable-Disable / Delete actions. Inline password-reset input
+  replaces the row's action cell while editing. Add-user form
+  collects username + password + role (viewer / admin) with
+  client-side length validation matching the server's.
+- **Audit log whitelist** gains `user.create`, `user.update`,
+  `user.delete`. Update metadata records which fields changed
+  (`password` / `disabled` / `enabled`) so the audit log shows
+  intent rather than just "something changed".
+
+### Changed
+
+- **`api.js`** gains a `users` namespace: `list`, `create`, `update`,
+  `remove` — same shape as the existing `webhooks` / `sessions`
+  helpers.
+- **README env reference** unchanged — the env-based
+  `OTHONI_ADMIN_USER` / `OTHONI_VIEWER_USER` continue to be the
+  authoritative bootstrap path. The new multi-user surface is
+  additive; no migration required for existing deployments.
+
+### Notes
+
+- Disabling vs deleting a user have the same session-revocation
+  effect, but disabling preserves the row so an operator can be
+  reinstated later without re-creating their record. Use delete
+  only when you want the user gone from the audit story too.
+- The new card sits between Sessions and API keys on the Settings
+  page — they're operationally adjacent (managing who has access
+  and who's currently in).
+- Viewers never see the Users card or hit `/api/users` (403). The
+  user list reveals account names and last-login times that a
+  read-only operator has no business knowing.
+
 ## [0.59.0] — 2026-05-20
 
 Three follow-ups to the v0.58 security-audit pass plus a long-missing

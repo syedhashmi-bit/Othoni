@@ -32,6 +32,7 @@ const retention = require('../retention');
 const vacuum = require('../vacuum');
 const projects = require('../projects');
 const securityAudit = require('../security-audit');
+const users = require('../users');
 
 const router = express.Router();
 
@@ -742,6 +743,111 @@ router.post('/projects/:name/control', async (req, res) => {
     logger.error('projects control failed:', e.message);
     res.status(500).json({ error: 'control_failed', message: e.message });
   }
+});
+
+// ---------- Multi-user management (v0.60) ----------
+//
+// Stored users layered on top of the env-based admin/viewer slots.
+// Every endpoint here is admin-only — viewer sessions get 403 even on
+// GETs, because the user list is sensitive (reveals account names + IPs
+// + last login times beyond what /api/sessions shows that viewer).
+
+function requireAdminExplicit(req, res, next) {
+  if (req.user && req.user.role === 'admin') return next();
+  return res.status(403).json({ error: 'forbidden', message: 'admin only' });
+}
+
+router.get('/users', requireAdminExplicit, (req, res) => {
+  res.json({ users: users.list() });
+});
+
+router.post('/users', requireAdminExplicit, (req, res) => {
+  const { username, password, role } = req.body || {};
+  try {
+    const created = users.createUser({
+      username, password, role: role || 'viewer',
+      createdBy: req.user?.username || null,
+    });
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'user.create',
+      target: created.id,
+      metadata: { username: created.username, role: created.role },
+    });
+    res.json({ user: created });
+  } catch (e) {
+    if (['invalid_username', 'invalid_password', 'invalid_role', 'username_taken'].includes(e.code)) {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    logger.error('users create failed:', e.message);
+    res.status(500).json({ error: 'users_failed', message: e.message });
+  }
+});
+
+router.patch('/users/:id', requireAdminExplicit, (req, res) => {
+  const { password, disabled } = req.body || {};
+  const id = req.params.id;
+  try {
+    let updated = null;
+    const changed = [];
+    if (typeof password === 'string') {
+      updated = users.updatePassword(id, password);
+      if (!updated) return res.status(404).json({ error: 'not_found' });
+      changed.push('password');
+    }
+    if (typeof disabled === 'boolean') {
+      updated = users.setDisabled(id, disabled);
+      if (!updated) return res.status(404).json({ error: 'not_found' });
+      changed.push(disabled ? 'disabled' : 'enabled');
+      // When disabling, revoke every active session for this user so
+      // they can't keep using a cookie until it expires naturally.
+      if (disabled && updated.username) {
+        for (const s of sessions.listAll()) {
+          if (s.actor === updated.username && s.revokedAt == null) {
+            sessions.revoke(s.sid, { revokedBy: req.user?.username || 'user-disable' });
+          }
+        }
+      }
+    }
+    if (!updated) return res.status(400).json({ error: 'invalid_request', message: 'no recognized fields to update' });
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'user.update',
+      target: id,
+      metadata: { username: updated.username, changed },
+    });
+    res.json({ user: updated });
+  } catch (e) {
+    if (['invalid_password'].includes(e.code)) {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    logger.error('users update failed:', e.message);
+    res.status(500).json({ error: 'users_failed', message: e.message });
+  }
+});
+
+router.delete('/users/:id', requireAdminExplicit, (req, res) => {
+  const id = req.params.id;
+  // Look the username up before deleting so we can revoke their
+  // sessions on the way out.
+  const before = users.list().find((u) => u.id === id);
+  if (!before) return res.status(404).json({ error: 'not_found' });
+  const ok = users.deleteUser(id);
+  if (!ok) return res.status(404).json({ error: 'not_found' });
+  // Revoke any active sessions belonging to the deleted user.
+  let revoked = 0;
+  for (const s of sessions.listAll()) {
+    if (s.actor === before.username && s.revokedAt == null) {
+      if (sessions.revoke(s.sid, { revokedBy: req.user?.username || 'user-delete' })) revoked++;
+    }
+  }
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'user.delete',
+    target: id,
+    metadata: { username: before.username, revokedSessions: revoked },
+  });
+  res.json({ ok: true, revokedSessions: revoked });
 });
 
 // Settings (server-side bits the UI may want to display)

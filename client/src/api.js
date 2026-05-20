@@ -139,6 +139,20 @@ export const api = {
     list:   () => request('/api/sessions'),
     revoke: (sid) => request(`/api/sessions/${encodeURIComponent(sid)}`, { method: 'DELETE' }),
   },
+  users: {
+    list:   () => request('/api/users'),
+    create: ({ username, password, role }) => request('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, role }),
+    }),
+    update: (id, patch) => request(`/api/users/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+    remove: (id) => request(`/api/users/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  },
   audit: ({ range = '24h', action = null, limit = 200 } = {}) => {
     const qs = new URLSearchParams({ range, limit: String(limit) });
     if (action) qs.set('action', action);

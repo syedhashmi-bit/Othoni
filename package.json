@@ -1,6 +1,6 @@
 {
   "name": "othoni",
-  "version": "0.59.0",
+  "version": "0.60.0",
   "private": true,
   "license": "MIT",
   "description": "Self-hosted VPS monitoring dashboard",
