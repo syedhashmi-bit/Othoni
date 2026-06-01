@@ -391,6 +391,13 @@ async function auditAuth() {
       id: 'fail2ban-active', severity: 'ok', category: 'Authentication',
       title: `fail2ban is running${jails ? ` with ${jails} jail(s)` : ''}`,
     });
+  } else if (fs.existsSync('/etc/debian_version')) {
+    findings.push({
+      id: 'fail2ban-missing', severity: 'warn', category: 'Authentication',
+      title: 'fail2ban is not installed or not running',
+      detail: 'fail2ban bans IPs after repeated failed SSH logins. Install + enable it to blunt brute-force attempts.',
+      remediation: { kind: 'security.remediate', target: 'fail2ban.install-and-enable' },
+    });
   }
 
   return findings;
@@ -809,6 +816,7 @@ async function auditAutoUpgrades() {
       category: 'Updates',
       title: 'unattended-upgrades is not configured',
       detail: 'Install with `sudo apt install unattended-upgrades` and run `sudo dpkg-reconfigure --priority=low unattended-upgrades`. Auto-applies security patches without manual intervention.',
+      remediation: { kind: 'security.remediate', target: 'unattended-upgrades.enable' },
     });
     return findings;
   }
@@ -836,6 +844,7 @@ async function auditAutoUpgrades() {
       title: 'unattended-upgrades is installed but disabled',
       detail: 'Set both `Update-Package-Lists` and `Unattended-Upgrade` to "1" in 20auto-upgrades.',
       evidence: `Update-Package-Lists "${upd || '?'}"; Unattended-Upgrade "${unatt || '?'}"`,
+      remediation: { kind: 'security.remediate', target: 'unattended-upgrades.enable' },
     });
   }
   return findings;

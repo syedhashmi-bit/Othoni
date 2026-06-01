@@ -2,12 +2,12 @@
 
 const { execFile } = require('child_process');
 
-function run(cmd, args, { timeout = 4000 } = {}) {
+function run(cmd, args, { timeout = 4000, env } = {}) {
   return new Promise((resolve) => {
     execFile(
       cmd,
       args,
-      { timeout, maxBuffer: 4 * 1024 * 1024, env: process.env },
+      { timeout, maxBuffer: 4 * 1024 * 1024, env: env ? { ...process.env, ...env } : process.env },
       (err, stdout, stderr) => {
         if (err) {
           resolve({

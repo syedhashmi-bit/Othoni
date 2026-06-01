@@ -8,6 +8,33 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.64.0] — 2026-06-01
+
+Two more one-click hardening fixes. The security audit can now install +
+enable **fail2ban** when it's missing, and turn on **unattended-upgrades**
+when it's absent or disabled — each apt-gated and Debian-only, so they
+refuse cleanly on non-apt systems.
+
+### Added
+
+- **`fail2ban.install-and-enable` target** for the `security.remediate`
+  action (`server/actions.js`). Installs `fail2ban` via `apt-get` (with
+  `DEBIAN_FRONTEND=noninteractive`) if absent, then `systemctl enable
+  --now fail2ban`. A new `fail2ban-missing` audit finding (Authentication,
+  warn, Debian-gated) carries the remediation descriptor.
+- **`unattended-upgrades.enable` target**. Installs the package if absent,
+  then writes `/etc/apt/apt.conf.d/20auto-upgrades` (atomic temp-file +
+  rename) with both `Update-Package-Lists` and `Unattended-Upgrade` set to
+  `"1"`. The existing `autoupgrades-missing` and `autoupgrades-off`
+  findings now carry the remediation descriptor.
+- **`env` override** on the exec helper (`server/collectors/exec.js`) so
+  apt commands can run with `DEBIAN_FRONTEND=noninteractive`.
+
+Both remediations refuse on non-Debian hosts and surface a stale-apt-list
+hint (`apt-get update`) when an install fails. Like every action they're
+gated by `OTHONI_ACTIONS_ENABLED`, and the generic Remediate button wires
+them up with no client change.
+
 ## [0.63.0] — 2026-06-01
 
 Firewall remediation. The security audit's "UFW installed but inactive"
@@ -3771,6 +3798,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.64.0]: #0640--2026-06-01
 [0.63.0]: #0630--2026-06-01
 [0.62.0]: #0620--2026-06-01
 [0.61.0]: #0610--2026-05-20

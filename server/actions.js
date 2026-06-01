@@ -605,17 +605,126 @@ async function runUfwEnable(startedAt) {
   };
 }
 
-// Every target the action accepts: the SSH drop-in set plus ufw.enable.
-const VALID_REMEDIATIONS = new Set([...Object.keys(SSH_REMEDIATIONS), 'ufw.enable']);
+// ---------- apt-based remediations (fail2ban, unattended-upgrades) ----------
+// Heavier than the config-only fixes: these install a package and enable a
+// service / write a config. apt-only — refuse on non-Debian rather than
+// guess another package manager. Each verifies the install before the
+// enable step and returns a structured per-step log. `apt-get install`
+// runs noninteractive so it never blocks on a debconf prompt.
+
+const APT_ENV = { DEBIAN_FRONTEND: 'noninteractive' };
+
+function isDebian() {
+  try { return fs.existsSync('/etc/debian_version'); } catch { return false; }
+}
+
+async function aptPackageInstalled(pkg) {
+  const r = await execRun('dpkg-query', ['-W', '-f=${Status}', pkg], { timeout: 5000 });
+  return r.ok && /install ok installed/.test(r.stdout || '');
+}
+
+async function aptInstall(pkg, log) {
+  const r = await execRun('apt-get', ['install', '-y', pkg], { timeout: 180_000, env: APT_ENV });
+  log.push(`apt-get install -y ${pkg} → ${r.ok ? 'ok' : 'FAILED'}`);
+  return r;
+}
+
+async function runFail2banInstallEnable(startedAt) {
+  if (!isDebian()) {
+    return {
+      ok: false, exitCode: 2, stdout: '',
+      stderr: 'refused: not a Debian/apt system (fail2ban.install-and-enable is apt-only)',
+      durationMs: Date.now() - startedAt,
+    };
+  }
+  const log = [];
+  if (!(await aptPackageInstalled('fail2ban'))) {
+    const inst = await aptInstall('fail2ban', log);
+    if (!inst.ok) {
+      return {
+        ok: false, exitCode: typeof inst.code === 'number' ? inst.code : 1,
+        stdout: log.join('\n'),
+        stderr: `install failed (apt list may be stale — try \`apt-get update\` first):\n${inst.stderr || ''}`,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+  } else {
+    log.push('fail2ban already installed');
+  }
+  // Enable + start now. Debian/Ubuntu ship a default sshd jail, so the
+  // service being up is enough for baseline brute-force protection.
+  const en = await execRun('systemctl', ['enable', '--now', 'fail2ban'], { timeout: 15_000 });
+  log.push(`systemctl enable --now fail2ban → ${en.ok ? 'ok' : 'failed'}`);
+  return {
+    ok: en.ok,
+    exitCode: en.ok ? 0 : (typeof en.code === 'number' ? en.code : 1),
+    stdout: log.join('\n'),
+    stderr: en.stderr || '',
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+const AUTO_UPGRADES_CONF = '/etc/apt/apt.conf.d/20auto-upgrades';
+const AUTO_UPGRADES_BODY =
+  'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n';
+
+async function runUnattendedUpgradesEnable(startedAt) {
+  if (!isDebian()) {
+    return {
+      ok: false, exitCode: 2, stdout: '',
+      stderr: 'refused: not a Debian/apt system (unattended-upgrades.enable is apt-only)',
+      durationMs: Date.now() - startedAt,
+    };
+  }
+  const log = [];
+  if (!(await aptPackageInstalled('unattended-upgrades'))) {
+    const inst = await aptInstall('unattended-upgrades', log);
+    if (!inst.ok) {
+      return {
+        ok: false, exitCode: typeof inst.code === 'number' ? inst.code : 1,
+        stdout: log.join('\n'),
+        stderr: `install failed (apt list may be stale — try \`apt-get update\` first):\n${inst.stderr || ''}`,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+  } else {
+    log.push('unattended-upgrades already installed');
+  }
+  // Write the standard enable knobs (both = "1"). Atomic tmp+rename.
+  try {
+    const tmp = `${AUTO_UPGRADES_CONF}.tmp`;
+    fs.writeFileSync(tmp, AUTO_UPGRADES_BODY, { mode: 0o644 });
+    fs.renameSync(tmp, AUTO_UPGRADES_CONF);
+    log.push(`wrote ${AUTO_UPGRADES_CONF} (Update-Package-Lists + Unattended-Upgrade = "1")`);
+  } catch (e) {
+    return {
+      ok: false, exitCode: 1, stdout: log.join('\n'),
+      stderr: `write ${AUTO_UPGRADES_CONF} failed: ${e.message}`,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+  return { ok: true, exitCode: 0, stdout: log.join('\n'), stderr: '', durationMs: Date.now() - startedAt };
+}
+
+// Every target the action accepts: the SSH drop-in set plus the
+// firewall / hardening installers.
+const VALID_REMEDIATIONS = new Set([
+  ...Object.keys(SSH_REMEDIATIONS),
+  'ufw.enable',
+  'fail2ban.install-and-enable',
+  'unattended-upgrades.enable',
+]);
 
 register('security.remediate', {
-  description: 'Apply a scoped security hardening fix: an SSH drop-in + reload, or enable the ufw firewall after allowing SSH.',
+  description: 'Apply a scoped security hardening fix: SSH drop-in + reload, enable ufw after allowing SSH, or install+enable fail2ban / unattended-upgrades.',
   auditName: 'action.security.remediate',
   requiresConfirmation: true,
   targetValidator: (t) => typeof t === 'string' && VALID_REMEDIATIONS.has(t),
   async run({ target }) {
     const startedAt = Date.now();
     if (target === 'ufw.enable') return runUfwEnable(startedAt);
+    if (target === 'fail2ban.install-and-enable') return runFail2banInstallEnable(startedAt);
+    if (target === 'unattended-upgrades.enable') return runUnattendedUpgradesEnable(startedAt);
     return runSshRemediation(target, startedAt);
   },
 });
