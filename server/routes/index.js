@@ -725,6 +725,26 @@ router.delete('/security-audit/ack/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// Remote-audit read surface. Hosts running the bundled agent with
+// OTHONI_AUDIT=1 push their findings to POST /api/security-audit/ingest
+// (Bearer auth, mounted before the cookie wall). These two endpoints let
+// the dashboard list those hosts and drill into one host's latest run.
+router.get('/security-audit/hosts', (req, res) => {
+  res.json(securityAudit.listHosts());
+});
+
+router.get('/security-audit/hosts/:host', (req, res) => {
+  try {
+    const result = securityAudit.getHostAudit(req.params.host);
+    if (!result) return res.status(404).json({ error: 'not_found' });
+    res.json(result);
+  } catch (e) {
+    if (e.code === 'invalid_host') return res.status(400).json({ error: e.code, message: e.message });
+    logger.error('security-audit host lookup failed:', e.message);
+    res.status(500).json({ error: 'lookup_failed', message: e.message });
+  }
+});
+
 // ---------- Projects (/var/www directories with matching systemd services) ----------
 
 router.get('/projects', wrap('projects', (req) => projects.getProjects({

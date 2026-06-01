@@ -13,6 +13,10 @@
 #   OTHONI_HOST     source label; defaults to short hostname, lowercased,
 #                   trimmed to match [a-z0-9-]{1,40}
 #   OTHONI_INTERVAL push cadence in seconds (default 30, min 5)
+#   OTHONI_AUDIT    set to 1 to also push a lightweight security audit
+#                   (SSH config, pending reboot, package updates, firewall)
+#                   to POST /api/security-audit/ingest. Off by default.
+#   OTHONI_AUDIT_INTERVAL  audit cadence in seconds (default 3600, min 300)
 #
 # Run once for a single tick (handy for cron):
 #   OTHONI_URL=... OTHONI_API_KEY=... ./agent.sh --once
@@ -20,6 +24,7 @@
 # Run as a long-lived service (use the bundled othoni-agent.service.example).
 #
 # Dependencies: /bin/sh, awk, curl, sleep, sed, tr, hostname (or /etc/hostname).
+# The optional audit also uses grep and (where present) apt-get / ufw.
 # No bashisms; tested under busybox and dash.
 
 set -eu
@@ -28,6 +33,9 @@ URL_BASE="${OTHONI_URL:-}"
 API_KEY="${OTHONI_API_KEY:-}"
 HOST_RAW="${OTHONI_HOST:-}"
 INTERVAL="${OTHONI_INTERVAL:-30}"
+AUDIT_ENABLED=0
+case "${OTHONI_AUDIT:-}" in 1|true|TRUE|yes|YES|on|ON) AUDIT_ENABLED=1 ;; esac
+AUDIT_INTERVAL="${OTHONI_AUDIT_INTERVAL:-3600}"
 ONCE=0
 
 if [ "${1:-}" = "--once" ] || [ "${1:-}" = "-1" ]; then
@@ -47,6 +55,13 @@ case "$INTERVAL" in
   ''|*[!0-9]*) echo "othoni-agent: OTHONI_INTERVAL must be a positive integer (got '$INTERVAL')" >&2; exit 1 ;;
 esac
 if [ "$INTERVAL" -lt 5 ]; then INTERVAL=5; fi
+
+if [ "$AUDIT_ENABLED" -eq 1 ]; then
+  case "$AUDIT_INTERVAL" in
+    ''|*[!0-9]*) echo "othoni-agent: OTHONI_AUDIT_INTERVAL must be a positive integer (got '$AUDIT_INTERVAL')" >&2; exit 1 ;;
+  esac
+  if [ "$AUDIT_INTERVAL" -lt 300 ]; then AUDIT_INTERVAL=300; fi
+fi
 
 # Host: prefer the explicit env var, else derive from hostname. Lowercase,
 # strip any DNS suffix after the first dot, keep only [a-z0-9-], and trim
@@ -80,6 +95,7 @@ if [ "$HLEN" -gt 40 ]; then
 fi
 
 URL="${URL_BASE%/}/api/metrics"
+AUDIT_URL="${URL_BASE%/}/api/security-audit/ingest"
 
 # /proc/stat cpu line → "total idle" where total = sum(user..steal) and
 # idle = idle + iowait. Diff between successive reads gives CPU %.
@@ -167,15 +183,126 @@ build_payload() {
   printf ']}'
 }
 
+# ---------- Optional security audit ----------
+#
+# A handful of read-only checks that mirror a subset of the server-side
+# audit. Each appends a finding to AUDIT_FINDINGS as a JSON object. Finding
+# ids are kept stable across runs so the server can diff them; titles are
+# fixed ASCII (no quotes/backslashes) so the hand-rolled JSON stays valid.
+
+AUDIT_FINDINGS=""
+add_finding() {
+  # $1=id  $2=severity  $3=category  $4=title
+  item=$(printf '{"id":"%s","severity":"%s","category":"%s","title":"%s"}' "$1" "$2" "$3" "$4")
+  if [ -z "$AUDIT_FINDINGS" ]; then
+    AUDIT_FINDINGS="$item"
+  else
+    AUDIT_FINDINGS="$AUDIT_FINDINGS,$item"
+  fi
+}
+
+# First uncommented value of an sshd_config directive (case-insensitive),
+# lowercased. Empty if unset/unreadable.
+ssh_directive() {
+  grep -iE "^[[:space:]]*$1[[:space:]]+" /etc/ssh/sshd_config 2>/dev/null \
+    | head -n 1 | awk '{ print tolower($2) }'
+}
+
+check_ssh() {
+  [ -r /etc/ssh/sshd_config ] || return 0
+  root=$(ssh_directive PermitRootLogin)
+  case "$root" in
+    yes) add_finding "ssh-root-yes" "crit" "SSH" "Root SSH login is enabled with full access" ;;
+    no) add_finding "ssh-root-no" "ok" "SSH" "Root SSH login is disabled" ;;
+    prohibit-password|without-password) add_finding "ssh-root-key" "ok" "SSH" "Root SSH login is key-only" ;;
+  esac
+  pass=$(ssh_directive PasswordAuthentication)
+  case "$pass" in
+    yes) add_finding "ssh-pass-auth" "warn" "SSH" "SSH password authentication is enabled" ;;
+    no) add_finding "ssh-pass-no" "ok" "SSH" "SSH password auth disabled (keys only)" ;;
+  esac
+  empty=$(ssh_directive PermitEmptyPasswords)
+  case "$empty" in
+    yes) add_finding "ssh-empty-pass" "crit" "SSH" "SSH accepts empty passwords" ;;
+  esac
+}
+
+check_reboot() {
+  if [ -f /run/reboot-required ] || [ -f /var/run/reboot-required ]; then
+    add_finding "reboot-required" "warn" "Updates" "Host requires a reboot to finish applying updates"
+  fi
+}
+
+check_updates() {
+  command -v apt-get >/dev/null 2>&1 || return 0
+  n=$(apt-get -s -o Debug::NoLocking=true upgrade 2>/dev/null | grep -c '^Inst ' || true)
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  if [ "$n" -gt 0 ]; then
+    add_finding "updates-available" "info" "Updates" "$n package update(s) available"
+  else
+    add_finding "updates-clean" "ok" "Updates" "No package updates available"
+  fi
+}
+
+check_firewall() {
+  command -v ufw >/dev/null 2>&1 || return 0
+  command -v id  >/dev/null 2>&1 && [ "$(id -u)" = "0" ] || return 0
+  st=$(ufw status 2>/dev/null | head -n 1)
+  case "$st" in
+    *active) add_finding "fw-ufw-active" "ok" "Firewall" "UFW firewall is active" ;;
+    *inactive) add_finding "fw-ufw-inactive" "crit" "Firewall" "UFW is installed but inactive" ;;
+  esac
+}
+
+collect_audit() {
+  AUDIT_FINDINGS=""
+  check_ssh
+  check_reboot
+  check_updates
+  check_firewall
+}
+
+push_audit() {
+  collect_audit
+  payload=$(printf '{"host":"%s","findings":[%s]}' "$HOST" "$AUDIT_FINDINGS")
+  err=$(printf '%s' "$payload" \
+    | curl -sS --max-time 15 \
+        -X POST "$AUDIT_URL" \
+        -H "Authorization: Bearer $API_KEY" \
+        -H "Content-Type: application/json" \
+        --data-binary @- 2>&1 >/dev/null) || {
+    echo "othoni-agent: audit push failed: $err" >&2
+    return 1
+  }
+}
+
 # Deltas across one tick. Keep previous values in shell vars so the steady
 # state needs just one /proc read per cadence.
 prev_cpu=$(read_cpu)
 prev_net=$(read_net)
+LAST_AUDIT=0
 
 trap 'echo "othoni-agent: stopping" >&2; exit 0' INT TERM
 
+# Push an audit immediately on startup (and for --once) so a host shows up
+# on the dashboard without waiting a full audit cycle. Failures are
+# non-fatal — metrics keep flowing regardless.
+if [ "$AUDIT_ENABLED" -eq 1 ]; then
+  push_audit || true
+  LAST_AUDIT=$(date +%s 2>/dev/null || echo 0)
+fi
+
 while :; do
   sleep "$INTERVAL"
+
+  # Re-push the audit on its own (slower) cadence, independent of metrics.
+  if [ "$AUDIT_ENABLED" -eq 1 ] && [ "$ONCE" -eq 0 ]; then
+    now_s=$(date +%s 2>/dev/null || echo 0)
+    if [ "$((now_s - LAST_AUDIT))" -ge "$AUDIT_INTERVAL" ]; then
+      push_audit || true
+      LAST_AUDIT=$now_s
+    fi
+  fi
 
   cur_cpu=$(read_cpu)
   cur_net=$(read_net)

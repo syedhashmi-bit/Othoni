@@ -362,6 +362,127 @@ function HistoryCard({ history, range, onRangeChange }) {
   );
 }
 
+function CountChip({ n, label, color }) {
+  if (!n) return null;
+  return (
+    <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center', fontSize: 11.5 }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
+      <strong>{n}</strong>
+      <span className="muted">{label}</span>
+    </span>
+  );
+}
+
+// Remote hosts that push their own audit via the bundled agent
+// (OTHONI_AUDIT=1 → POST /api/security-audit/ingest). Display-only: acks
+// and remediation operate on the local box, not pushed findings.
+function RemoteHostsCard() {
+  const [hosts, setHosts] = useState(null);
+  const [err, setErr] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [detail, setDetail] = useState({});
+
+  function load() {
+    api.securityHosts()
+      .then((r) => { setHosts(r.hosts || []); setErr(null); })
+      .catch((e) => setErr(e.body?.message || e.message));
+  }
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  function toggle(host) {
+    if (expanded === host) { setExpanded(null); return; }
+    setExpanded(host);
+    if (!detail[host]) {
+      api.securityHostAudit(host)
+        .then((r) => setDetail((d) => ({ ...d, [host]: r })))
+        .catch(() => { /* non-fatal */ });
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div className="section-title">
+        Remote hosts
+        {hosts && hosts.length > 0 && (
+          <span className="dim" style={{ fontSize: 11 }}>
+            {hosts.length} host{hosts.length === 1 ? '' : 's'} reporting
+          </span>
+        )}
+      </div>
+      {err && <div className="error">{err}</div>}
+      {hosts !== null && hosts.length === 0 && (
+        <div className="card" style={{ padding: 14, fontSize: 12.5 }} >
+          <span className="muted">
+            No remote hosts yet. Run the bundled <span className="mono">agent.sh</span> with{' '}
+            <span className="mono">OTHONI_AUDIT=1</span> on another machine to push its security
+            findings here.
+          </span>
+        </div>
+      )}
+      {(hosts || []).map((h) => {
+        const score = h.summary.crit > 0 ? 'crit' : h.summary.warn > 0 ? 'warn' : 'ok';
+        const accent = score === 'crit' ? 'var(--crit)' : score === 'warn' ? 'var(--warn)' : 'var(--ok)';
+        const d = detail[h.host];
+        const open = expanded === h.host;
+        return (
+          <div
+            key={h.host}
+            className="card"
+            style={{ padding: 0, marginBottom: 8, borderLeft: `3px solid ${accent}`, overflow: 'hidden' }}
+          >
+            <button
+              type="button"
+              onClick={() => toggle(h.host)}
+              style={{
+                width: '100%', textAlign: 'left', background: 'none', border: 'none',
+                cursor: 'pointer', padding: '12px 16px', color: 'inherit',
+                display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+              }}
+            >
+              <span style={{ fontWeight: 600, fontSize: 14 }} className="mono">{h.host}</span>
+              <span style={{ display: 'inline-flex', gap: 14, alignItems: 'center' }}>
+                <CountChip n={h.summary.crit} label="crit" color="var(--crit)" />
+                <CountChip n={h.summary.warn} label="warn" color="var(--warn)" />
+                <CountChip n={h.summary.info} label="info" color="var(--text-dim)" />
+                {h.summary.crit === 0 && h.summary.warn === 0 && (
+                  <span className="pill ok" style={{ fontSize: 10 }}>Clean</span>
+                )}
+              </span>
+              <span className="muted" style={{ fontSize: 11, marginLeft: 'auto' }}>
+                {relativeTime(h.lastRunAt)} · {open ? '▾' : '▸'}
+              </span>
+            </button>
+            {open && (
+              <div style={{ borderTop: '1px solid var(--border)', padding: '10px 16px' }}>
+                {!d && <div className="muted" style={{ fontSize: 12 }}>Loading…</div>}
+                {d && d.findings.length === 0 && (
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    Every reported check passed — no open findings.
+                  </div>
+                )}
+                {d && d.findings.map((f) => (
+                  <div
+                    key={f.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', fontSize: 13 }}
+                  >
+                    <SeverityChip severity={f.severity} />
+                    <span>{f.title}</span>
+                    <span className="dim" style={{ fontSize: 11, marginLeft: 'auto' }}>{f.category}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Security() {
   const { user } = useApp();
   const isAdmin = user?.role === 'admin';
@@ -603,6 +724,8 @@ export default function Security() {
           ))}
         </div>
       ))}
+
+      <RemoteHostsCard />
 
       <AckDialog
         finding={ackTarget}

@@ -880,22 +880,47 @@ function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_audit_findings_t        ON audit_findings(t);
     CREATE INDEX IF NOT EXISTS idx_audit_findings_finding_t ON audit_findings(finding_id, t);
   `);
+  // v0.66 — per-host remote audit. The local box's runs are stored with
+  // host = NULL; an agent-pushed run carries its DNS-style host label.
+  // Add the column in place so existing single-host history survives the
+  // upgrade (all old rows read back as host = NULL = "this box").
+  addHostColumn(db, 'audit_runs');
+  addHostColumn(db, 'audit_findings');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_audit_runs_host_t     ON audit_runs(host, t);
+    CREATE INDEX IF NOT EXISTS idx_audit_findings_host_t ON audit_findings(host, t);
+  `);
   schemaReady = true;
 }
 
-function recordRun(now, durationMs, summary, findings, diff) {
+function addHostColumn(db, table) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === 'host')) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN host TEXT`);
+  }
+}
+
+// Same DNS-style label the metrics ingest path enforces, kept in sync by
+// hand (both are deliberately conservative — a host label becomes part of
+// a primary lookup key, never interpolated into SQL or a shell).
+const HOST_PATTERN = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$|^[a-z0-9]$/;
+function isValidHost(s) {
+  return typeof s === 'string' && s.length >= 1 && s.length <= 40 && HOST_PATTERN.test(s);
+}
+
+function recordRun(now, durationMs, summary, findings, diff, host = null) {
   ensureSchema();
   const db = history.getDb();
   const ins = db.prepare(
-    `INSERT INTO audit_runs (t, duration_ms, total, crit, warn, info, ok, added, fixed, escalated)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO audit_runs (t, host, duration_ms, total, crit, warn, info, ok, added, fixed, escalated)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const finsStmt = db.prepare(
-    `INSERT INTO audit_findings (t, finding_id, category, severity, title) VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO audit_findings (t, host, finding_id, category, severity, title) VALUES (?, ?, ?, ?, ?, ?)`
   );
   const tx = db.transaction(() => {
     ins.run(
-      now, durationMs,
+      now, host, durationMs,
       summary.total, summary.crit, summary.warn, summary.info, summary.ok,
       diff.added.length, diff.fixed.length, diff.escalated.length
     );
@@ -903,24 +928,29 @@ function recordRun(now, durationMs, summary, findings, diff) {
     // and we don't diff against them.
     for (const f of findings) {
       if (f.severity === 'ok') continue;
-      finsStmt.run(now, f.id, f.category || null, f.severity, f.title || '');
+      finsStmt.run(now, host, f.id, f.category || null, f.severity, f.title || '');
     }
   });
   tx();
 }
 
-function loadPreviousRun() {
+// `host = null` ⇒ this box's local audit; a string ⇒ a specific remote
+// agent. Scoping by host keeps each source's diff chain independent — a
+// remote run must never become the "previous" for the local audit.
+function loadPreviousRun(host = null) {
   ensureSchema();
   const db = history.getDb();
-  const runRow = db.prepare('SELECT t FROM audit_runs ORDER BY t DESC LIMIT 1').get();
+  const runRow = host == null
+    ? db.prepare('SELECT t FROM audit_runs WHERE host IS NULL ORDER BY t DESC LIMIT 1').get()
+    : db.prepare('SELECT t FROM audit_runs WHERE host = ? ORDER BY t DESC LIMIT 1').get(host);
   if (!runRow) return null;
-  const rows = db.prepare(
-    'SELECT finding_id AS id, category, severity, title FROM audit_findings WHERE t = ?'
-  ).all(runRow.t);
+  const rows = host == null
+    ? db.prepare('SELECT finding_id AS id, category, severity, title FROM audit_findings WHERE t = ? AND host IS NULL').all(runRow.t)
+    : db.prepare('SELECT finding_id AS id, category, severity, title FROM audit_findings WHERE t = ? AND host = ?').all(runRow.t, host);
   return { t: runRow.t, findings: rows };
 }
 
-function listHistory({ range = '7d' } = {}) {
+function listHistory({ range = '7d', host = null } = {}) {
   ensureSchema();
   const SPAN = {
     '24h': 24 * 3600_000,
@@ -929,15 +959,140 @@ function listHistory({ range = '7d' } = {}) {
   };
   const span = SPAN[range] || SPAN['7d'];
   const from = Date.now() - span;
-  const rows = history.getDb()
-    .prepare(
-      `SELECT t, duration_ms AS durationMs, total, crit, warn, info, ok, added, fixed, escalated
-         FROM audit_runs
-        WHERE t >= ?
-        ORDER BY t ASC`
-    )
-    .all(from);
-  return { range, from, to: Date.now(), runs: rows };
+  const db = history.getDb();
+  const rows = host == null
+    ? db.prepare(
+        `SELECT t, duration_ms AS durationMs, total, crit, warn, info, ok, added, fixed, escalated
+           FROM audit_runs WHERE t >= ? AND host IS NULL ORDER BY t ASC`
+      ).all(from)
+    : db.prepare(
+        `SELECT t, duration_ms AS durationMs, total, crit, warn, info, ok, added, fixed, escalated
+           FROM audit_runs WHERE t >= ? AND host = ? ORDER BY t ASC`
+      ).all(from, host);
+  return { range, host: host || null, from, to: Date.now(), runs: rows };
+}
+
+// ---------- Remote (agent-pushed) audits ----------
+//
+// A remote agent runs its own lightweight checks and POSTs the resulting
+// findings to /api/security-audit/ingest. We don't re-run anything here —
+// we validate + sanitize the pushed findings, compute the summary, diff
+// against that host's previous push, and persist it through the same
+// recordRun path keyed by host. Remote findings are display-only on the
+// dashboard (no ack / remediate — those operate on the local box).
+
+const REMOTE_MAX_FINDINGS = 250;
+const REMOTE_ALLOWED_SEV = new Set(['crit', 'warn', 'info', 'ok']);
+
+function sanitizeRemoteFindings(raw) {
+  if (!Array.isArray(raw)) {
+    throw Object.assign(new Error('findings must be an array'), { code: 'invalid_request' });
+  }
+  if (raw.length > REMOTE_MAX_FINDINGS) {
+    throw Object.assign(new Error(`too many findings (max ${REMOTE_MAX_FINDINGS})`), { code: 'invalid_request' });
+  }
+  const out = [];
+  const seenIds = new Set();
+  for (const f of raw) {
+    if (!f || typeof f !== 'object') continue;
+    const severity = String(f.severity || '').toLowerCase();
+    if (!REMOTE_ALLOWED_SEV.has(severity)) continue;
+    let id = typeof f.id === 'string' ? f.id.trim().slice(0, 120) : '';
+    if (!id) continue;
+    if (seenIds.has(id)) continue;           // de-dupe within one push
+    seenIds.add(id);
+    out.push({
+      id,
+      severity,
+      category: typeof f.category === 'string' ? f.category.trim().slice(0, 60) || 'General' : 'General',
+      title: typeof f.title === 'string' ? f.title.trim().slice(0, 200) : id,
+      detail: typeof f.detail === 'string' ? f.detail.trim().slice(0, 500) : null,
+      evidence: typeof f.evidence === 'string' ? f.evidence.trim().slice(0, 500) : null,
+    });
+  }
+  return out;
+}
+
+function recordRemoteRun(host, rawFindings, { durationMs = null, source = 'agent' } = {}) {
+  if (!isValidHost(host)) {
+    throw Object.assign(new Error('host must match [a-z0-9-]{1,40} (DNS-style label)'), { code: 'invalid_host' });
+  }
+  const findings = sanitizeRemoteFindings(rawFindings);
+  const now = Date.now();
+
+  const summary = {
+    crit: findings.filter((f) => f.severity === 'crit').length,
+    warn: findings.filter((f) => f.severity === 'warn').length,
+    info: findings.filter((f) => f.severity === 'info').length,
+    ok:   findings.filter((f) => f.severity === 'ok').length,
+    acked: 0,
+    total: findings.length,
+  };
+
+  const prev = loadPreviousRun(host);
+  const diff = diffAgainstPrev(findings, prev);
+
+  recordRun(now, typeof durationMs === 'number' ? durationMs : null, summary, findings, diff, host);
+
+  // Dispatch newly-added / escalated crits, attributed to the host, on
+  // diff edges only (same fire-once-per-edge contract as the local audit).
+  if (prev) {
+    const addedIds = new Set(diff.added.map((d) => d.id));
+    const escalatedIds = new Set(diff.escalated.map((d) => d.id));
+    for (const f of findings) {
+      if (f.severity !== 'crit') continue;
+      if (addedIds.has(f.id) || escalatedIds.has(f.id)) dispatchSecurityEvent(f, host);
+    }
+  }
+
+  logger.info(`audit: remote run from "${host}" via ${source} — ${summary.crit} crit, ${summary.warn} warn, ${summary.total} total`);
+  return { host, ranAt: now, source, summary, diff };
+}
+
+// All remote hosts with their latest pushed run, worst-first. The local
+// box (host IS NULL) is intentionally excluded — it has its own page.
+function listHosts() {
+  ensureSchema();
+  const db = history.getDb();
+  const rows = db.prepare(
+    `SELECT r.host, r.t, r.duration_ms AS durationMs,
+            r.total, r.crit, r.warn, r.info, r.ok
+       FROM audit_runs r
+       JOIN (SELECT host, MAX(t) AS mt FROM audit_runs WHERE host IS NOT NULL GROUP BY host) m
+         ON r.host = m.host AND r.t = m.mt
+      ORDER BY r.crit DESC, r.warn DESC, r.host ASC`
+  ).all();
+  return {
+    hosts: rows.map((r) => ({
+      host: r.host,
+      lastRunAt: r.t,
+      durationMs: r.durationMs,
+      summary: { crit: r.crit, warn: r.warn, info: r.info, ok: r.ok, total: r.total },
+    })),
+  };
+}
+
+// Latest pushed run for one host: its summary + the persisted (non-ok)
+// findings, sorted worst-first to match the local page's ordering.
+function getHostAudit(host) {
+  ensureSchema();
+  if (!isValidHost(host)) {
+    throw Object.assign(new Error('invalid host'), { code: 'invalid_host' });
+  }
+  const db = history.getDb();
+  const runRow = db.prepare('SELECT * FROM audit_runs WHERE host = ? ORDER BY t DESC LIMIT 1').get(host);
+  if (!runRow) return null;
+  const findings = db.prepare(
+    'SELECT finding_id AS id, category, severity, title FROM audit_findings WHERE host = ? AND t = ?'
+  ).all(host, runRow.t).sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
+  return {
+    host,
+    ranAt: runRow.t,
+    durationMs: runRow.duration_ms,
+    summary: { crit: runRow.crit, warn: runRow.warn, info: runRow.info, ok: runRow.ok, total: runRow.total },
+    findings,
+    diff: { added: runRow.added, fixed: runRow.fixed, escalated: runRow.escalated },
+  };
 }
 
 // ---------- Acks ----------
@@ -1055,18 +1210,18 @@ function setDispatcher(fn) { dispatcher = fn; }
 // Build a webhook-compatible "fire event" so existing destinations
 // (slack/discord/generic) render reasonable text without needing a new
 // payload shape on the consumer side.
-function dispatchSecurityEvent(f) {
+function dispatchSecurityEvent(f, host = null) {
   if (typeof dispatcher !== 'function') return;
   try {
     dispatcher({
       rule: {
-        id: `audit:${f.id}`,
-        label: `Security audit · ${f.title}`,
+        id: `audit:${host ? `${host}:` : ''}${f.id}`,
+        label: `Security audit${host ? ` · ${host}` : ''} · ${f.title}`,
         metric: 'security',
         comparator: 'gt',
         threshold: 0,
         severity: f.severity,
-        host: null,
+        host: host || null,
       },
       value: 1,
       valueFmt: f.severity.toUpperCase(),
@@ -1225,4 +1380,5 @@ module.exports = {
   ackFinding, unackFinding, listAcks,
   listHistory,
   ensureSchema,
+  recordRemoteRun, listHosts, getHostAudit,
 };

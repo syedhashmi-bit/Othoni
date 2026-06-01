@@ -16,6 +16,7 @@ const loginLockout = require('./login-lockout');
 const { loginLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
+const remoteAuditRouter = require('./routes/remote-audit');
 const promExport = require('./prom-export');
 const exportEndpoint = require('./export');
 const history = require('./history');
@@ -97,6 +98,12 @@ app.get('/api/auth/me', auth, me);
 // must be mounted before the `app.use('/api', auth, ...)` wall below or it
 // will inherit cookie auth and the headless-agent flow won't work.
 app.use('/api/metrics', metricsRouter);
+
+// Remote security-audit ingestion. Same Bearer-token (API key) auth as
+// /api/metrics — mounted before the cookie wall so headless agents can
+// push findings. Only claims `/ingest`; the dashboard's read endpoints
+// (/api/security-audit/hosts*) fall through to the cookie-walled router.
+app.use('/api/security-audit', remoteAuditRouter);
 
 // Optional Prometheus exporter at /metrics. Off unless OTHONI_PROMETHEUS_TOKEN
 // is set; uses its own Bearer-token check (separate from the dashboard

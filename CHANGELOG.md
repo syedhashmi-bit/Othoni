@@ -8,6 +8,43 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.66.0] — 2026-06-01
+
+Per-host remote security audit. The bundled agent can now push its own
+audit findings into the dashboard, so the Security page covers your whole
+fleet instead of just the box othoni runs on. The `audit_runs` /
+`audit_findings` tables gained a `host` column; the local box's runs stay
+keyed `host = NULL` and every existing row reads back unchanged.
+
+### Added
+
+- **Remote audit ingestion** (`server/routes/remote-audit.js`,
+  `server/security-audit.js`). `POST /api/security-audit/ingest` accepts a
+  `{ host, findings: [...] }` push under the same Bearer/API-key auth as
+  `/api/metrics` (mounted before the cookie wall, 600 req/min/key). The
+  server validates the DNS-style host label, sanitizes and caps findings
+  (250 max, severity enum, length clamps, de-dupe), computes the summary,
+  diffs against that host's previous push, and persists it keyed by host.
+  New crit findings dispatch to webhooks attributed to the host.
+- **Per-host read API** — `GET /api/security-audit/hosts` (all reporting
+  hosts with their latest summary, worst-first) and
+  `GET /api/security-audit/hosts/:host` (one host's latest run + findings).
+- **Agent audit push** (`agent.sh`). Opt-in via `OTHONI_AUDIT=1`: a handful
+  of read-only POSIX checks (SSH root/password/empty-password login,
+  pending reboot, apt updates, ufw state) pushed on startup and then every
+  `OTHONI_AUDIT_INTERVAL` seconds (default 3600, min 300). Metrics keep
+  flowing independently; audit-push failures are non-fatal.
+- **"Remote hosts" section on the Security page** (`client/.../Security.jsx`).
+  Per-host severity chips, last-seen, and expand-to-findings. Display-only —
+  ack and remediation still operate on the local box.
+
+### Changed
+
+- **Audit persistence is now host-scoped** (`server/security-audit.js`).
+  `audit_runs` / `audit_findings` gained a `host` column via an in-place
+  migration; the local audit's diff/history queries filter `host IS NULL`
+  so a remote push can never become the "previous" run for the local box.
+
 ## [0.65.0] — 2026-06-01
 
 Security-hardening pass from a full-repo audit. No new features — these
@@ -3843,6 +3880,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.66.0]: #0660--2026-06-01
 [0.65.0]: #0650--2026-06-01
 [0.64.0]: #0640--2026-06-01
 [0.63.0]: #0630--2026-06-01

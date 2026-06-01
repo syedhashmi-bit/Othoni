@@ -254,6 +254,9 @@ authenticated session.
 | GET    | `/api/history/metrics` | Distinct metric names in the store (`?prefix=`) |
 | GET    | `/api/history/processes` | Heaviest processes in a range, with sparklines |
 | POST   | `/api/metrics`      | **API key auth.** Push `custom.<name>` metrics |
+| POST   | `/api/security-audit/ingest` | **API key auth.** Push a remote host's `{ host, findings }` audit |
+| GET    | `/api/security-audit/hosts`  | Remote hosts reporting audits, with latest summary |
+| GET    | `/api/security-audit/hosts/:host` | One remote host's latest run + findings |
 | GET    | `/api/processes`    | Top processes (`?sortBy=cpu      memory&limit=20`) |
 | GET    | `/api/docker`       | Container list, or "not installed"|
 | GET    | `/api/services`     | systemd unit status               |
@@ -376,6 +379,15 @@ The agent pushes `custom.cpu`, `custom.mem`, `custom.load1`,
 v0.23.0 host attribution, they land in the central store as
 `custom.<host>.cpu` etc., and show up grouped by host on the
 History page's Custom section.
+
+Set `OTHONI_AUDIT=1` to also push a lightweight security audit (SSH
+root/password/empty-password login, pending reboot, apt updates, ufw
+state) to `POST /api/security-audit/ingest` on startup and then every
+`OTHONI_AUDIT_INTERVAL` seconds (default 3600, min 300). Each host then
+appears in the **Remote hosts** section of the Security page, with its
+findings diffed against the previous push and new crits dispatched to
+your webhooks. The checks are read-only; some (ufw) need root, the rest
+work as any user.
 
 ## Security notes
 

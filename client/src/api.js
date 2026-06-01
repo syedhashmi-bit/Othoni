@@ -126,6 +126,9 @@ export const api = {
   securityUnack: (id) => request(`/api/security-audit/ack/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   }),
+  securityHosts: () => request('/api/security-audit/hosts'),
+  securityHostAudit: (host) =>
+    request(`/api/security-audit/hosts/${encodeURIComponent(host)}`),
   projects: {
     list: (force) => request(`/api/projects${force ? '?force=1' : ''}`),
     control: (name, action) => request(`/api/projects/${encodeURIComponent(name)}/control`, {
