@@ -86,11 +86,25 @@ const COMPARATOR_OPTIONS = [
 function isRateComparator(c) { return c === 'rate_gt' || c === 'rate_lt'; }
 
 const FORMATS = [
-  { value: 'generic', label: 'Generic JSON' },
-  { value: 'slack',   label: 'Slack' },
-  { value: 'discord', label: 'Discord' },
-  { value: 'email',   label: 'Email (SMTP)' },
+  { value: 'generic',   label: 'Generic JSON' },
+  { value: 'slack',     label: 'Slack' },
+  { value: 'discord',   label: 'Discord' },
+  { value: 'teams',     label: 'Microsoft Teams' },
+  { value: 'email',     label: 'Email (SMTP)' },
+  { value: 'pagerduty', label: 'PagerDuty' },
+  { value: 'opsgenie',  label: 'Opsgenie' },
 ];
+
+// Per-format placeholder + tooltip for the destination "url" input. For
+// pagerduty/opsgenie the field holds a routing/API key, not a URL.
+const URL_HINT = {
+  email:     { placeholder: 'ops@example.com (or mailto:…)', title: 'Recipient email address (or mailto: URI). Delivery uses SMTP (OTHONI_SMTP_*).', type: 'text' },
+  pagerduty: { placeholder: 'PagerDuty integration (routing) key — 32 chars', title: 'Events API v2 integration key from a PagerDuty service. Posts to events.pagerduty.com (override region with OTHONI_PAGERDUTY_URL).', type: 'text' },
+  opsgenie:  { placeholder: 'Opsgenie API key (GenieKey)', title: 'API integration key from Opsgenie. Posts to api.opsgenie.com (set OTHONI_OPSGENIE_URL for the EU region).', type: 'text' },
+  teams:     { placeholder: 'https://<tenant>.webhook.office.com/...', title: 'Microsoft Teams incoming-webhook URL. Posts an Office 365 MessageCard.', type: 'url' },
+  _default:  { placeholder: 'https://hooks.slack.com/services/...', title: 'HTTP(S) endpoint that accepts a JSON POST.', type: 'url' },
+};
+function urlHint(format) { return URL_HINT[format] || URL_HINT._default; }
 
 function newClientId() { return Math.random().toString(36).slice(2, 10); }
 
@@ -729,9 +743,10 @@ function WebhooksCard() {
           <div className="card-title">Webhooks</div>
           <div className="card-sub" style={{ fontSize: 12 }}>
             Fired by the server when an alert transitions to firing — works
-            even when no browser is open. Slack and Discord both accept the
-            same JSON POST shape via incoming-webhook URLs. Email uses
-            SMTP submission (OTHONI_SMTP_*).
+            even when no browser is open. Slack, Discord, and Teams accept a
+            JSON POST via incoming-webhook URLs; PagerDuty and Opsgenie post
+            to their incident APIs (paste the integration/API key); Email
+            uses SMTP submission (OTHONI_SMTP_*).
             {smtp && smtp.enabled && (
               <span className="pill ok" style={{ fontSize: 10, marginLeft: 8 }}>
                 SMTP · {smtp.host}:{smtp.port}
@@ -770,8 +785,9 @@ function WebhooksCard() {
             style={{ width: 180 }}
           />
           <input
-            type={form.format === 'email' ? 'text' : 'url'}
-            placeholder={form.format === 'email' ? 'ops@example.com (or mailto:…)' : 'https://hooks.slack.com/services/...'}
+            type={urlHint(form.format).type}
+            placeholder={urlHint(form.format).placeholder}
+            title={urlHint(form.format).title}
             value={form.url}
             onChange={(e) => setForm({ ...form, url: e.target.value })}
             className="input grow mono"

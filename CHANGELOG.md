@@ -8,6 +8,43 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.67.0] — 2026-06-01
+
+Notification routing — three new alert-destination formats so othoni can
+page the on-call tools teams actually use. Webhook destinations now speak
+**Microsoft Teams**, **PagerDuty**, and **Opsgenie** in addition to the
+existing generic / Slack / Discord / email channels. PagerDuty and
+Opsgenie post to their incident APIs rather than a raw webhook URL — the
+destination's stored secret is the integration routing key / API key.
+
+### Added
+
+- **Microsoft Teams format** (`teams`). Posts an Office 365 connector
+  MessageCard to a Teams incoming-webhook URL, with a severity-tinted
+  theme colour and a facts table (metric, value, threshold, sustained).
+- **PagerDuty format** (`pagerduty`). Posts an Events API v2 `trigger` to
+  `https://events.pagerduty.com/v2/enqueue` (override with
+  `OTHONI_PAGERDUTY_URL` for the EU region). The stored secret is the
+  32-char integration routing key; severity maps crit→`critical`,
+  warn→`warning`; a stable `dedup_key` (`othoni-<ruleId>[-<host>]`)
+  collapses repeated fires into one incident.
+- **Opsgenie format** (`opsgenie`). Posts to
+  `https://api.opsgenie.com/v2/alerts` (override with
+  `OTHONI_OPSGENIE_URL`) with an `Authorization: GenieKey <apiKey>`
+  header; priority maps crit→`P1`, warn→`P3`; the same stable key becomes
+  the Opsgenie `alias` for de-duplication.
+- **Per-format destination hints** in the Alerts → Webhooks form —
+  format-aware placeholder, input type, and tooltip explaining whether the
+  field wants a URL, an email address, or an integration/API key.
+
+### Changed
+
+- Outbound webhook delivery now resolves each destination through a
+  `buildRequest()` step that can target a fixed REST endpoint and attach
+  per-format headers, instead of always POSTing the payload to the stored
+  URL. Existing generic / Slack / Discord / Teams destinations are
+  unaffected (they still post to their own URL).
+
 ## [0.66.0] — 2026-06-01
 
 Per-host remote security audit. The bundled agent can now push its own
@@ -3880,6 +3917,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.67.0]: #0670--2026-06-01
 [0.66.0]: #0660--2026-06-01
 [0.65.0]: #0650--2026-06-01
 [0.64.0]: #0640--2026-06-01

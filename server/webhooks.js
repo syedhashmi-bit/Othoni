@@ -1,10 +1,14 @@
 'use strict';
 
 // Webhook destinations — fired by the server-side alert engine when a rule
-// transitions to firing. Three formats supported: `generic` (full JSON
-// payload), `slack` (text in `text` field), `discord` (text in `content`
-// field). Both Slack and Discord accept a JSON POST to their incoming-
-// webhook URLs and both render `\n` as newlines.
+// transitions to firing. Formats: `generic` (full JSON payload), `slack`
+// (text in `text`), `discord` (text in `content`), `teams` (Office 365
+// MessageCard), `email` (SMTP via server/smtp.js), and the two incident
+// platforms `pagerduty` (Events API v2) and `opsgenie` (Alert API v2).
+// Slack/Discord/Teams accept a JSON POST to their incoming-webhook URLs.
+// PagerDuty and Opsgenie post to fixed API endpoints instead — the
+// destination's stored `url` holds the routing key / API key, and the
+// request is built in buildRequest() with the right endpoint + headers.
 
 const fs = require('fs');
 const path = require('path');
@@ -22,7 +26,12 @@ const RETRY_AFTER_MS = 1500; // single retry delay
 // Destinations using `email` carry a `mailto:foo@bar.com` URL and
 // delivery goes through the minimal SMTP client in server/smtp.js
 // (configured via OTHONI_SMTP_* env vars).
-const VALID_FORMATS = ['generic', 'slack', 'discord', 'email'];
+const VALID_FORMATS = ['generic', 'slack', 'discord', 'teams', 'email', 'pagerduty', 'opsgenie'];
+
+// PagerDuty/Opsgenie post to fixed REST endpoints (not the stored secret).
+// Region is selectable via env for EU tenants without a per-destination knob.
+const PAGERDUTY_URL = process.env.OTHONI_PAGERDUTY_URL || 'https://events.pagerduty.com/v2/enqueue';
+const OPSGENIE_URL = process.env.OTHONI_OPSGENIE_URL || 'https://api.opsgenie.com/v2/alerts';
 
 // v0.42 host filter. Allowed characters: same DNS-style host alphabet
 // plus `*` for glob and `.` for compound names. Empty / unset = all
@@ -81,6 +90,14 @@ function isValidUrl(s, format) {
     // round-trip the same once parseMailto normalizes them.
     return !!smtp.parseMailto(s);
   }
+  if (format === 'pagerduty') {
+    // Events API v2 routing (integration) key: 32-char alphanumeric.
+    return /^[A-Za-z0-9]{32}$/.test(s);
+  }
+  if (format === 'opsgenie') {
+    // GenieKey API key — UUID-style; keep a permissive token shape.
+    return /^[A-Za-z0-9-]{8,200}$/.test(s);
+  }
   try {
     const u = new URL(s);
     return (u.protocol === 'https:' || u.protocol === 'http:') && !!u.hostname;
@@ -95,6 +112,10 @@ function sanitize(w, { withStrip = true, stripN = 12 } = {}) {
   let host = '';
   if (w.format === 'email') {
     host = smtp.parseMailto(w.url) || '';
+  } else if (w.format === 'pagerduty') {
+    try { host = new URL(PAGERDUTY_URL).hostname; } catch { host = 'events.pagerduty.com'; }
+  } else if (w.format === 'opsgenie') {
+    try { host = new URL(OPSGENIE_URL).hostname; } catch { host = 'api.opsgenie.com'; }
   } else {
     try { host = new URL(w.url).hostname; } catch { /* ignore */ }
   }
@@ -131,9 +152,11 @@ function createWebhook({ label, url, format, hostFilter }) {
   }
   const fmt = VALID_FORMATS.includes(format) ? format : 'generic';
   if (!isValidUrl(url, fmt)) {
-    const msg = fmt === 'email'
-      ? 'url must be a valid email address (or mailto: URI)'
-      : 'url must be http:// or https://';
+    let msg;
+    if (fmt === 'email') msg = 'url must be a valid email address (or mailto: URI)';
+    else if (fmt === 'pagerduty') msg = 'url must be a 32-character PagerDuty integration (routing) key';
+    else if (fmt === 'opsgenie') msg = 'url must be an Opsgenie API (GenieKey) key';
+    else msg = 'url must be http:// or https://';
     throw Object.assign(new Error(msg), { code: 'invalid_url' });
   }
   if (!isValidHostFilter(hostFilter)) {
@@ -206,9 +229,81 @@ function defaultText(event) {
   return `[${sev}] ${r.label || r.metric}${hostSuffix} — ${event.valueFmt} ${r.comparator === 'gt' ? '>' : '<'} ${event.thresholdFmt} (sustained ${durationStr(event.sustainedFor)})`;
 }
 
+// Stable key so repeated fires of the same rule collapse into one incident
+// on PagerDuty (dedup_key) / Opsgenie (alias) instead of paging repeatedly.
+function dedupKey(event) {
+  const r = (event && event.rule) || {};
+  return `othoni-${r.id || 'rule'}${r.host ? `-${r.host}` : ''}`;
+}
+
+function teamsPayload(event) {
+  const r = event.rule;
+  const sev = (r.severity || 'warn').toUpperCase();
+  // Office 365 connector "MessageCard". themeColor is a hex string (no #).
+  return {
+    '@type': 'MessageCard',
+    '@context': 'http://schema.org/extensions',
+    themeColor: r.severity === 'crit' ? 'D7263D' : 'F49D37',
+    summary: defaultText(event),
+    title: `[othoni ${sev}] ${r.label || r.metric}${r.host ? ` on ${r.host}` : ''}`,
+    sections: [{
+      facts: [
+        { name: 'Severity', value: sev },
+        { name: 'Metric', value: `${r.metric}${r.host ? ` (host=${r.host})` : ''}` },
+        { name: 'Value', value: String(event.valueFmt) },
+        { name: 'Threshold', value: String(event.thresholdFmt) },
+        { name: 'Sustained', value: durationStr(event.sustainedFor) },
+      ],
+      text: defaultText(event),
+    }],
+  };
+}
+
+function pagerdutyPayload(routingKey, event) {
+  const r = event.rule;
+  return {
+    routing_key: routingKey,
+    event_action: 'trigger',
+    dedup_key: dedupKey(event),
+    payload: {
+      summary: defaultText(event),
+      source: r.host || require('os').hostname(),
+      // PagerDuty severities: critical | error | warning | info.
+      severity: r.severity === 'crit' ? 'critical' : 'warning',
+      custom_details: {
+        metric: r.metric,
+        value: event.valueFmt,
+        threshold: event.thresholdFmt,
+        sustained: durationStr(event.sustainedFor),
+        host: r.host || null,
+      },
+    },
+  };
+}
+
+function opsgeniePayload(event) {
+  const r = event.rule;
+  return {
+    message: defaultText(event),
+    alias: dedupKey(event),
+    description: [
+      `Severity:  ${(r.severity || 'warn').toUpperCase()}`,
+      `Metric:    ${r.metric}${r.host ? ` (host=${r.host})` : ''}`,
+      `Value:     ${event.valueFmt}`,
+      `Threshold: ${event.thresholdFmt}`,
+      `Sustained: ${durationStr(event.sustainedFor)}`,
+    ].join('\n'),
+    // Opsgenie priorities run P1 (highest) … P5. Map crit→P1, warn→P3.
+    priority: r.severity === 'crit' ? 'P1' : 'P3',
+    tags: ['othoni', r.metric, r.severity || 'warn'].concat(r.host ? [r.host] : []),
+    source: require('os').hostname(),
+  };
+}
+
 function formatPayload(format, event) {
   if (format === 'slack')   return { text: defaultText(event) };
   if (format === 'discord') return { content: defaultText(event) };
+  if (format === 'teams')   return teamsPayload(event);
   if (format === 'email') {
     // The SMTP transport reads { subject, text } off this payload.
     const r = event.rule;
@@ -254,13 +349,13 @@ function formatPayload(format, event) {
 
 // ---------- dispatcher ----------
 
-async function postWithTimeout(url, body) {
+async function postWithTimeout(url, body, extraHeaders = {}) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': 'othoni-webhook/1' },
+      headers: { 'Content-Type': 'application/json', 'User-Agent': 'othoni-webhook/1', ...extraHeaders },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
@@ -275,14 +370,28 @@ async function postWithTimeout(url, body) {
   }
 }
 
+// Resolve a destination to a concrete { url, body, headers }. Most formats
+// post their payload straight to the stored webhook URL; PagerDuty and
+// Opsgenie post to a fixed REST endpoint with the stored secret carried in
+// the body (routing_key) or an Authorization header (GenieKey).
+function buildRequest(w, event) {
+  if (w.format === 'pagerduty') {
+    return { url: PAGERDUTY_URL, body: pagerdutyPayload(w.url, event), headers: {} };
+  }
+  if (w.format === 'opsgenie') {
+    return { url: OPSGENIE_URL, body: opsgeniePayload(event), headers: { Authorization: `GenieKey ${w.url}` } };
+  }
+  return { url: w.url, body: formatPayload(w.format, event), headers: {} };
+}
+
 async function deliverOnce(w, event) {
-  const body = formatPayload(w.format, event);
   if (w.format === 'email') {
     if (!smtp.isEnabled()) {
       const e = new Error('SMTP not configured (set OTHONI_SMTP_HOST + OTHONI_SMTP_FROM)');
       e.statusCode = null;
       throw e;
     }
+    const body = formatPayload('email', event);
     const res = await smtp.sendMail({
       to: w.url,
       subject: body.subject,
@@ -290,7 +399,8 @@ async function deliverOnce(w, event) {
     });
     return { status: 250, durationMs: res.durationMs };
   }
-  return postWithTimeout(w.url, body);
+  const { url, body, headers } = buildRequest(w, event);
+  return postWithTimeout(url, body, headers);
 }
 
 async function fireOne(w, event) {
