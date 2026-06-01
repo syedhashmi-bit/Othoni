@@ -56,7 +56,10 @@ function clearCookie(res) {
 function ensureCookie(req, res, ttlMs) {
   if (!isEnabled()) return;
   if (req.cookies && req.cookies[COOKIE_NAME]) return;
-  attachCookie(res, generateToken(), { ttlMs, secure: req.secure });
+  // Force Secure in production (don't trust req.secure behind a proxy that
+  // may not forward X-Forwarded-Proto); see auth.cookieSecure.
+  const secure = process.env.NODE_ENV === 'production' ? true : !!req.secure;
+  attachCookie(res, generateToken(), { ttlMs, secure });
 }
 
 function constantTimeEqual(a, b) {

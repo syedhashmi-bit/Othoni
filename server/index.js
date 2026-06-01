@@ -10,7 +10,7 @@ const express = require('express');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
-const { auth, requireAdmin, login, logout, me, totpEnabled } = require('./auth');
+const { auth, requireAdmin, login, logout, me, totpEnabled, assertProductionSecrets } = require('./auth');
 const csrf = require('./csrf');
 const loginLockout = require('./login-lockout');
 const { loginLimiter } = require('./middleware');
@@ -28,8 +28,17 @@ const checks = require('./checks');
 const securityAudit = require('./security-audit');
 const logger = require('./logger');
 
+// Refuse to boot in production on placeholder JWT secret / admin password.
+// Must run before anything binds a port so a misconfigured deploy fails
+// loudly instead of serving a forgeable session.
+assertProductionSecrets();
+
 const PORT = parseInt(process.env.PORT || '8088', 10);
-const HOST = process.env.HOST || '0.0.0.0';
+// Default to loopback so a deploy that forgets to set HOST isn't reachable
+// directly (which would let clients spoof X-Forwarded-For past the per-IP
+// login lockout / rate limiter). Production sits behind nginx on 127.0.0.1;
+// set HOST=0.0.0.0 explicitly only if you intend to expose the port.
+const HOST = process.env.HOST || '127.0.0.1';
 const VERSION = require('../package.json').version;
 
 const app = express();

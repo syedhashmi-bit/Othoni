@@ -8,6 +8,51 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.65.0] — 2026-06-01
+
+Security-hardening pass from a full-repo audit. No new features — these
+close the highest-ranked findings: fail-closed on insecure production
+config, always-Secure cookies, distributed-brute-force lockout, and a
+patched dependency.
+
+### Added
+
+- **Per-username login lockout** (`server/login-lockout.js`). Alongside
+  the existing per-IP counter (5 failures), a per-username counter (20,
+  via `OTHONI_LOGIN_LOCKOUT_USER_FAILS`) now locks an account after
+  repeated failures *across all source IPs* — catching a distributed
+  guessing attack that rotates IPs and never trips the per-IP lock. A
+  successful login clears both counters; the higher username threshold
+  means an honest user fat-fingering from one host hits the per-IP lock
+  first.
+
+### Changed
+
+- **Fail-closed on insecure production secrets** (`server/auth.js`,
+  `server/index.js`). With `NODE_ENV=production` the server now **refuses
+  to start** if `OTHONI_JWT_SECRET` is unset/default/<32 chars or the
+  admin password is unset/`admin123` (unless `OTHONI_ADMIN_PASSWORD_HASH`
+  is set). Previously it only logged a warning and served a forgeable
+  session.
+- **Session & CSRF cookies forced `Secure` in production**
+  (`server/auth.js`, `server/csrf.js`). The flag no longer derives from
+  `req.secure`, which is unreliable behind a TLS-terminating proxy that
+  doesn't forward `X-Forwarded-Proto` — that could ship the session
+  cookie without `Secure` over plaintext.
+- **`HOST` defaults to `127.0.0.1`** (`server/index.js`), down from
+  `0.0.0.0`. A deploy that forgets to set `HOST` is no longer reachable
+  directly, which would otherwise let clients spoof `X-Forwarded-For`
+  past the per-IP lockout. Production already binds loopback explicitly.
+
+### Fixed
+
+- **Dependency DoS** — bumped `qs` (→ 6.15.2) and `express` (→ 4.22.2)
+  via `npm audit fix`, clearing GHSA-q8mj-m7cp-5q26 (`qs.stringify`
+  crash). `npm audit` now reports 0 vulnerabilities.
+- **Stripped 4 stray NUL bytes** from the viewer-sentinel string literals
+  in `server/auth.js` (behavior-neutral cleanup; the sentinel stays
+  unmatchable).
+
 ## [0.64.0] — 2026-06-01
 
 Two more one-click hardening fixes. The security audit can now install +
@@ -3798,6 +3843,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.65.0]: #0650--2026-06-01
 [0.64.0]: #0640--2026-06-01
 [0.63.0]: #0630--2026-06-01
 [0.62.0]: #0620--2026-06-01

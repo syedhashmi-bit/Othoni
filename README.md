@@ -146,7 +146,7 @@ $EDITOR .env
 | Key                     | Default      | Notes                                       |
 |-------------------------|--------------|---------------------------------------------|
 | `PORT`                  | `8088`       | TCP port to listen on                       |
-| `HOST`                  | `0.0.0.0`    | bind address                                |
+| `HOST`                  | `127.0.0.1`  | bind address — loopback by default; set `0.0.0.0` only to expose the port directly |
 | `OTHONI_ADMIN_USER`     | `admin`      | login username                              |
 | `OTHONI_ADMIN_PASSWORD` | `admin123`   | login password — **change this**            |
 | `OTHONI_ADMIN_PASSWORD_HASH` | unset   | scrypt hash of the password (preferred over `OTHONI_ADMIN_PASSWORD` when set; generate with `npm run hash-password`) |
@@ -158,6 +158,7 @@ $EDITOR .env
 | `OTHONI_RETENTION_MS`   | `86400000`   | how long to keep samples (default 24 h)     |
 | `OTHONI_LOGS_ENABLED`   | unset        | set `true` to enable `/api/logs` + Logs page |
 | `OTHONI_TOTP_SECRET`    | unset        | base32 secret to require a TOTP code on login (see `npm run totp:setup`) |
+| `OTHONI_LOGIN_LOCKOUT_USER_FAILS` | `20` | consecutive failures (across all IPs) before a username is locked out — catches distributed guessing; per-IP lock still trips at `OTHONI_LOGIN_LOCKOUT_FAILS` (`5`) |
 | `OTHONI_PROMETHEUS_TOKEN` | unset      | Bearer token for the optional `/metrics` Prometheus exporter (off when unset) |
 | `OTHONI_ACTIONS_ENABLED`| unset        | Set `true` to enable opt-in write actions (systemd / Docker / process signal — concrete actions land in v0.32+) |
 | `NODE_ENV`              | `production` | `production` on a VPS                       |
@@ -379,12 +380,19 @@ History page's Custom section.
 ## Security notes
 
 - Always change `OTHONI_ADMIN_PASSWORD` and set a unique `OTHONI_JWT_SECRET` in
-  production. The defaults exist only to make first-time testing painless.
+  production. The defaults exist only to make first-time testing painless. When
+  `NODE_ENV=production`, the server **refuses to start** on a default/unset JWT
+  secret or the default `admin123` password — fail-closed, so a misconfigured
+  deploy can't serve a forgeable session.
+- Session and CSRF cookies are issued with `Secure` (forced on under
+  `NODE_ENV=production`), `HttpOnly`, and `SameSite=Lax`.
 - For internet-facing deployments, prefer `OTHONI_ADMIN_PASSWORD_HASH` over
   the plaintext form. Generate it with `npm run hash-password`, paste the
   printed line into `.env`, and remove `OTHONI_ADMIN_PASSWORD`. The hash uses
   scrypt with a 16-byte random salt; format is self-describing.
-- Login is rate-limited to 10 attempts / 15 minutes per IP.
+- Login is rate-limited per IP, and locked out after repeated failures both
+  per source IP (default 5) and per target username (default 20, to catch
+  distributed guessing that rotates IPs against one account).
 - **Optional TOTP 2FA.** Run `npm run totp:setup`, follow the printed
   instructions to add `OTHONI_TOTP_SECRET=...` to `.env`, restart the
   service, and enroll your authenticator app with the printed
