@@ -252,6 +252,7 @@ async function auditFirewall() {
         id: 'fw-ufw-inactive', severity: 'crit', category: 'Firewall',
         title: 'UFW is installed but inactive',
         detail: 'Run `sudo ufw enable` to activate firewall rules. Make sure to first allow your SSH port (`sudo ufw allow 22/tcp`) so you don\'t lock yourself out.',
+        remediation: { kind: 'security.remediate', target: 'ufw.enable' },
       }];
     }
   }

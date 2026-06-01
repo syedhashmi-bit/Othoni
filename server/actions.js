@@ -477,74 +477,146 @@ function mergeDirectives(existing, addLines) {
   return existingLines.join('\n') + '\n';
 }
 
-register('security.remediate', {
-  description: 'Apply a scoped security hardening fix (writes a sshd_config.d drop-in and reloads sshd).',
-  auditName: 'action.security.remediate',
-  requiresConfirmation: true,
-  targetValidator: (t) => typeof t === 'string' && Object.prototype.hasOwnProperty.call(SSH_REMEDIATIONS, t),
-  async run({ target }) {
-    const startedAt = Date.now();
-    // Sanity-check the drop-in dir exists. Modern Ubuntu/Debian sshd
-    // includes /etc/ssh/sshd_config.d/*.conf by default; if it's not
-    // there, refuse rather than write a file that won't take effect.
-    if (!fs.existsSync(SSH_DROPIN_DIR)) {
-      return {
-        ok: false, exitCode: 2,
-        stdout: '',
-        stderr: `refused: ${SSH_DROPIN_DIR} does not exist (sshd may not be configured to read drop-ins)`,
-        durationMs: Date.now() - startedAt,
-      };
-    }
-    const addLines = SSH_REMEDIATIONS[target];
-    let existing;
-    try { existing = readExistingDropin(); }
-    catch (e) {
-      return {
-        ok: false, exitCode: 1, stdout: '',
-        stderr: `read ${SSH_DROPIN_FILE} failed: ${e.message}`,
-        durationMs: Date.now() - startedAt,
-      };
-    }
-    const next = mergeDirectives(existing, addLines);
-    const header = '# Managed by othoni — security.remediate drop-in.\n# Edit /etc/ssh/sshd_config or another drop-in to override.\n';
-    const body = next.startsWith('#') ? next : header + next;
-    try {
-      const tmp = `${SSH_DROPIN_FILE}.tmp`;
-      fs.writeFileSync(tmp, body, { mode: 0o644 });
-      fs.renameSync(tmp, SSH_DROPIN_FILE);
-    } catch (e) {
-      return {
-        ok: false, exitCode: 1, stdout: '',
-        stderr: `write ${SSH_DROPIN_FILE} failed: ${e.message}`,
-        durationMs: Date.now() - startedAt,
-      };
-    }
-    // Validate config before restart. `sshd -t` exits non-zero on
-    // bad config without touching the running daemon — critical so
-    // we never apply a config that would lock the operator out.
-    const test = await execRun('sshd', ['-t'], { timeout: 5000 });
-    if (!test.ok) {
-      return {
-        ok: false, exitCode: typeof test.code === 'number' ? test.code : 1,
-        stdout: '',
-        stderr: `sshd config validation failed (NOT reloaded):\n${test.stderr || ''}`,
-        durationMs: Date.now() - startedAt,
-      };
-    }
-    const reload = await execRun('systemctl', ['reload', 'ssh'], { timeout: 5000 });
-    // On older systems the unit is named `sshd`; fall back if reload-ssh
-    // didn't find it.
-    let reloadResult = reload;
-    if (!reload.ok && /Unit (?:ssh\.service)? not found/i.test(reload.stderr || '')) {
-      reloadResult = await execRun('systemctl', ['reload', 'sshd'], { timeout: 5000 });
-    }
+async function runSshRemediation(target, startedAt) {
+  // Sanity-check the drop-in dir exists. Modern Ubuntu/Debian sshd
+  // includes /etc/ssh/sshd_config.d/*.conf by default; if it's not
+  // there, refuse rather than write a file that won't take effect.
+  if (!fs.existsSync(SSH_DROPIN_DIR)) {
     return {
-      ok: reloadResult.ok,
-      exitCode: reloadResult.ok ? 0 : (typeof reloadResult.code === 'number' ? reloadResult.code : 1),
-      stdout: `Wrote ${SSH_DROPIN_FILE} (target=${target}).\n${reloadResult.stdout || ''}`,
-      stderr: reloadResult.stderr || '',
+      ok: false, exitCode: 2,
+      stdout: '',
+      stderr: `refused: ${SSH_DROPIN_DIR} does not exist (sshd may not be configured to read drop-ins)`,
       durationMs: Date.now() - startedAt,
     };
+  }
+  const addLines = SSH_REMEDIATIONS[target];
+  let existing;
+  try { existing = readExistingDropin(); }
+  catch (e) {
+    return {
+      ok: false, exitCode: 1, stdout: '',
+      stderr: `read ${SSH_DROPIN_FILE} failed: ${e.message}`,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+  const next = mergeDirectives(existing, addLines);
+  const header = '# Managed by othoni — security.remediate drop-in.\n# Edit /etc/ssh/sshd_config or another drop-in to override.\n';
+  const body = next.startsWith('#') ? next : header + next;
+  try {
+    const tmp = `${SSH_DROPIN_FILE}.tmp`;
+    fs.writeFileSync(tmp, body, { mode: 0o644 });
+    fs.renameSync(tmp, SSH_DROPIN_FILE);
+  } catch (e) {
+    return {
+      ok: false, exitCode: 1, stdout: '',
+      stderr: `write ${SSH_DROPIN_FILE} failed: ${e.message}`,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+  // Validate config before restart. `sshd -t` exits non-zero on
+  // bad config without touching the running daemon — critical so
+  // we never apply a config that would lock the operator out.
+  const test = await execRun('sshd', ['-t'], { timeout: 5000 });
+  if (!test.ok) {
+    return {
+      ok: false, exitCode: typeof test.code === 'number' ? test.code : 1,
+      stdout: '',
+      stderr: `sshd config validation failed (NOT reloaded):\n${test.stderr || ''}`,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+  const reload = await execRun('systemctl', ['reload', 'ssh'], { timeout: 5000 });
+  // On older systems the unit is named `sshd`; fall back if reload-ssh
+  // didn't find it.
+  let reloadResult = reload;
+  if (!reload.ok && /Unit (?:ssh\.service)? not found/i.test(reload.stderr || '')) {
+    reloadResult = await execRun('systemctl', ['reload', 'sshd'], { timeout: 5000 });
+  }
+  return {
+    ok: reloadResult.ok,
+    exitCode: reloadResult.ok ? 0 : (typeof reloadResult.code === 'number' ? reloadResult.code : 1),
+    stdout: `Wrote ${SSH_DROPIN_FILE} (target=${target}).\n${reloadResult.stdout || ''}`,
+    stderr: reloadResult.stderr || '',
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+// ---------- ufw.enable remediation ----------
+// Enable the ufw firewall — but ONLY after explicitly allowing every
+// SSH port the running sshd is bound to. ufw defaults to deny-incoming,
+// so enabling it without that step would drop the operator's own
+// connection. This mirrors the SSH set's `sshd -t`-before-reload gate:
+// the lock-out-prevention step runs BEFORE the irreversible one, and if
+// it fails we refuse to enable at all.
+
+// Effective SSH ports from `sshd -T` (the running config, not the file).
+// Falls back to 22 if sshd can't be queried so we never enable with an
+// empty allowlist.
+async function getSshPorts() {
+  const ports = new Set();
+  const r = await execRun('sshd', ['-T'], { timeout: 5000 });
+  if (r.ok && r.stdout) {
+    for (const line of r.stdout.split('\n')) {
+      const m = /^port\s+(\d{1,5})$/i.exec(line.trim());
+      if (m) {
+        const p = parseInt(m[1], 10);
+        if (p >= 1 && p <= 65535) ports.add(String(p));
+      }
+    }
+  }
+  if (ports.size === 0) ports.add('22');
+  return [...ports];
+}
+
+async function runUfwEnable(startedAt) {
+  // Confirm ufw is installed — a missing binary spawns ENOENT.
+  const probe = await execRun('ufw', ['status'], { timeout: 5000 });
+  if (!probe.ok && (probe.code === 'ENOENT' || /ENOENT|not found/i.test(probe.stderr || ''))) {
+    return {
+      ok: false, exitCode: 2, stdout: '',
+      stderr: 'refused: ufw is not installed (install with `apt install ufw` first)',
+      durationMs: Date.now() - startedAt,
+    };
+  }
+  // Lock-out prevention: allow every SSH port BEFORE enabling.
+  const ports = await getSshPorts();
+  const log = [];
+  for (const port of ports) {
+    const allow = await execRun('ufw', ['allow', `${port}/tcp`], { timeout: 5000 });
+    log.push(`ufw allow ${port}/tcp → ${allow.ok ? 'ok' : 'FAILED'}`);
+    if (!allow.ok) {
+      return {
+        ok: false, exitCode: typeof allow.code === 'number' ? allow.code : 1,
+        stdout: log.join('\n'),
+        stderr: `refused to enable: could not allow SSH port ${port}/tcp first (lock-out risk):\n${allow.stderr || ''}`,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+  }
+  // Now safe to enable. --force skips the interactive y/n confirmation.
+  const enable = await execRun('ufw', ['--force', 'enable'], { timeout: 10000 });
+  log.push(`ufw --force enable → ${enable.ok ? 'ok' : 'failed'}`);
+  return {
+    ok: enable.ok,
+    exitCode: enable.ok ? 0 : (typeof enable.code === 'number' ? enable.code : 1),
+    stdout: `${log.join('\n')}\n${enable.stdout || ''}`.trim(),
+    stderr: enable.stderr || '',
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+// Every target the action accepts: the SSH drop-in set plus ufw.enable.
+const VALID_REMEDIATIONS = new Set([...Object.keys(SSH_REMEDIATIONS), 'ufw.enable']);
+
+register('security.remediate', {
+  description: 'Apply a scoped security hardening fix: an SSH drop-in + reload, or enable the ufw firewall after allowing SSH.',
+  auditName: 'action.security.remediate',
+  requiresConfirmation: true,
+  targetValidator: (t) => typeof t === 'string' && VALID_REMEDIATIONS.has(t),
+  async run({ target }) {
+    const startedAt = Date.now();
+    if (target === 'ufw.enable') return runUfwEnable(startedAt);
+    return runSshRemediation(target, startedAt);
   },
 });
 

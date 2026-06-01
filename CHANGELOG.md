@@ -8,6 +8,31 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.63.0] — 2026-06-01
+
+Firewall remediation. The security audit's "UFW installed but inactive"
+finding gains a one-click `ufw.enable` remediation that allows the live
+SSH port(s) *before* enabling the firewall, so the operator can't lock
+themselves out — the same lock-out-prevention discipline the SSH
+remediations apply with `sshd -t`.
+
+### Added
+
+- **`ufw.enable` target** for the `security.remediate` action
+  (`server/actions.js`). Reads the running SSH port(s) from `sshd -T`,
+  runs `ufw allow <port>/tcp` for each, and only then `ufw --force
+  enable`. If any allow step fails it refuses to enable (no lock-out);
+  refuses cleanly if `ufw` isn't installed. The `fw-ufw-inactive` audit
+  finding now carries `remediation: { kind: 'security.remediate', target:
+  'ufw.enable' }`, so the existing generic Remediate button wires up with
+  no client change. Gated by `OTHONI_ACTIONS_ENABLED` like every action.
+
+### Changed
+
+- **ship-othoni skill smoke-test** now hits the local backend
+  (`localhost:8088/api/health`) instead of the public URL, which
+  Cloudflare fronts with a managed challenge that returns HTML, not JSON.
+
 ## [0.62.0] — 2026-06-01
 
 Projects page gets a manual refresh, and the project scanner stops
@@ -3746,6 +3771,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.63.0]: #0630--2026-06-01
 [0.62.0]: #0620--2026-06-01
 [0.61.0]: #0610--2026-05-20
 [0.60.0]: #0600--2026-05-20
