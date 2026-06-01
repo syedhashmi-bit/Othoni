@@ -8,6 +8,38 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.62.0] — 2026-06-01
+
+Projects page gets a manual refresh, and the project scanner stops
+hiding services whose directory name differs only by case from their
+systemd unit. A new project dropped under `/var/www` now shows up
+without hand-editing the unit map.
+
+### Added
+
+- **`↻ Refresh` button** on the Projects page header. Auto-poll still
+  uses the server's 8s scan cache; the button forces a fresh re-read of
+  `/var/www` (via `?force=1`) so newly-added project directories or
+  freshly-installed units surface immediately. A `forceRef` ensures only
+  the manual rescan bypasses the cache — background ticks stay cheap.
+
+### Fixed
+
+- **Case-insensitive unit matching** in `server/projects.js`. The scanner
+  now tries the exact directory name first, then a lowercased variant, so
+  a directory `Protek` resolves to its `protek` systemd unit instead of
+  being filtered out. The control path (`resolveUnit`) applies the same
+  fallback, so Start/Stop/Restart target the unit that actually loaded.
+  An explicit `data/projects.json` override still wins when present.
+
+### Notes
+
+- Server-side `getProjects()` gained a `{ force }` option; the
+  `/api/projects` route reads `?force=1`/`?force=true`. No new env vars,
+  no new dependencies.
+- Verified live on the VPS: `Protek` → unit `protek` (active) now appears
+  in the scan; `/api/health` returns v0.62.0.
+
 ## [0.61.0] — 2026-05-20
 
 Brand refresh — the concentric-rings mark gets swapped for an EKG
@@ -3714,6 +3746,11 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.62.0]: #0620--2026-06-01
+[0.61.0]: #0610--2026-05-20
+[0.60.0]: #0600--2026-05-20
+[0.59.0]: #0590--2026-05-20
+[0.58.0]: #0580--2026-05-20
 [0.57.0]: #0570--2026-05-19
 [0.56.0]: #0560--2026-05-19
 [0.55.0]: #0550--2026-05-19

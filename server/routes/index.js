@@ -727,7 +727,9 @@ router.delete('/security-audit/ack/:id', (req, res) => {
 
 // ---------- Projects (/var/www directories with matching systemd services) ----------
 
-router.get('/projects', wrap('projects', () => projects.getProjects()));
+router.get('/projects', wrap('projects', (req) => projects.getProjects({
+  force: req.query.force === '1' || req.query.force === 'true',
+})));
 
 router.post('/projects/:name/control', async (req, res) => {
   const { name } = req.params;

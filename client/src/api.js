@@ -127,7 +127,7 @@ export const api = {
     method: 'DELETE',
   }),
   projects: {
-    list: () => request('/api/projects'),
+    list: (force) => request(`/api/projects${force ? '?force=1' : ''}`),
     control: (name, action) => request(`/api/projects/${encodeURIComponent(name)}/control`, {
       method: 'POST',
       body: JSON.stringify({ action }),

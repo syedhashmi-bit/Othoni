@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { api } from '../api';
 import { usePoller } from '../hooks';
 import { pillClass } from '../utils';
@@ -133,7 +133,28 @@ function ServiceControls({ name, status, onDone }) {
 
 export default function Projects() {
   const { refreshMs } = useApp();
-  const { data, loading, error, refresh } = usePoller(api.projects.list, refreshMs);
+  const [rescanning, setRescanning] = useState(false);
+  // Auto-poll uses the cached scan; a manual rescan sets this flag so the
+  // next fetch bypasses the server cache and re-reads /var/www for new
+  // directories / freshly-installed units. Consumed on the following tick.
+  const forceRef = useRef(false);
+  const loader = useCallback(() => {
+    const force = forceRef.current;
+    forceRef.current = false;
+    return api.projects.list(force);
+  }, []);
+  const { data, loading, error, refresh } = usePoller(loader, refreshMs);
+
+  async function rescan() {
+    setRescanning(true);
+    forceRef.current = true;
+    try {
+      await refresh();
+    } finally {
+      forceRef.current = false;
+      setRescanning(false);
+    }
+  }
 
   if (loading && !data) return <div className="loading">Scanning {'/var/www'}…</div>;
   if (error && !data)   return <div className="error">Could not load projects.</div>;
@@ -143,7 +164,17 @@ export default function Projects() {
 
   return (
     <div className="page-fade-in">
-      <h1 className="page-title">Projects</h1>
+      <div className="card-header" style={{ marginBottom: 4 }}>
+        <h1 className="page-title" style={{ margin: 0 }}>Projects</h1>
+        <button
+          type="button"
+          className="btn compact"
+          onClick={rescan}
+          disabled={rescanning}
+        >
+          {rescanning ? 'Rescanning…' : '↻ Refresh'}
+        </button>
+      </div>
       <p className="subtitle">
         Systemd services matching directories under <code>{root}</code>.
       </p>

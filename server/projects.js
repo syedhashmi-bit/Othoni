@@ -39,7 +39,17 @@ function listWwwDirs() {
   }
 }
 
-async function checkUnit(dir, unit) {
+// Candidate unit names to try for a directory, in priority order:
+// an explicit config override wins; otherwise the exact directory name,
+// then a lowercased variant (covers dir `Protek` → unit `protek`).
+function unitCandidates(dir, unitMap) {
+  const mapped = unitMap[dir];
+  if (mapped && UNIT_NAME_RE.test(mapped)) return [mapped];
+  const lower = dir.toLowerCase();
+  return lower === dir ? [dir] : [dir, lower];
+}
+
+async function probeUnit(unit) {
   const r = await run(
     'systemctl',
     ['show', '-p', 'LoadState', '-p', 'ActiveState', '--value', unit],
@@ -52,21 +62,26 @@ async function checkUnit(dir, unit) {
   if (activeState === 'active')                                      status = 'active';
   else if (activeState === 'failed')                                 status = 'failed';
   else if (activeState === 'activating' || activeState === 'deactivating') status = activeState;
-  return { name: dir, unit, status };
+  return status;
 }
 
-async function getProjects() {
+async function checkUnit(dir, candidates) {
+  for (const unit of candidates) {
+    const status = await probeUnit(unit);
+    if (status !== null) return { name: dir, unit, status };
+  }
+  return null;
+}
+
+async function getProjects({ force = false } = {}) {
   const now = Date.now();
-  if (cache && now - cacheAt < CACHE_TTL_MS) return cache;
+  if (!force && cache && now - cacheAt < CACHE_TTL_MS) return cache;
 
   const unitMap = loadUnitMap();
   const dirs = listWwwDirs();
 
   const entries = await Promise.all(
-    dirs.map((dir) => {
-      const unit = (unitMap[dir] && UNIT_NAME_RE.test(unitMap[dir])) ? unitMap[dir] : dir;
-      return checkUnit(dir, unit);
-    })
+    dirs.map((dir) => checkUnit(dir, unitCandidates(dir, unitMap)))
   );
 
   const projects = entries.filter(Boolean);
@@ -75,17 +90,22 @@ async function getProjects() {
   return cache;
 }
 
-// Look up the unit name for a given directory name, applying config overrides.
-function resolveUnit(dir) {
+// Look up the unit name for a given directory name, applying config overrides
+// and the same case-insensitive fallback the scanner uses. Returns the loaded
+// unit name (or the first candidate if none probe as loaded), or null if the
+// directory is invalid.
+async function resolveUnit(dir) {
   if (typeof dir !== 'string' || !UNIT_NAME_RE.test(dir)) return null;
   try {
     if (!fs.statSync(path.join(WWW_ROOT, dir)).isDirectory()) return null;
   } catch {
     return null;
   }
-  const unitMap = loadUnitMap();
-  const unit = (unitMap[dir] && UNIT_NAME_RE.test(unitMap[dir])) ? unitMap[dir] : dir;
-  return unit;
+  const candidates = unitCandidates(dir, loadUnitMap());
+  for (const unit of candidates) {
+    if ((await probeUnit(unit)) !== null) return unit;
+  }
+  return candidates[0];
 }
 
 async function controlProject(name, action) {
@@ -94,7 +114,7 @@ async function controlProject(name, action) {
     e.code = 'invalid_action';
     throw e;
   }
-  const unit = resolveUnit(name);
+  const unit = await resolveUnit(name);
   if (!unit) {
     const e = new Error(`not a known project: ${name}`);
     e.code = 'invalid_target';
