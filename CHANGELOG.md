@@ -8,6 +8,101 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.69.1] — 2026-06-02
+
+Federation polish — the v0.69.0 host switch now makes the **whole** dashboard
+reflect the selected peer (not just metrics), the Settings peers card is
+clearer and autofill-proof, and a new `deploy-peer.sh` collapses the
+ten-step remote install into one command.
+
+### Added
+
+- **`scripts/deploy-peer.sh`.** Run on a new VPS to bootstrap it as a
+  federation peer: checks Node ≥18, runs `npm ci` + client build, writes a
+  production `.env` bound to the WireGuard IP with a freshly-generated
+  `OTHONI_PEER_TOKEN`, `OTHONI_JWT_SECRET`, and admin password, installs and
+  starts the `othoni` systemd unit, opens the WireGuard subnet through `ufw`
+  if active, smoke-tests `/api/health`, and prints the exact host/url/token
+  to register on central. Idempotent — re-runs re-point `HOST`/`PORT` but
+  never rotate existing secrets.
+
+### Changed
+
+- **Selecting a peer now scopes the entire dashboard to it.** The host-scoped
+  allowlist gained `projects`, `security-audit`, `actions`, `alerts`, and
+  `checks`, so those pages render the *peer's* data instead of falling through
+  to the central box. (Mutations still route through the read-only proxy and
+  return 405 for a remote host — change a peer's config by logging into it
+  directly.)
+- **Federated peers card rework.** Form fields now carry visible captions
+  (Host / URL / Peer token / Label), and the saved-peer list is a
+  self-labeling row layout (host + label chip, URL as a link beneath) instead
+  of a column table that could read as transposed.
+
+### Fixed
+
+- **Browser/password-manager autofill no longer pollutes the peer form.**
+  Hidden decoy username/password inputs plus `autocomplete` /
+  `data-lpignore` / `data-1p-ignore` hints keep your saved login from landing
+  in the URL and token fields.
+
+## [0.69.0] — 2026-06-02
+
+Federation — the **complete** dashboard for a remote VPS, not just its
+metric tiles. Register another full othoni instance as a *peer* (reachable
+over a trusted transport like WireGuard) and the top-bar host switcher gains
+a "full dashboard" entry for it: every page — Dashboard, Storage, Processes,
+Docker, Services, Network, Connections, Logs, History — transparently
+re-fetches that host's live data through a central read-only reverse proxy.
+Account and fleet management stay on the central box.
+
+### Added
+
+- **Federated peers.** A new Settings card registers peers
+  (`host` + `url` + `token` + optional label), persisted to
+  `data/peers.json` (0600, token never returned by the API). The token is
+  the peer's `OTHONI_PEER_TOKEN`.
+- **Peer read-token auth (`OTHONI_PEER_TOKEN`).** When set (≥16 chars), an
+  othoni instance accepts that token as `Authorization: Bearer` and answers
+  as a synthetic **viewer** — so a central can read it but never mutate it
+  (`requireAdmin` enforces GET/HEAD only). Off entirely when unset.
+- **Read-only fleet proxy `GET /api/fleet/:host/*`.** Mounted inside the
+  cookie-auth wall; forwards GETs (with query strings) to the registered
+  peer's URL using the peer token, and refuses anything but GET/HEAD (405),
+  non-`/api/*` paths (400), and unknown peers (404). 10s timeout → 502.
+- **Host switcher "full dashboard" mode.** Selecting a federated peer sets a
+  persisted *view host*; the page subtree remounts so every data page renders
+  the peer's stats immediately, and a `remote · <host>` chip marks the state.
+  Selecting "This server (live)" returns to the local box.
+- **`POST /api/peers/:host` / `DELETE /api/peers/:host`** (admin) and
+  **`GET /api/peers`** (token-stripped list); `/api/settings` now reports
+  whether this instance accepts a peer token.
+
+## [0.68.0] — 2026-06-02
+
+Multi-host dashboard navigation, plus a CDN-bypass mode for the agent so a
+fleet behind Cloudflare can actually report. A **host switcher dropdown**
+in the top bar jumps between the local box's live dashboard and any remote
+host's view, and `agent.sh` gains **`OTHONI_ORIGIN_IP`** to push straight
+to the origin when a proxy's bot challenge would otherwise block the API
+client.
+
+### Added
+
+- **Top-bar host switcher.** A dropdown next to the title with "This server
+  (live)" (the local `/` dashboard), "All hosts grid" (`/hosts`), and a
+  "Remote hosts" group listing every agent discovered from `custom.<host>.*`
+  metrics; selecting one opens its `/hosts/:host` view. The list refreshes
+  every 30s, so a newly-provisioned agent appears within a sample cycle, and
+  the current host stays selectable even before the list loads.
+- **`OTHONI_ORIGIN_IP` agent origin-pinning.** When set, `agent.sh` connects
+  directly to that IP via `curl --resolve` while keeping the `OTHONI_URL`
+  hostname for SNI, the `Host` header, and certificate validation — so HTTPS
+  stays verified end-to-end and only DNS is overridden. This sidesteps a
+  CDN/proxy (e.g. Cloudflare) whose managed-challenge would otherwise return
+  an HTML interstitial to the key-authenticated agent. Applies to both the
+  metrics and the audit push; unset leaves behavior unchanged.
+
 ## [0.67.0] — 2026-06-01
 
 Notification routing — three new alert-destination formats so othoni can
@@ -3917,6 +4012,9 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.69.1]: #0691--2026-06-02
+[0.69.0]: #0690--2026-06-02
+[0.68.0]: #0680--2026-06-02
 [0.67.0]: #0670--2026-06-01
 [0.66.0]: #0660--2026-06-01
 [0.65.0]: #0650--2026-06-01

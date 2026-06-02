@@ -48,8 +48,12 @@
   on a 10s tick — alerts fire even when no browser is open. Rule fires
   are persisted; the rules table shows a 24h density histogram per rule
   and there's a "Recent fires" timeline below it
-- **Webhook destinations** — Slack, Discord, or generic JSON POST
-  on every alert fire. Per-destination test button, retry-on-failure
+- **Webhook destinations** — fire on every alert transition, even with
+  no browser open. Formats: generic JSON, Slack, Discord, **Microsoft
+  Teams** (Office 365 MessageCard), **email** (SMTP), and the incident
+  platforms **PagerDuty** (Events API v2) and **Opsgenie** (Alert API),
+  with per-rule host filtering, a per-destination test button, retry-on-
+  failure, and a delivery-history strip
 - **Synthetic checks** — periodic HTTP / TCP / ICMP probes recorded
   into the same history store as built-in metrics. Consecutive
   failures dispatch to your webhooks
@@ -160,6 +164,7 @@ $EDITOR .env
 | `OTHONI_TOTP_SECRET`    | unset        | base32 secret to require a TOTP code on login (see `npm run totp:setup`) |
 | `OTHONI_LOGIN_LOCKOUT_USER_FAILS` | `20` | consecutive failures (across all IPs) before a username is locked out — catches distributed guessing; per-IP lock still trips at `OTHONI_LOGIN_LOCKOUT_FAILS` (`5`) |
 | `OTHONI_PROMETHEUS_TOKEN` | unset      | Bearer token for the optional `/metrics` Prometheus exporter (off when unset) |
+| `OTHONI_PEER_TOKEN`     | unset        | shared secret (≥16 chars) that lets a *central* othoni read this instance over the federation proxy. When set, `Authorization: Bearer <token>` is accepted as a read-only (viewer) session. Off when unset |
 | `OTHONI_PAGERDUTY_URL`  | `https://events.pagerduty.com/v2/enqueue` | override the PagerDuty Events API endpoint (set the EU host for EU tenants) |
 | `OTHONI_OPSGENIE_URL`   | `https://api.opsgenie.com/v2/alerts` | override the Opsgenie Alert API endpoint (use `api.eu.opsgenie.com` for the EU region) |
 | `OTHONI_ACTIONS_ENABLED`| unset        | Set `true` to enable opt-in write actions (systemd / Docker / process signal — concrete actions land in v0.32+) |
@@ -259,6 +264,10 @@ authenticated session.
 | POST   | `/api/security-audit/ingest` | **API key auth.** Push a remote host's `{ host, findings }` audit |
 | GET    | `/api/security-audit/hosts`  | Remote hosts reporting audits, with latest summary |
 | GET    | `/api/security-audit/hosts/:host` | One remote host's latest run + findings |
+| GET    | `/api/peers`        | List registered federation peers (token stripped) |
+| PUT    | `/api/peers/:host`  | Register / update a peer (`{ url, token, label }`) |
+| DELETE | `/api/peers/:host`  | Remove a peer                     |
+| GET    | `/api/fleet/:host/*`| Read-only reverse proxy to a peer (GET-only; forwards `/api/*`) |
 | GET    | `/api/processes`    | Top processes (`?sortBy=cpu      memory&limit=20`) |
 | GET    | `/api/docker`       | Container list, or "not installed"|
 | GET    | `/api/services`     | systemd unit status               |
@@ -391,6 +400,69 @@ findings diffed against the previous push and new crits dispatched to
 your webhooks. The checks are read-only; some (ufw) need root, the rest
 work as any user.
 
+Every reporting host appears in the **host switcher** dropdown in the
+dashboard's top bar — pick one to jump to its `/hosts/:host` view.
+
+If your dashboard sits behind a CDN/proxy (e.g. Cloudflare) whose bot
+challenge blocks the key-authenticated agent, set `OTHONI_ORIGIN_IP` to
+the origin server's IP. The agent then connects straight to that IP
+(`curl --resolve`) while still using the `OTHONI_URL` hostname for SNI,
+the `Host` header, and certificate validation — TLS stays verified
+end-to-end; only DNS is bypassed. The origin must accept direct
+connections (open its firewall to the agent's IP on the dashboard's port).
+
+## Federation — full remote dashboards
+
+The agent above gives you a host's **metrics**. To see another VPS's
+*complete* dashboard — Storage, Processes, Docker, Services, Projects,
+Network, Connections, Alerts, Checks, Security, Logs, History, all of it —
+run a full othoni instance on that box and register it as a **peer**.
+
+**Quick path — `scripts/deploy-peer.sh`.** Get the othoni code onto the
+remote box (rsync/git), make sure its private transport is up, then run:
+
+```bash
+sudo bash scripts/deploy-peer.sh           # auto-detects the wg0 address
+sudo bash scripts/deploy-peer.sh 10.8.0.5  # or pass the bind IP explicitly
+```
+
+It checks Node ≥18, runs `npm ci` + the client build, writes a production
+`.env` bound to that IP with a freshly-generated `OTHONI_PEER_TOKEN`,
+`OTHONI_JWT_SECRET`, and admin password, installs and starts the `othoni`
+systemd unit, opens the transport subnet through `ufw` if active,
+smoke-tests `/api/health`, and prints the exact **host / url / token** to
+register on the central. It's idempotent — re-runs re-point `HOST`/`PORT`
+but never rotate existing secrets.
+
+**Manual path.**
+
+1. On the remote VPS, install othoni normally and set
+   `OTHONI_PEER_TOKEN` to a long random string (≥16 chars). Bind it to an
+   address the central can reach privately — e.g. its WireGuard IP
+   (`HOST=10.8.0.5`). The token grants **read-only** (viewer) access: a
+   holder can GET every page but can never change anything.
+2. On the central othoni, open **Settings → Federated peers** and add the
+   peer: a `host` label, its `url` (e.g. `http://10.8.0.5:8088`), and the
+   same token. (Stored in `data/peers.json`, mode 0600; the token is never
+   returned by the API.)
+3. The peer now appears in the top-bar **host switcher** under "Federated
+   hosts". Pick it and every data page re-fetches that host's live stats
+   through the central's read-only proxy (`GET /api/fleet/:host/*`). A
+   `remote · <host>` chip marks the remote view; "This server (live)"
+   returns to the local box. Account and fleet management always stay on
+   the central instance.
+
+Because the central proxy is **read-only**, mutating controls (restart a
+project, edit alert rules, run a remediation) are disabled for a remote
+host — they'd return 405. To change a peer's configuration, log into that
+peer's own UI directly.
+
+Run the peer over a private transport (WireGuard, a VPN, or a firewalled
+internal network) — the peer token is a bearer credential, so don't expose
+the peer's port to the open internet. Since the transport already encrypts
+the link, a plain `http://` peer URL is fine. There's a full walkthrough
+(including the WireGuard setup) in [`docs/federation-peers.md`](docs/federation-peers.md).
+
 ## Security notes
 
 - Always change `OTHONI_ADMIN_PASSWORD` and set a unique `OTHONI_JWT_SECRET` in
@@ -476,10 +548,10 @@ with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
 ## Roadmap (not built yet)
 
-- Per-process kill / service restart actions (opt-in, requires elevated perms)
-- Auth: optional read-only second user
-- Multi-host: per-host dashboard views (today everything lands in one
-  flat namespace; v0.23.0 attributes metric names by host, v0.25.0
-  bundles a remote agent)
+- **Alert-rule silencing / mute windows** — suppress a rule (or all
+  rules) during planned maintenance while still recording the suppressed
+  fire
+- **On-call rotation** — time-window routing so different webhook
+  destinations receive alerts on a schedule
 
 See `ROADMAP.md` for details and `CHANGELOG.md` for what's already shipped.

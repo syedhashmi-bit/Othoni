@@ -33,6 +33,8 @@ const vacuum = require('../vacuum');
 const projects = require('../projects');
 const securityAudit = require('../security-audit');
 const users = require('../users');
+const peers = require('../peers');
+const fleetRouter = require('./fleet');
 
 const router = express.Router();
 
@@ -872,6 +874,56 @@ router.delete('/users/:id', requireAdminExplicit, (req, res) => {
   res.json({ ok: true, revokedSessions: revoked });
 });
 
+// ---------- Federation peers (v0.69) ----------
+// A peer is another full othoni instance on a remote VPS, reachable over a
+// trusted transport (WireGuard). Registering one lets every data page render
+// that host's live stats via the read-only /api/fleet/:host/* proxy below.
+// List is GET (viewer-visible, tokens stripped); create/delete are admin-only
+// via the router-level requireAdmin guard.
+
+router.get('/peers', (req, res) => {
+  res.json({ peers: peers.listSafe() });
+});
+
+router.put('/peers/:host', (req, res) => {
+  try {
+    const saved = peers.upsert({
+      host: req.params.host,
+      url: req.body && req.body.url,
+      token: req.body && req.body.token,
+      label: req.body && req.body.label,
+    });
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'peer.upsert',
+      target: saved.host,
+      metadata: { url: saved.url, label: saved.label },
+    });
+    res.json({ peer: saved });
+  } catch (e) {
+    if (['invalid_host', 'invalid_url', 'invalid_token', 'invalid_label'].includes(e.code)) {
+      return res.status(400).json({ error: e.code, message: e.message });
+    }
+    logger.error('peers upsert failed:', e.message);
+    res.status(500).json({ error: 'peers_failed', message: e.message });
+  }
+});
+
+router.delete('/peers/:host', (req, res) => {
+  const ok = peers.remove(req.params.host);
+  if (!ok) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'peer.delete',
+    target: req.params.host,
+  });
+  res.json({ ok: true });
+});
+
+// Read-only reverse proxy to a registered peer. GET-only, enforced both here
+// and on the peer (synthetic viewer session). Lives under the cookie wall.
+router.use('/fleet', fleetRouter);
+
 // Settings (server-side bits the UI may want to display)
 router.get('/settings', (req, res) => {
   res.json({
@@ -881,6 +933,7 @@ router.get('/settings', (req, res) => {
     hostname: require('os').hostname(),
     version: require('../../package.json').version,
     nodeEnv: process.env.NODE_ENV || 'development',
+    peerToken: require('../auth').peerTokenEnabled(),
   });
 });
 

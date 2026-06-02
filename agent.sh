@@ -17,6 +17,13 @@
 #                   (SSH config, pending reboot, package updates, firewall)
 #                   to POST /api/security-audit/ingest. Off by default.
 #   OTHONI_AUDIT_INTERVAL  audit cadence in seconds (default 3600, min 300)
+#   OTHONI_ORIGIN_IP  bypass a CDN/proxy (e.g. Cloudflare) sitting in front of
+#                   the dashboard by connecting straight to the origin server
+#                   at this IP. TLS/SNI/cert validation still use the hostname
+#                   from OTHONI_URL, so HTTPS stays verified end-to-end — only
+#                   the DNS step is overridden. The origin must accept direct
+#                   connections (open its firewall to this agent's IP). Unset
+#                   = resolve the hostname normally (through the CDN).
 #
 # Run once for a single tick (handy for cron):
 #   OTHONI_URL=... OTHONI_API_KEY=... ./agent.sh --once
@@ -97,6 +104,37 @@ fi
 URL="${URL_BASE%/}/api/metrics"
 AUDIT_URL="${URL_BASE%/}/api/security-audit/ingest"
 
+# Origin pinning. When OTHONI_ORIGIN_IP is set, force curl to connect to that
+# IP while keeping the hostname from OTHONI_URL for SNI, the Host header and
+# certificate validation (curl --resolve host:port:ip). This sidesteps a
+# CDN/proxy such as Cloudflare whose browser challenge would otherwise block
+# the API client, without weakening TLS. RESOLVE_OPT stays empty otherwise and
+# is expanded unquoted at the curl call so it contributes zero args when off.
+RESOLVE_OPT=""
+if [ -n "${OTHONI_ORIGIN_IP:-}" ]; then
+  case "$OTHONI_ORIGIN_IP" in
+    '' | *[!0-9a-fA-F:.]* )
+      echo "othoni-agent: OTHONI_ORIGIN_IP '$OTHONI_ORIGIN_IP' is not a valid IP" >&2
+      exit 1 ;;
+  esac
+  # Derive host[:port] from OTHONI_URL; default the port from the scheme.
+  pin_rest=${URL_BASE#*://}
+  pin_hostport=${pin_rest%%/*}
+  case "$pin_hostport" in
+    \[*\]:*) pin_host=${pin_hostport%]:*}; pin_host=${pin_host#[}; pin_port=${pin_hostport##*:} ;;
+    \[*\])   pin_host=${pin_hostport#[}; pin_host=${pin_host%]}; pin_port="" ;;
+    *:*)     pin_host=${pin_hostport%:*}; pin_port=${pin_hostport##*:} ;;
+    *)       pin_host=$pin_hostport; pin_port="" ;;
+  esac
+  if [ -z "$pin_port" ]; then
+    case "$URL_BASE" in
+      http://*) pin_port=80 ;;
+      *)        pin_port=443 ;;
+    esac
+  fi
+  RESOLVE_OPT="--resolve $pin_host:$pin_port:$OTHONI_ORIGIN_IP"
+fi
+
 # /proc/stat cpu line → "total idle" where total = sum(user..steal) and
 # idle = idle + iowait. Diff between successive reads gives CPU %.
 read_cpu() {
@@ -156,7 +194,7 @@ post_batch() {
   # Use --fail-with-body when available so we get a useful error message
   # rather than a silent non-zero exit. Fall back to plain --fail if not.
   err=$(printf '%s' "$payload" \
-    | curl -sS --max-time 10 \
+    | curl -sS --max-time 10 $RESOLVE_OPT \
         -X POST "$URL" \
         -H "Authorization: Bearer $API_KEY" \
         -H "Content-Type: application/json" \
@@ -266,7 +304,7 @@ push_audit() {
   collect_audit
   payload=$(printf '{"host":"%s","findings":[%s]}' "$HOST" "$AUDIT_FINDINGS")
   err=$(printf '%s' "$payload" \
-    | curl -sS --max-time 15 \
+    | curl -sS --max-time 15 $RESOLVE_OPT \
         -X POST "$AUDIT_URL" \
         -H "Authorization: Bearer $API_KEY" \
         -H "Content-Type: application/json" \

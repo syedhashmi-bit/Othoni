@@ -1427,6 +1427,206 @@ function ApiKeysCard() {
   );
 }
 
+function PeersCard() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
+  const [peers, setPeers] = useState(null);
+  const [host, setHost] = useState('');
+  const [url, setUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [label, setLabel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  function refresh() {
+    api.peers.list()
+      .then((r) => setPeers(r.peers || []))
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(() => { refresh(); }, []);
+
+  async function add(e) {
+    e?.preventDefault();
+    if (!host.trim() || !url.trim() || !token.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.peers.upsert(host.trim(), { url: url.trim(), token: token.trim(), label: label.trim() || undefined });
+      setHost(''); setUrl(''); setToken(''); setLabel('');
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(h) {
+    if (!confirm(`Remove federated peer "${h}"? Its dashboard view will stop working.`)) return;
+    try {
+      await api.peers.remove(h);
+      refresh();
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Federated peers</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Register another othoni instance (full stack on a remote VPS, reachable over
+            a trusted transport like WireGuard). Once added it appears in the top-bar host
+            switcher, and every dashboard page renders that host's live stats through the
+            read-only <code>/api/fleet</code> proxy. The token is each peer's
+            {' '}<code>OTHONI_PEER_TOKEN</code>.
+          </div>
+        </div>
+      </div>
+
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      {isAdmin && (
+        <form
+          onSubmit={add}
+          autoComplete="off"
+          style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}
+        >
+          {/* Absorbs browser/password-manager autofill so it never lands in url/token */}
+          <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
+          <input type="password" name="password" autoComplete="current-password" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 150 }}>
+            <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>Host</span>
+            <input
+              type="text"
+              name="peer_host"
+              autoComplete="off"
+              placeholder="us-vps"
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+              maxLength={40}
+              className="input"
+            />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 220px', minWidth: 200 }}>
+            <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>URL</span>
+            <input
+              type="url"
+              name="peer_url"
+              autoComplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              placeholder="http://10.8.0.5:8088"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              maxLength={200}
+              className="input"
+            />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 180 }}>
+            <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>Peer token</span>
+            <input
+              type="password"
+              name="peer_token"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              placeholder="OTHONI_PEER_TOKEN"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              maxLength={256}
+              className="input"
+            />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 150 }}>
+            <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>Label <span style={{ textTransform: 'none', opacity: 0.6 }}>(optional)</span></span>
+            <input
+              type="text"
+              name="peer_label"
+              autoComplete="off"
+              placeholder="US — Hillsboro"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              maxLength={80}
+              className="input"
+            />
+          </label>
+
+          <button
+            type="submit"
+            className="btn compact"
+            disabled={busy || !host.trim() || !url.trim() || !token.trim()}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36 }}
+          >
+            <IconPlus /> Add peer
+          </button>
+        </form>
+      )}
+
+      {peers != null && peers.length === 0 && (
+        <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
+          No federated peers yet. Add one above to view a remote VPS's full dashboard.
+        </div>
+      )}
+
+      {peers != null && peers.length > 0 && (
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {peers.map((p) => (
+            <div
+              key={p.host}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 14,
+                padding: '10px 14px', borderRadius: 8,
+                background: 'var(--surface-2, rgba(255,255,255,0.03))',
+                border: '1px solid var(--border, rgba(255,255,255,0.06))',
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span className="mono" style={{ fontWeight: 600 }}>{p.host}</span>
+                  {p.label && (
+                    <span className="chip" style={{ fontSize: 11 }}>{p.label}</span>
+                  )}
+                </div>
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mono dim"
+                  style={{ fontSize: 12, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  title={p.url}
+                >
+                  {p.url}
+                </a>
+              </div>
+              <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                added {formatRelative(p.addedAt)}
+              </span>
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => remove(p.host)}
+                  title="Remove peer"
+                  aria-label={`Remove peer ${p.host}`}
+                >
+                  <IconTrash />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Settings() {
   const { refreshMs, setRefreshMs, density, setDensity, user } = useApp();
   const [server, setServer] = useState(null);
@@ -1533,6 +1733,10 @@ export default function Settings() {
       <div className="spacer-md" />
 
       <HostsCard />
+
+      <div className="spacer-md" />
+
+      <PeersCard />
 
       <div className="spacer-md" />
 

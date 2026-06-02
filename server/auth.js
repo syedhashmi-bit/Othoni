@@ -107,7 +107,24 @@ function readToken(req) {
   return null;
 }
 
+// Federation read path. A central othoni proxies dashboard GETs to this
+// instance with the shared OTHONI_PEER_TOKEN as a Bearer credential. We grant
+// a synthetic *viewer* session: `requireAdmin` downstream enforces GET/HEAD
+// only, so a peer can read everything a viewer can but can never mutate state.
+// Off entirely unless OTHONI_PEER_TOKEN is set (and non-trivially long).
+function peerTokenValid(req) {
+  const expected = process.env.OTHONI_PEER_TOKEN;
+  if (typeof expected !== 'string' || expected.trim().length < 16) return false;
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer ')) return false;
+  return constantTimeEqual(header.slice(7).trim(), expected);
+}
+
 function auth(req, res, next) {
+  if (peerTokenValid(req)) {
+    req.user = { username: 'peer', role: 'viewer', sid: null, peer: true };
+    return next();
+  }
   const token = readToken(req);
   if (!token) return res.status(401).json({ error: 'unauthorized' });
   const decoded = verify(token);
@@ -305,4 +322,11 @@ function me(req, res) {
   res.json({ user: req.user });
 }
 
-module.exports = { auth, requireAdmin, login, logout, me, COOKIE_NAME, totpEnabled, viewerEnabled, assertProductionSecrets };
+// True iff this instance accepts a federation peer token (i.e. it can be
+// read by a central othoni). Surfaced via /api/settings for the UI.
+function peerTokenEnabled() {
+  const t = process.env.OTHONI_PEER_TOKEN;
+  return typeof t === 'string' && t.trim().length >= 16;
+}
+
+module.exports = { auth, requireAdmin, login, logout, me, COOKIE_NAME, totpEnabled, viewerEnabled, peerTokenEnabled, assertProductionSecrets };

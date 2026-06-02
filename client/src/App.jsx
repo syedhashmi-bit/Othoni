@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, createContext, useContext } from 'react';
 import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
-import { api } from './api';
+import { api, setActiveHost } from './api';
 import { useLocalSetting, useInFlightCount } from './hooks';
 import { notifyFire } from './alerts';
 import { AlertBadge, AlertsPopover } from './AlertsPopover.jsx';
@@ -218,7 +218,70 @@ function DensityToggle({ density, setDensity }) {
   );
 }
 
-function Shell({ user, onLogout, children, refreshMs, density, setDensity, activeAlerts, onShortcutsClick }) {
+// Topbar dropdown to switch which host's dashboard is in view.
+//
+// - "This server (live)" → the local box othoni runs on (every page reads
+//   /proc directly).
+// - "All hosts grid" → the /hosts overview of agent-pushed metrics.
+// - "Federated hosts" → registered peers (full othoni instances on other
+//   VPS). Selecting one sets the *view host*: every data page transparently
+//   re-fetches that peer's stats through the read-only /api/fleet proxy, so
+//   the complete dashboard reflects the remote box.
+//
+// The peer list refreshes every 30s so a freshly-registered peer appears
+// shortly after it's added on Settings.
+function HostSwitcher() {
+  const navigate = useNavigate();
+  const { viewHost, setViewHost } = useApp();
+  const [peers, setPeers] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api.peers.list()
+        .then((r) => { if (alive) setPeers(r.peers || []); })
+        .catch(() => { /* transient — next tick retries */ });
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  // Keep the active view host selectable even before the list resolves (or
+  // if it dropped out), so the control never shows blank.
+  const names = peers.map((p) => p.host);
+  if (viewHost && !names.includes(viewHost)) names.unshift(viewHost);
+
+  const value = viewHost || '__local';
+
+  function onChange(e) {
+    const v = e.target.value;
+    if (v === '__local') { setViewHost(null); navigate('/'); }
+    else if (v === '__all') { setViewHost(null); navigate('/hosts'); }
+    else { setViewHost(v); navigate('/'); }
+  }
+
+  return (
+    <select
+      className="select"
+      value={value}
+      onChange={onChange}
+      title="Switch dashboard host"
+      style={{ fontSize: 12, padding: '4px 26px 4px 10px', fontWeight: 500 }}
+    >
+      <option value="__local">This server (live)</option>
+      <option value="__all">All hosts grid</option>
+      {names.length > 0 && (
+        <optgroup label="Federated hosts">
+          {names.map((n) => (
+            <option key={n} value={n}>{n} (full dashboard)</option>
+          ))}
+        </optgroup>
+      )}
+    </select>
+  );
+}
+
+function Shell({ user, onLogout, children, refreshMs, density, setDensity, activeAlerts, viewHost, onShortcutsClick }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   return (
     <>
@@ -256,6 +319,16 @@ function Shell({ user, onLogout, children, refreshMs, density, setDensity, activ
         <div className="topbar-title">
           <Logo size={16} />
           <span>VPS monitoring</span>
+          <HostSwitcher />
+          {viewHost && (
+            <span
+              className="chip"
+              title={`Dashboard pages are showing data from the federated peer "${viewHost}" (read-only, proxied).`}
+              style={{ fontSize: 11, background: '#7c3aed', color: '#fff', fontWeight: 600 }}
+            >
+              remote · {viewHost}
+            </span>
+          )}
         </div>
         <div className="topbar-meta">
           {user?.role === 'viewer' && (
@@ -357,6 +430,12 @@ export default function App() {
   const [user, setUser] = useState(undefined); // undefined = unknown, null = logged out
   const [refreshMs, setRefreshMs] = useLocalSetting('othoni.refreshMs', 5000);
   const [density, setDensity] = useLocalSetting('othoni.density', 'comfortable');
+  // Which host's dashboard is in view. null = the local box; otherwise the
+  // `host` of a registered federation peer. Persisted so a refresh keeps the
+  // remote view. Set synchronously below (not in an effect) so the module-
+  // level API base is correct *before* any page's mount fetch fires.
+  const [viewHost, setViewHost] = useLocalSetting('othoni.viewHost', null);
+  setActiveHost(viewHost);
   const navigate = useNavigate();
   const alerts = useServerAlerts(!!user);
 
@@ -427,9 +506,9 @@ export default function App() {
 
   return (
     <AppCtx.Provider
-      value={{ user, refreshMs, setRefreshMs, density, setDensity, onLogout: handleLogout, ...alerts }}
+      value={{ user, refreshMs, setRefreshMs, density, setDensity, viewHost, setViewHost, onLogout: handleLogout, ...alerts }}
     >
-      <AuthedAppBody refreshMs={refreshMs} alerts={alerts} user={user} handleLogout={handleLogout} />
+      <AuthedAppBody refreshMs={refreshMs} alerts={alerts} user={user} handleLogout={handleLogout} viewHost={viewHost} />
     </AppCtx.Provider>
   );
 }
@@ -437,7 +516,7 @@ export default function App() {
 // Split out so `useKeyboardShortcuts` (which calls `useNavigate`) only runs
 // inside the Shell — the unauthenticated branch never mounts the router
 // content and shouldn't install global key listeners.
-function AuthedAppBody({ refreshMs, alerts, user, handleLogout }) {
+function AuthedAppBody({ refreshMs, alerts, user, handleLogout, viewHost }) {
   const { cheatsheetOpen, setCheatsheetOpen } = useKeyboardShortcuts();
   const { density, setDensity } = useApp();
   return (
@@ -448,9 +527,13 @@ function AuthedAppBody({ refreshMs, alerts, user, handleLogout }) {
       density={density}
       setDensity={setDensity}
       activeAlerts={alerts.activeAlerts}
+      viewHost={viewHost}
       onShortcutsClick={() => setCheatsheetOpen((v) => !v)}
     >
-      <Routes>
+      {/* Remount the whole page subtree when the view host changes so every
+          page re-fetches against the new source instead of waiting a poll
+          tick with stale data. */}
+      <Routes key={viewHost || '__local'}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/history" element={<History />} />
         <Route path="/hosts" element={<Hosts />} />

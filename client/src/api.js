@@ -8,6 +8,47 @@ function readCsrfFromCookie() {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+// ---- Federation: active host routing -------------------------------------
+// When a remote peer is selected, the per-host data endpoints are transparently
+// rerouted through the central read-only proxy at /api/fleet/<host>/<path>.
+// Everything else (auth, health, and the fleet/admin surfaces that manage the
+// *central* instance) always talks to the local server.
+let activeHost = null;
+
+// Prefixes whose data is host-scoped — i.e. "show me VPS B's CPU" means asking
+// VPS B, not the central box. Selecting a peer should make the *whole* dashboard
+// reflect that box: metrics, projects, security audit, alerts, checks and
+// remediations all belong to the host you're viewing. Mutations (PUT/POST/DELETE)
+// route through the read-only proxy and return 405 for a remote host — to change
+// a peer's config you log into that peer directly. Genuinely central surfaces
+// (peers registry, users/sessions/keys, webhooks, central audit log, settings,
+// retention/vacuum, host-meta, the Hosts grid) stay on the local instance.
+const HOST_SCOPED = [
+  '/api/system', '/api/cpu', '/api/memory', '/api/disks', '/api/network',
+  '/api/diskio', '/api/connections', '/api/logs', '/api/processes',
+  '/api/docker', '/api/services', '/api/overview', '/api/history',
+  '/api/projects', '/api/security-audit', '/api/actions', '/api/alerts',
+  '/api/checks',
+];
+
+function isHostScoped(path) {
+  return HOST_SCOPED.some((p) => path === p || path.startsWith(`${p}?`) || path.startsWith(`${p}/`));
+}
+
+export function setActiveHost(host) {
+  activeHost = host || null;
+}
+
+export function getActiveHost() {
+  return activeHost;
+}
+
+function resolvePath(path) {
+  if (!activeHost) return path;
+  if (!isHostScoped(path)) return path;
+  return `/api/fleet/${encodeURIComponent(activeHost)}${path}`;
+}
+
 async function request(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const csrfHeaders = {};
@@ -15,7 +56,7 @@ async function request(path, options = {}) {
     const tok = readCsrfFromCookie();
     if (tok) csrfHeaders['X-Othoni-CSRF'] = tok;
   }
-  const res = await fetch(path, {
+  const res = await fetch(resolvePath(path), {
     credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
@@ -137,6 +178,13 @@ export const api = {
     }),
   },
   settings: () => request('/api/settings'),
+  peers: {
+    list:   () => request('/api/peers'),
+    upsert: (host, { url, token, label }) => request(`/api/peers/${encodeURIComponent(host)}`, {
+      method: 'PUT', body: JSON.stringify({ url, token, label }),
+    }),
+    remove: (host) => request(`/api/peers/${encodeURIComponent(host)}`, { method: 'DELETE' }),
+  },
   dbStats: () => request('/api/db/stats'),
   sessions: {
     list:   () => request('/api/sessions'),

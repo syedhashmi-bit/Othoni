@@ -3,7 +3,9 @@
 # The agent runs on a remote host and pushes /proc-based metrics to a
 # central othoni dashboard via POST /api/metrics. Pairs with the v0.23.0
 # multi-host source attribution so each agent's metrics land under
-# `custom.<host>.<leaf>` in the central store.
+# `custom.<host>.<leaf>` in the central store. To monitor a fleet, run one
+# copy of this unit per VPS — give each a distinct OTHONI_HOST and they all
+# show up in the dashboard's host switcher automatically.
 #
 # 1. Copy agent.sh to the remote host (no install required — pure shell):
 #      sudo install -m 0755 agent.sh /usr/local/bin/othoni-agent
@@ -17,6 +19,13 @@
 #      # OTHONI_HOST=app-server-1
 #      # Optional: push cadence in seconds (default 30, min 5).
 #      # OTHONI_INTERVAL=30
+#      # Optional: also push a lightweight security audit (off by default).
+#      # OTHONI_AUDIT=1
+#      # Optional: if the dashboard sits behind a CDN/proxy (e.g. Cloudflare)
+#      # whose bot challenge blocks API clients, connect straight to the
+#      # origin IP. TLS still validates against OTHONI_URL's hostname; just
+#      # open the origin's firewall to this host on 443.
+#      # OTHONI_ORIGIN_IP=203.0.113.10
 #      EOF
 #
 # 3. Install + enable this unit:
