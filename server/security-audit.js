@@ -3,7 +3,9 @@
 // Security audit. Read-only checks across the VPS surface:
 // network ports, SSH configuration, firewall presence, OS package
 // updates, authentication state, filesystem permissions, SUID binaries,
-// TLS cert expiry, sudoers, Docker socket, and unattended-upgrades.
+// TLS cert expiry, sudoers, Docker socket, unattended-upgrades,
+// privileged/passwordless accounts, pending reboot, and kernel-hardening
+// sysctls.
 //
 // Each check is isolated — a failure in one (e.g. ufw not installed)
 // doesn't break the others. All checks read state from /proc or run
@@ -1233,6 +1235,156 @@ function dispatchSecurityEvent(f, host = null) {
   }
 }
 
+// ---------- Accounts (UID 0 + passwordless logins) ----------
+//
+// Two classic local-privesc / backdoor tells, read straight from the
+// account databases (othoni runs as root, so both are readable):
+//   - any account other than `root` with UID 0 (a hidden superuser), and
+//   - a login-capable account with an EMPTY password hash in /etc/shadow
+//     (logs in with no password). Locked accounts (`!`/`*`) are fine.
+
+const SYSTEM_NOLOGIN = /(\/nologin|\/false|\/sync|\/shutdown|\/halt)$/;
+
+async function auditAccounts() {
+  const findings = [];
+  let passwd;
+  try {
+    passwd = fs.readFileSync('/etc/passwd', 'utf8');
+  } catch {
+    return [{ id: 'accounts-unreadable', severity: 'info', category: 'Accounts',
+      title: '/etc/passwd unreadable', detail: 'Skipping account checks.' }];
+  }
+  const users = passwd.split('\n').filter(Boolean).map((l) => {
+    const [name, , uid, , , , shell] = l.split(':');
+    return { name, uid: parseInt(uid, 10), shell: shell || '' };
+  });
+
+  // 1. Extra UID-0 accounts.
+  const uid0 = users.filter((u) => u.uid === 0 && u.name !== 'root').map((u) => u.name);
+  if (uid0.length > 0) {
+    findings.push({
+      id: 'accounts-uid0',
+      severity: 'crit',
+      category: 'Accounts',
+      title: `${uid0.length} non-root account(s) with UID 0`,
+      detail: 'An account other than `root` with UID 0 has full superuser rights — a common backdoor. Remove it or change its UID unless you deliberately created it.',
+      evidence: uid0.join(', '),
+    });
+  } else {
+    findings.push({ id: 'accounts-uid0-clean', severity: 'ok', category: 'Accounts',
+      title: 'root is the only UID 0 account' });
+  }
+
+  // 2. Empty-password login accounts (from /etc/shadow).
+  let shadow = null;
+  try { shadow = fs.readFileSync('/etc/shadow', 'utf8'); } catch { /* not root? skip */ }
+  if (shadow) {
+    const loginNames = new Set(users.filter((u) => !SYSTEM_NOLOGIN.test(u.shell)).map((u) => u.name));
+    const empty = [];
+    for (const line of shadow.split('\n')) {
+      if (!line) continue;
+      const [name, hash] = line.split(':');
+      if (hash === '' && loginNames.has(name)) empty.push(name);
+    }
+    if (empty.length > 0) {
+      findings.push({
+        id: 'accounts-empty-pass',
+        severity: 'crit',
+        category: 'Accounts',
+        title: `${empty.length} login account(s) with an empty password`,
+        detail: 'These accounts log in with no password at all. Set a password (`passwd <user>`) or lock the account (`passwd -l <user>`).',
+        evidence: empty.join(', '),
+      });
+    } else {
+      findings.push({ id: 'accounts-empty-pass-clean', severity: 'ok', category: 'Accounts',
+        title: 'No login accounts with an empty password' });
+    }
+  }
+  return findings;
+}
+
+// ---------- Pending reboot ----------
+//
+// Debian/Ubuntu drop /var/run/reboot-required after an update that needs
+// a restart (notably kernel/libc). A box that hasn't rebooted is still
+// running the old, possibly-vulnerable code.
+
+async function auditReboot() {
+  if (!fs.existsSync('/var/run/reboot-required') && !fs.existsSync('/run/reboot-required')) {
+    return [{ id: 'reboot-clean', severity: 'ok', category: 'System',
+      title: 'No pending reboot' }];
+  }
+  let pkgs = '';
+  for (const p of ['/var/run/reboot-required.pkgs', '/run/reboot-required.pkgs']) {
+    try { pkgs = fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).join(', '); break; } catch { /* none */ }
+  }
+  return [{
+    id: 'reboot-required',
+    severity: 'warn',
+    category: 'System',
+    title: 'Reboot required to finish applying updates',
+    detail: 'An installed update (often the kernel or libc) only takes effect after a restart. Until you reboot, the box keeps running the old code. Schedule a reboot.',
+    evidence: pkgs ? `Packages: ${pkgs}` : undefined,
+  }];
+}
+
+// ---------- Kernel hardening sysctls ----------
+//
+// A few cheap /proc/sys reads that flag a weakened kernel posture. Read
+// from procfs (no spawn). We only flag the ones with a clear "should be"
+// value; informational ones stay info.
+
+function readSysctl(key) {
+  try {
+    return fs.readFileSync('/proc/sys/' + key.replace(/\./g, '/'), 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+async function auditKernel() {
+  const findings = [];
+  const aslr = readSysctl('kernel.randomize_va_space');
+  if (aslr != null) {
+    if (aslr === '2') {
+      findings.push({ id: 'kernel-aslr-ok', severity: 'ok', category: 'Kernel',
+        title: 'ASLR fully enabled (randomize_va_space=2)' });
+    } else {
+      findings.push({
+        id: 'kernel-aslr-weak',
+        severity: 'warn',
+        category: 'Kernel',
+        title: `ASLR weakened (randomize_va_space=${aslr})`,
+        detail: 'Address-space layout randomization makes memory-corruption exploits much harder. The hardened value is 2. Set `kernel.randomize_va_space = 2` in /etc/sysctl.d and run `sysctl --system`.',
+        evidence: `kernel.randomize_va_space = ${aslr}`,
+      });
+    }
+  }
+  const fwd = readSysctl('net.ipv4.ip_forward');
+  if (fwd === '1') {
+    findings.push({
+      id: 'kernel-ip-forward',
+      severity: 'info',
+      category: 'Kernel',
+      title: 'IP forwarding is enabled',
+      detail: 'net.ipv4.ip_forward=1 turns the host into a router. Expected on a NAT gateway / VPN / Docker host; if this box is none of those, disable it.',
+      evidence: 'net.ipv4.ip_forward = 1',
+    });
+  }
+  const dmesg = readSysctl('kernel.dmesg_restrict');
+  if (dmesg === '0') {
+    findings.push({
+      id: 'kernel-dmesg',
+      severity: 'info',
+      category: 'Kernel',
+      title: 'Kernel log readable by unprivileged users (dmesg_restrict=0)',
+      detail: 'Unprivileged users can read the kernel ring buffer, which can leak addresses useful for exploits. Set `kernel.dmesg_restrict = 1`.',
+      evidence: 'kernel.dmesg_restrict = 0',
+    });
+  }
+  return findings;
+}
+
 // ---------- Orchestration ----------
 
 async function runAudit({ force = false, source = 'manual' } = {}) {
@@ -1253,6 +1405,9 @@ async function runAudit({ force = false, source = 'manual' } = {}) {
     auditSudoers().catch((e) => { logger.warn(`audit sudoers: ${e.message}`); return []; }),
     auditDocker().catch((e) => { logger.warn(`audit docker: ${e.message}`); return []; }),
     auditAutoUpgrades().catch((e) => { logger.warn(`audit auto-upgrades: ${e.message}`); return []; }),
+    auditAccounts().catch((e) => { logger.warn(`audit accounts: ${e.message}`); return []; }),
+    auditReboot().catch((e) => { logger.warn(`audit reboot: ${e.message}`); return []; }),
+    auditKernel().catch((e) => { logger.warn(`audit kernel: ${e.message}`); return []; }),
   ]);
   const allFindings = groups.flat();
 

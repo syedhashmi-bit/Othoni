@@ -8,6 +8,29 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.72.0] — 2026-06-05
+
+Three new security-audit checks, all read straight from `/proc` and `/etc`
+(no extra process spawns), flowing through the existing diff / snooze / webhook
+pipeline.
+
+### Added
+
+- **Accounts check.** Flags any non-root account with **UID 0** (a hidden
+  superuser / common backdoor — crit) and any **login account with an empty
+  password** in `/etc/shadow` (crit). Locked accounts (`!`/`*`) and
+  nologin/false system accounts are ignored.
+- **Pending-reboot check.** Warns when `/var/run/reboot-required` is present
+  (an installed update — often the kernel or libc — only takes effect after a
+  restart), listing the packages that need it.
+- **Kernel-hardening check.** Reads a few `/proc/sys` values: **ASLR**
+  (`kernel.randomize_va_space`; warns if weakened from the hardened `2`),
+  **IP forwarding** enabled (info — expected on a router/VPN/Docker host),
+  and an **unprivileged-readable kernel log** (`kernel.dmesg_restrict=0`, info).
+
+(The previously-listed SUID, world-writable-directory, TLS-cert-expiry, and
+sudoers-NOPASSWD checks were already shipped in earlier releases.)
+
 ## [0.71.0] — 2026-06-05
 
 Continues the lightweight-first push: the fleet map gets **IP auto-location**, a
@@ -4101,6 +4124,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.72.0]: #0720--2026-06-05
 [0.71.0]: #0710--2026-06-05
 [0.70.0]: #0700--2026-06-05
 [0.69.1]: #0691--2026-06-02
