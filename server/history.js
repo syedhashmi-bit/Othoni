@@ -16,6 +16,11 @@ const DB_PATH = process.env.OTHONI_DB || path.join(__dirname, '..', 'data', 'oth
 const SAMPLE_INTERVAL_MS = parseInt(process.env.OTHONI_SAMPLE_MS || '5000', 10);
 const RETENTION_MS = parseInt(process.env.OTHONI_RETENTION_MS || String(24 * 60 * 60 * 1000), 10);
 const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+// Pause sampler writes when the data partition is nearly full, so a runaway
+// disk can't push SQLite into an error/corruption state. Surfaced on
+// /api/health as `storage.degraded`.
+const DISK_MIN_FREE_PCT = parseFloat(process.env.OTHONI_DISK_MIN_FREE_PCT || '5');
+const STORAGE_CHECK_MS = 60 * 1000;
 
 // Metrics we track. Each entry maps a metric name to a function that produces
 // its current value from the (already-collected) snapshot. Per-core CPU is
@@ -88,10 +93,23 @@ function isCustomMetric(name) {
   return typeof name === 'string' && CUSTOM_METRIC_PATTERN.test(name);
 }
 
-// Skip veth* (Docker-created container-side bridge halves — they churn and
-// would leave thousands of orphan series in the DB). Loopback is also skipped.
+// Ephemeral / container-side virtual interfaces churn constantly (created and
+// destroyed per container/pod) and would leave thousands of orphan series in
+// the DB. Filter those from per-interface history; real VPN tunnels (wg/tun/
+// tap) and stable bridges (docker0/br-) are KEPT since their traffic is
+// usually meaningful. Loopback is always skipped. Override the whole policy
+// with OTHONI_NET_IFACE_ALLOW (comma list; a trailing `+` is a prefix match,
+// e.g. `eth+,enp+,wg+`) to keep only the interfaces you name.
+const IFACE_ALLOW = (process.env.OTHONI_NET_IFACE_ALLOW || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const VIRTUAL_IFACE_RE = /^(veth|cali|cni|flannel|weave|nomad|vxlan|ifb|dummy|gre|lxcbr)/;
+
 function isHistorableIface(name) {
-  return name !== 'lo' && !/^veth/.test(name);
+  if (name === 'lo') return false;
+  if (IFACE_ALLOW.length) {
+    return IFACE_ALLOW.some((p) => (p.endsWith('+') ? name.startsWith(p.slice(0, -1)) : name === p));
+  }
+  return !VIRTUAL_IFACE_RE.test(name);
 }
 
 const RANGES = {
@@ -104,6 +122,8 @@ const RANGES = {
 let db = null;
 let sampleTimer = null;
 let cleanupTimer = null;
+let storageTimer = null;
+let storage = { degraded: false, freeBytes: null, freePct: null, checkedAt: 0 };
 let lastSnap = null;
 // Tracks every metric name we've ever inserted. Seeded once at startup from
 // SELECT DISTINCT so restarts don't miss metrics added in prior runs. Updated
@@ -222,6 +242,34 @@ function migrate(db) {
 const insertStmt = () =>
   open().prepare('INSERT INTO samples (metric, t, v) VALUES (?, ?, ?)');
 
+// Check free space on the data partition. Uses fs.statfsSync (Node 18+);
+// silently no-ops if the platform doesn't support it (stays not-degraded).
+function checkStorage() {
+  try {
+    const st = fs.statfsSync(path.dirname(DB_PATH));
+    const freeBytes = st.bavail * st.bsize;
+    const totalBytes = st.blocks * st.bsize;
+    const freePct = totalBytes > 0 ? (freeBytes / totalBytes) * 100 : 100;
+    const degraded = freePct < DISK_MIN_FREE_PCT;
+    if (degraded && !storage.degraded) {
+      logger.warn(`history: data partition ${freePct.toFixed(1)}% free (< ${DISK_MIN_FREE_PCT}%) — pausing sampler writes`);
+    } else if (!degraded && storage.degraded) {
+      logger.info(`history: data partition recovered (${freePct.toFixed(1)}% free) — resuming sampler writes`);
+    }
+    storage = { degraded, freeBytes, freePct, checkedAt: Date.now() };
+  } catch {
+    // statfsSync unsupported / failed — leave storage as-is (not degraded).
+  }
+}
+
+function getStorage() {
+  return {
+    degraded: storage.degraded,
+    freePct: storage.freePct == null ? null : Math.round(storage.freePct * 10) / 10,
+    freeBytes: storage.freeBytes,
+  };
+}
+
 async function takeSample() {
   const t = Date.now();
   const [cpu, memory, network, disks, diskio, connections] = await Promise.all([
@@ -285,7 +333,9 @@ async function takeSample() {
     }
   }
 
-  if (rows.length) {
+  // Pause writes when the partition is nearly full. lastSnap is still updated
+  // above, so the live dashboard keeps working — only history persistence stops.
+  if (rows.length && !storage.degraded) {
     if (seenMetrics) for (const r of rows) seenMetrics.add(r.metric);
     const tx = db.transaction((items) => {
       const stmt = insertStmt();
@@ -364,6 +414,9 @@ function start() {
     SAMPLE_INTERVAL_MS
   );
   cleanupTimer = setInterval(cleanup, CLEANUP_INTERVAL_MS);
+  checkStorage();
+  storageTimer = setInterval(checkStorage, STORAGE_CHECK_MS);
+  storageTimer.unref?.();
   logger.info(
     `history: sampling every ${SAMPLE_INTERVAL_MS}ms, retaining ${Math.round(RETENTION_MS / 3600000)}h, db=${DB_PATH}`
   );
@@ -372,10 +425,12 @@ function start() {
 function stop() {
   if (sampleTimer) clearInterval(sampleTimer);
   if (cleanupTimer) clearInterval(cleanupTimer);
+  if (storageTimer) clearInterval(storageTimer);
   if (db) db.close();
   db = null;
   sampleTimer = null;
   cleanupTimer = null;
+  storageTimer = null;
 }
 
 // Query helper. Downsamples to ~maxPoints by averaging within fixed-width
@@ -561,4 +616,5 @@ module.exports = {
   listMetrics,
   getDb,
   getLastSnap,
+  getStorage,
 };

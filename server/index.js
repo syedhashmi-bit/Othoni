@@ -85,6 +85,7 @@ app.get('/favicon.ico', (_req, res) => res.status(204).end());
 // Public endpoints
 app.get('/api/health', (_req, res) => {
   const lockout = loginLockout.snapshot();
+  const store = history.getStorage();
   res.json({
     ok: true,
     version: VERSION,
@@ -98,6 +99,12 @@ app.get('/api/health', (_req, res) => {
         // Surfaces auth-surface degradation for a future status-page integration.
         degraded: lockout.lockedNow > 0,
       },
+    },
+    storage: {
+      // True when the data partition is nearly full and the sampler has paused
+      // writing history to avoid pushing SQLite into an error state.
+      degraded: store.degraded,
+      freePct: store.freePct,
     },
   });
 });

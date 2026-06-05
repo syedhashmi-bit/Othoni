@@ -448,6 +448,13 @@ async function fireOne(w, event) {
   return false;
 }
 
+// Per-(destination, rule) cooldown so a flapping rule (fires → resolves →
+// fires every few seconds) can't hammer a webhook endpoint at its full firing
+// rate. Keyed by rule too, so two *different* rules firing close together both
+// still get through. Default 30s; set OTHONI_WEBHOOK_COOLDOWN_MS=0 to disable.
+const WEBHOOK_COOLDOWN_MS = parseInt(process.env.OTHONI_WEBHOOK_COOLDOWN_MS || '30000', 10);
+const lastDispatchAt = new Map(); // `${webhookId}|${ruleId}` -> timestamp
+
 // Called by the alert engine on each rule fire. Fires every enabled webhook
 // whose hostFilter matches the alert's origin host in parallel (don't
 // await — let them race; failures are logged). Empty hostFilter = match
@@ -455,9 +462,20 @@ async function fireOne(w, event) {
 function dispatch(event) {
   load();
   const alertHost = event && event.rule && event.rule.host;
+  const ruleId = (event && event.rule && event.rule.id) || 'na';
+  const now = Date.now();
   for (const w of cache.webhooks) {
     if (!w.enabled) continue;
     if (!matchesHostFilter(w.hostFilter || '', alertHost)) continue;
+    if (WEBHOOK_COOLDOWN_MS > 0) {
+      const key = `${w.id}|${ruleId}`;
+      const last = lastDispatchAt.get(key) || 0;
+      if (now - last < WEBHOOK_COOLDOWN_MS) {
+        logger.info(`webhooks: ${w.id} skipped for rule ${ruleId} (cooldown, ${Math.round((WEBHOOK_COOLDOWN_MS - (now - last)) / 1000)}s left)`);
+        continue;
+      }
+      lastDispatchAt.set(key, now);
+    }
     fireOne(w, event).catch(() => { /* already logged by fireOne */ });
   }
 }

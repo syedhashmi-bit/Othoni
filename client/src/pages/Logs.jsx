@@ -489,6 +489,7 @@ export default function Logs() {
             className="input mono"
             style={{ width: 200 }}
           />
+          <span className="dim" style={{ fontSize: 11 }}>(your local time)</span>
           {jumpAt && (
             <button
               type="button"

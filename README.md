@@ -173,6 +173,9 @@ $EDITOR .env
 | `OTHONI_SAMPLE_MS`      | `5000`       | sampling interval in ms                     |
 | `OTHONI_PROC_SAMPLE_MS` | `30000`      | process-trends sampling interval in ms      |
 | `OTHONI_RETENTION_MS`   | `86400000`   | how long to keep samples (default 24 h)     |
+| `OTHONI_DISK_MIN_FREE_PCT` | `5`       | pause history writes (and set `storage.degraded` on `/api/health`) when the data partition drops below this % free |
+| `OTHONI_NET_IFACE_ALLOW` | unset       | comma list (with `eth+` prefix syntax) pinning which interfaces get per-interface history series; unset = keep all but ephemeral container/CNI interfaces |
+| `OTHONI_WEBHOOK_COOLDOWN_MS` | `30000`  | per-(destination, rule) cooldown so a flapping alert can't hammer a webhook; `0` disables |
 | `OTHONI_LOGS_ENABLED`   | unset        | set `true` to enable `/api/logs` + Logs page |
 | `OTHONI_TOTP_SECRET`    | unset        | base32 secret to require a TOTP code on login (see `npm run totp:setup`) |
 | `OTHONI_LOGIN_LOCKOUT_USER_FAILS` | `20` | consecutive failures (across all IPs) before a username is locked out — catches distributed guessing; per-IP lock still trips at `OTHONI_LOGIN_LOCKOUT_FAILS` (`5`) |

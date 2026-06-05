@@ -281,6 +281,14 @@ function rateAt(metricName, windowMs, now) {
   return (last.v - first.v) / minutes;
 }
 
+// Monotonic clock in ms (since an arbitrary process-relative origin). Unlike
+// Date.now(), it never jumps backward on an NTP step, so it's what we use to
+// measure *elapsed* sustained-breach time and action cooldowns. Date.now() is
+// still used for the wall-clock timestamps we persist.
+function monoNow() {
+  return Number(process.hrtime.bigint() / 1_000_000n);
+}
+
 async function tick() {
   load();
   if (rules.length === 0) { activeCache = []; return; }
@@ -294,11 +302,12 @@ async function tick() {
   }
 
   const now = Date.now();
+  const mono = monoNow();
   const fires = [];
   for (const rule of rules) {
-    const prev = state[rule.id] || { firstBreachAt: null, firing: false, lastValue: null };
+    const prev = state[rule.id] || { firstBreachAt: null, firstBreachMono: null, firing: false, lastValue: null };
     if (!rule.enabled) {
-      state[rule.id] = { firstBreachAt: null, firing: false, lastValue: prev.lastValue };
+      state[rule.id] = { firstBreachAt: null, firstBreachMono: null, firing: false, lastValue: prev.lastValue };
       continue;
     }
     const meta = METRICS[rule.metric];
@@ -320,7 +329,7 @@ async function tick() {
       value = meta.extract(snap);
     }
     if (value == null) {
-      state[rule.id] = { firstBreachAt: null, firing: false, lastValue: null };
+      state[rule.id] = { firstBreachAt: null, firstBreachMono: null, firing: false, lastValue: null };
       continue;
     }
     let breach;
@@ -332,12 +341,16 @@ async function tick() {
       default:         breach = false;
     }
     if (!breach) {
-      state[rule.id] = { firstBreachAt: null, firing: false, lastValue: value };
+      state[rule.id] = { firstBreachAt: null, firstBreachMono: null, firing: false, lastValue: value };
       continue;
     }
+    // Elapsed sustained time is measured on the monotonic clock (NTP-immune);
+    // firstBreachAt is kept only as a wall-clock "breaching since" marker.
+    const firstBreachMono = prev.firstBreachMono ?? mono;
     const firstBreachAt = prev.firstBreachAt ?? now;
-    const firing = (now - firstBreachAt) >= rule.durationMs;
-    state[rule.id] = { firstBreachAt, firing, lastValue: value };
+    const sustainedFor = Math.max(0, mono - firstBreachMono);
+    const firing = sustainedFor >= rule.durationMs;
+    state[rule.id] = { firstBreachAt, firstBreachMono, firing, lastValue: value };
     if (firing && !prev.firing) {
       const valueFmt = isRate ? formatRateValue(meta, value) : meta.format(value);
       const thresholdFmt = isRate ? formatRateValue(meta, rule.threshold) : meta.format(rule.threshold);
@@ -346,7 +359,7 @@ async function tick() {
         value,
         valueFmt,
         thresholdFmt,
-        sustainedFor: now - firstBreachAt,
+        sustainedFor,
       });
     }
   }
@@ -371,7 +384,7 @@ async function tick() {
       }
       // Fire any wired action. Fire-and-forget; the action framework handles
       // its own audit-logging. Cooldown is enforced per rule.
-      dispatchOnFire(f, now).catch((e) =>
+      dispatchOnFire(f, mono).catch((e) =>
         logger.warn(`alerts: onFire for rule ${f.rule.id} threw: ${e.message}`)
       );
     }
@@ -385,7 +398,8 @@ async function dispatchOnFire(fireEvent, firedAt) {
 
   // Cooldown — never re-run within max(durationMs, 60s) of the prior
   // dispatch for this rule. Prevents a flapping alert from looping a
-  // service restart.
+  // service restart. `firedAt` is a monotonic-clock ms value (see monoNow),
+  // so an NTP step can't shorten or lengthen the cooldown.
   const cooldownMs = Math.max(rule.durationMs || 0, ACTION_COOLDOWN_FLOOR_MS);
   const lastAt = lastActionFiredAt.get(rule.id) || 0;
   if (firedAt - lastAt < cooldownMs) {
@@ -457,7 +471,7 @@ function projectActive() {
       severity: rule.severity,
       value: s.lastValue,
       valueFmt: isRate ? formatRateValue(meta, s.lastValue) : meta.format(s.lastValue),
-      sustainedFor: Date.now() - (s.firstBreachAt || Date.now()),
+      sustainedFor: s.firstBreachMono != null ? Math.max(0, monoNow() - s.firstBreachMono) : 0,
     });
   }
   out.sort((a, b) => {

@@ -8,6 +8,45 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.73.0] — 2026-06-05
+
+A hardening pass — six robustness fixes from the backlog, no new surface beyond
+a `/api/health` field and a few opt-in env vars.
+
+### Added
+
+- **Disk-full guard.** The sampler checks the data partition every 60s and
+  **pauses history writes** when free space drops below
+  `OTHONI_DISK_MIN_FREE_PCT` (default 5%), so a full disk can't push SQLite into
+  an error state. The live dashboard keeps working (only persistence pauses).
+  Surfaced on `/api/health` as `storage: { degraded, freePct }`.
+- **`OTHONI_NET_IFACE_ALLOW`.** Optional comma-list (with `eth+` prefix syntax)
+  to pin exactly which network interfaces get per-interface history series.
+
+### Changed
+
+- **Per-(destination, rule) webhook cooldown.** A flapping rule
+  (fires→resolves→fires) can no longer hammer a webhook endpoint —
+  `OTHONI_WEBHOOK_COOLDOWN_MS` (default 30s) gates repeat dispatches. Keyed by
+  rule too, so two *different* rules firing close together both still get
+  through. Set to `0` to disable.
+- **Wider virtual-interface filter.** Per-interface history now also skips
+  `cali`/`cni`/`flannel`/`weave`/`vxlan`/`ifb`/`dummy`/… (ephemeral
+  container/CNI interfaces) in addition to `veth`. Real tunnels (`wg`/`tun`/
+  `tap`) and bridges (`docker0`/`br-`) are kept.
+
+### Fixed
+
+- **Clock-skew–proof sustained-duration alerts.** The alert engine now measures
+  elapsed breach time and action cooldowns on a **monotonic clock**
+  (`process.hrtime.bigint()`), so an NTP step can't reset or inflate a rule's
+  sustain timer. Wall-clock `Date.now()` is still used for persisted timestamps.
+- **Live API-key reload.** `lookup`/`listKeys` reload when `data/api-keys.json`
+  changes on disk (mtime check), so a key generated from a separate process
+  works without restarting the server.
+- **Logs jump-to-time timezone hint.** The picker now notes it's in *your local
+  time*.
+
 ## [0.72.0] — 2026-06-05
 
 Three new security-audit checks, all read straight from `/proc` and `/etc`
@@ -4124,6 +4163,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.73.0]: #0730--2026-06-05
 [0.72.0]: #0720--2026-06-05
 [0.71.0]: #0710--2026-06-05
 [0.70.0]: #0700--2026-06-05

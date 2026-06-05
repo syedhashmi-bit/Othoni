@@ -17,6 +17,7 @@ const LAST_USED_FLUSH_MS = 60_000; // debounce — only persist lastUsedAt once 
 
 let storePath = process.env.OTHONI_API_KEYS_PATH || DEFAULT_PATH;
 let cache = null;            // { keys: [{id, label, hash, createdAt, lastUsedAt}] }
+let cacheMtimeMs = 0;        // mtime of the file the cache was loaded from
 let lastUsedDirty = false;
 let flushTimer = null;
 
@@ -35,7 +36,22 @@ function loadFromDisk() {
     if (e.code !== 'ENOENT') logger.warn(`api-keys: read failed (${e.message}); starting fresh`);
     cache = { keys: [] };
   }
+  try { cacheMtimeMs = fs.statSync(storePath).mtimeMs; } catch { cacheMtimeMs = 0; }
   return cache;
+}
+
+// Reload the cache if the file changed underneath us — e.g. a key generated
+// from a separate process (`node -e ...`) that wrote to disk but couldn't
+// touch this server's in-memory cache. Cheap stat on each read path; only
+// re-reads on an actual mtime change.
+function reloadIfChanged() {
+  if (!cache) return;
+  let m;
+  try { m = fs.statSync(storePath).mtimeMs; } catch { return; } // file gone → keep cache
+  if (m !== cacheMtimeMs) {
+    cache = null;
+    loadFromDisk();
+  }
 }
 
 function persist() {
@@ -47,6 +63,9 @@ function persist() {
   fs.renameSync(tmp, storePath);
   // Re-apply mode in case the rename target existed with looser perms.
   try { fs.chmodSync(storePath, 0o600); } catch { /* ignore */ }
+  // Record our own write's mtime so reloadIfChanged() doesn't needlessly
+  // re-read the file we just wrote.
+  try { cacheMtimeMs = fs.statSync(storePath).mtimeMs; } catch { /* ignore */ }
 }
 
 function scheduleFlush() {
@@ -75,6 +94,7 @@ function isValidLabel(s) {
 
 function listKeys() {
   loadFromDisk();
+  reloadIfChanged();
   // Never return hashes — only the metadata the UI / admin needs.
   return cache.keys.map((k) => ({
     id: k.id,
@@ -126,6 +146,7 @@ function revokeKey(id) {
 function lookup(plaintext) {
   if (typeof plaintext !== 'string' || !plaintext.startsWith(KEY_PREFIX)) return null;
   loadFromDisk();
+  reloadIfChanged();
   if (cache.keys.length === 0) return null;
   const candidateHash = Buffer.from(hashKey(plaintext), 'hex');
   let match = null;
