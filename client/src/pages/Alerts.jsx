@@ -971,6 +971,145 @@ function WebhooksCard() {
   );
 }
 
+const MUTE_DURATIONS = [
+  { label: '1 hour', ms: 3600_000 },
+  { label: '4 hours', ms: 4 * 3600_000 },
+  { label: '8 hours', ms: 8 * 3600_000 },
+  { label: '24 hours', ms: 24 * 3600_000 },
+];
+
+// Alert-rule silencing — temporary mute windows for planned maintenance. A
+// silenced rule still records its fires (so the history stays honest), it just
+// doesn't dispatch webhooks or run wired actions while muted.
+function SilencesCard({ rules = [], isAdmin }) {
+  const [list, setList] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [scope, setScope] = useState('global');
+  const [ruleId, setRuleId] = useState('');
+  const [durationMs, setDurationMs] = useState(MUTE_DURATIONS[1].ms);
+  const [reason, setReason] = useState('');
+
+  function refresh() {
+    api.alerts.silences()
+      .then((r) => setList(r.silences || []))
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  async function add(e) {
+    e?.preventDefault();
+    if (scope === 'rule' && !ruleId) { setErr('pick a rule to mute'); return; }
+    setBusy(true); setErr(null);
+    try {
+      await api.alerts.addSilence({ scope, ruleId: scope === 'rule' ? ruleId : undefined, durationMs, reason: reason.trim() || undefined });
+      setReason('');
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally { setBusy(false); }
+  }
+
+  async function remove(id) {
+    setErr(null);
+    try { await api.alerts.removeSilence(id); refresh(); }
+    catch (e) { setErr(e.body?.message || e.message); }
+  }
+
+  const labelFor = (s) => {
+    if (s.scope === 'global') return 'All rules';
+    const r = rules.find((x) => x.id === s.ruleId);
+    return r ? (r.label || r.id) : `rule ${s.ruleId}`;
+  };
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div>
+          <div className="card-title">Silences</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            Mute alert dispatch during planned maintenance. Suppressed fires are
+            still recorded in history — only the webhook / action dispatch is held.
+          </div>
+        </div>
+      </div>
+
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      {isAdmin && (
+        <form onSubmit={add} style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 150 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Scope</span>
+            <select className="input" value={scope} onChange={(e) => setScope(e.target.value)}>
+              <option value="global">All rules</option>
+              <option value="rule">One rule</option>
+            </select>
+          </label>
+          {scope === 'rule' && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 180 }}>
+              <span className="muted" style={{ fontSize: 11 }}>Rule</span>
+              <select className="input" value={ruleId} onChange={(e) => setRuleId(e.target.value)}>
+                <option value="">— pick a rule —</option>
+                {rules.map((r) => <option key={r.id} value={r.id}>{r.label || r.id}</option>)}
+              </select>
+            </label>
+          )}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 130 }}>
+            <span className="muted" style={{ fontSize: 11 }}>For</span>
+            <select className="input" value={durationMs} onChange={(e) => setDurationMs(Number(e.target.value))}>
+              {MUTE_DURATIONS.map((d) => <option key={d.ms} value={d.ms}>{d.label}</option>)}
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 160px', minWidth: 140 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Reason <span style={{ opacity: 0.6 }}>(optional)</span></span>
+            <input type="text" className="input" value={reason} maxLength={200}
+              placeholder="weekly batch job" onChange={(e) => setReason(e.target.value)} />
+          </label>
+          <button type="submit" className="btn compact" disabled={busy} style={{ height: 36 }}>Mute</button>
+        </form>
+      )}
+
+      {list != null && list.length === 0 && (
+        <div className="empty" style={{ padding: '18px 0', fontSize: 13 }}>
+          No active silences — every enabled rule dispatches normally.
+        </div>
+      )}
+
+      {list != null && list.length > 0 && (
+        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {list.map((s) => (
+            <div key={s.id} style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', borderRadius: 8,
+              background: 'var(--surface-2, rgba(255,255,255,0.03))',
+              border: '1px solid var(--border, rgba(255,255,255,0.06))',
+            }}>
+              <span className={`chip ${s.scope === 'global' ? 'crit' : 'warn'}`} style={{ fontSize: 11 }}>
+                <span className="dot" />muted
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{labelFor(s)}</div>
+                <div className="dim" style={{ fontSize: 11 }}>
+                  for {formatDuration(Math.max(0, s.until - Date.now()))} more
+                  {s.reason ? ` · ${s.reason}` : ''}
+                </div>
+              </div>
+              {isAdmin && (
+                <button type="button" className="icon-btn" onClick={() => remove(s.id)} title="End silence" aria-label="End silence">
+                  <IconTrash />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Alerts() {
   const { user } = useApp();
   const isAdmin = user?.role === 'admin';
@@ -1175,6 +1314,10 @@ export default function Alerts() {
           </div>
         </div>
       )}
+
+      <div className="spacer-md" />
+
+      <SilencesCard rules={rules || []} isAdmin={isAdmin} />
 
       <div className="spacer-md" />
 

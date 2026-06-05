@@ -235,6 +235,11 @@ export const api = {
     stats:   (range = '24h') => request(`/api/alerts/stats?range=${encodeURIComponent(range)}`),
     history: ({ range = '24h', limit = 100 } = {}) =>
       request(`/api/alerts/history?range=${encodeURIComponent(range)}&limit=${limit}`),
+    silences: () => request('/api/alerts/silences'),
+    addSilence: ({ scope, ruleId, durationMs, reason }) => request('/api/alerts/silences', {
+      method: 'POST', body: JSON.stringify({ scope, ruleId, durationMs, reason }),
+    }),
+    removeSilence: (id) => request(`/api/alerts/silences/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
   webhooks: {
     list:    () => request('/api/webhooks'),

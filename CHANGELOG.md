@@ -8,6 +8,57 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.71.0] — 2026-06-05
+
+Continues the lightweight-first push: the fleet map gets **IP auto-location**, a
+**top-bar Map button** with a zoomable world view and country labels, plus a
+**guided installer** and **alert-rule silencing**.
+
+### Added
+
+- **Fleet map → top-bar "★ Map" button + dedicated view.** The map moved off
+  the Hosts page into its own `/map` route, opened from a Map button in the top
+  bar. The **main othoni server is drawn as a star** to stand out from the
+  peer/host dots, with a small legend. Always shows the central's full fleet
+  (the `/api/hosts` + `/api/peers` calls aren't host-scoped), even while viewing
+  a peer's dashboard.
+- **Zoomable map + country names.** Scroll to zoom (centered on the cursor),
+  drag to pan, and a Reset button once zoomed — all by manipulating the SVG
+  `viewBox`, still no map library / tiles. Markers, the star, and a curated set
+  of ~30 country labels hold a constant on-screen size as you zoom, and land
+  borders stay crisp (`non-scaling-stroke`).
+- **IP-based auto-location (`OTHONI_GEOLOCATE`, default on).** Each instance
+  looks up its **own** public-IP location once (free no-key provider, cached 7
+  days in `data/geo-cache.json`) so VPS appear on the map without manual
+  placement. A central reads each peer's self-detected location through the
+  peer's `/api/settings`. A manually-set location always wins; set
+  `OTHONI_GEOLOCATE=off` to skip the lookup. Provider overridable via
+  `OTHONI_GEO_PROVIDER`.
+- **Guided / interactive installer.** A fresh `install.sh` run now walks a short
+  wizard — admin user, port, bind address, peer mode, map geo, password — with
+  sensible defaults. Prompts read from `/dev/tty`, so it works under
+  `curl … | sudo bash`; skipped automatically when there's no terminal or
+  `OTHONI_NONINTERACTIVE=1` is set, keeping CI/image builds unattended.
+- **Alert-rule silencing / mute windows.** Mute one rule or all rules for a
+  fixed window (1h/4h/8h/24h) during planned maintenance, from a new Silences
+  card on the Alerts page. A silenced rule **still records its fires** to
+  history; only the webhook dispatch + wired actions are held. Stored in
+  `data/silences.json`; new `GET/POST/DELETE /api/alerts/silences`
+  (admin-only mutations, audit-logged).
+
+### Changed
+
+- The fleet map (added v0.70.0 on the Hosts page) now lives behind the top-bar
+  Map button instead of on Hosts, and is zoomable with country labels.
+
+### Fixed
+
+- **Peer locations no longer get stuck "unplaced."** A central that cached a
+  peer's empty location (e.g. before the peer ran the geo code) now retries
+  unlocated peers every 10 minutes instead of holding the empty result for the
+  full 7-day TTL, and primes peer locations at startup so the map plots them on
+  first load.
+
 ## [0.70.0] — 2026-06-05
 
 A lightweight-first release: a **fleet map** that shows where your VPS and
@@ -4050,6 +4101,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.71.0]: #0710--2026-06-05
 [0.70.0]: #0700--2026-06-05
 [0.69.1]: #0691--2026-06-02
 [0.69.0]: #0690--2026-06-02

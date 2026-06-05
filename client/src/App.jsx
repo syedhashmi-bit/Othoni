@@ -20,6 +20,7 @@ import Settings from './pages/Settings.jsx';
 import History from './pages/History.jsx';
 import Hosts from './pages/Hosts.jsx';
 import HostDetail from './pages/HostDetail.jsx';
+import MapView from './pages/MapView.jsx';
 import Actions from './pages/Actions.jsx';
 import Projects from './pages/Projects.jsx';
 import Security from './pages/Security.jsx';
@@ -329,6 +330,20 @@ function Shell({ user, onLogout, children, refreshMs, density, setDensity, activ
               remote · {viewHost}
             </span>
           )}
+          <NavLink
+            to="/map"
+            title="Fleet map — where your VPS and peers are"
+            style={({ isActive }) => ({
+              display: 'inline-flex', alignItems: 'center', gap: 6, height: 30,
+              padding: '0 12px', marginLeft: 8, borderRadius: 8, fontSize: 13,
+              fontWeight: 600, textDecoration: 'none',
+              border: '1px solid var(--border, rgba(255,255,255,0.12))',
+              color: isActive ? 'var(--accent, #fbbf24)' : 'var(--fg, #cbd5e1)',
+              background: isActive ? 'var(--surface-2, rgba(255,255,255,0.06))' : 'transparent',
+            })}
+          >
+            <span aria-hidden style={{ color: 'var(--accent, #fbbf24)' }}>★</span> Map
+          </NavLink>
         </div>
         <div className="topbar-meta">
           {user?.role === 'viewer' && (
@@ -538,6 +553,7 @@ function AuthedAppBody({ refreshMs, alerts, user, handleLogout, viewHost }) {
         <Route path="/history" element={<History />} />
         <Route path="/hosts" element={<Hosts />} />
         <Route path="/hosts/:host" element={<HostDetail />} />
+        <Route path="/map" element={<MapView />} />
         <Route path="/actions" element={<Actions />} />
         <Route path="/security" element={<Security />} />
         <Route path="/storage" element={<Storage />} />

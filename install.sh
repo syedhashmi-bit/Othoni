@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # othoni one-line installer. Usage:
 #
-#   # fresh install on a new VPS (interactive password prompt):
+#   # fresh install on a new VPS — runs a short GUIDED setup wizard
+#   # (admin user, port, bind address, peer mode, map geo, password):
 #   curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh | sudo bash
 #
-#   # unattended (CI / image build):
-#   curl -fsSL .../install.sh | sudo OTHONI_ADMIN_PASSWORD='strong-password' bash
+#   # unattended (CI / image build) — skips the wizard:
+#   curl -fsSL .../install.sh | sudo OTHONI_ADMIN_PASSWORD='strong-password' OTHONI_NONINTERACTIVE=1 bash
 #
 #   # upgrade an existing install (re-running this script is safe):
 #   sudo bash /var/www/othoni/install.sh
+#
+# The guided wizard runs on a fresh install whenever a terminal is available
+# (it reads from /dev/tty, so `curl | sudo bash` works). Any value supplied
+# via the env vars below is used as the wizard's default; set
+# OTHONI_NONINTERACTIVE=1 to skip the wizard entirely.
 #
 # Tunable via env vars:
 #   OTHONI_INSTALL_DIR (default: /var/www/othoni)
@@ -17,6 +23,9 @@
 #   OTHONI_PORT        (default: 8088 — bind to 127.0.0.1 by default; expose via nginx)
 #   OTHONI_HOST        (default: 127.0.0.1)
 #   OTHONI_ADMIN_USER  (default: admin)
+#   OTHONI_ROLE        (default: full — set 'peer' for a lightweight federation peer)
+#   OTHONI_GEOLOCATE   (default: on — set 'off' to skip fleet-map IP auto-location)
+#   OTHONI_NONINTERACTIVE (set to 1 to skip the guided wizard)
 #   OTHONI_ADMIN_PASSWORD (omit for an interactive prompt; falls back to a random
 #                          password printed at the end if stdin isn't a TTY)
 #
@@ -41,6 +50,8 @@ BRANCH="${OTHONI_BRANCH:-main}"
 PORT="${OTHONI_PORT:-8088}"
 HOST="${OTHONI_HOST:-127.0.0.1}"
 ADMIN_USER="${OTHONI_ADMIN_USER:-admin}"
+ROLE="${OTHONI_ROLE:-full}"
+GEOLOCATE="${OTHONI_GEOLOCATE:-on}"
 SERVICE_NAME="othoni"
 NODE_MIN_MAJOR=18
 NODE_INSTALL_MAJOR=20
@@ -54,6 +65,85 @@ require_root() {
   if [ "$(id -u)" -ne 0 ]; then
     die "must run as root (try: sudo bash install.sh)"
   fi
+}
+
+# ---- interactive guided setup ----
+# Prompts read from /dev/tty (not stdin) so they work even under
+# `curl ... | sudo bash`, where stdin is the script itself. Guided mode is
+# skipped when there's no terminal or OTHONI_NONINTERACTIVE=1 is set, so CI
+# and image builds stay fully unattended.
+interactive() {
+  [ -z "${OTHONI_NONINTERACTIVE:-}" ] && [ -e /dev/tty ]
+}
+
+ask() { # ask <var> <prompt> <default>
+  local __var="$1" __prompt="$2" __def="$3" __ans=""
+  printf '\033[1;36m[othoni]\033[0m %s [\033[1m%s\033[0m]: ' "$__prompt" "$__def" > /dev/tty
+  IFS= read -r __ans < /dev/tty || true
+  [ -z "$__ans" ] && __ans="$__def"
+  printf -v "$__var" '%s' "$__ans"
+}
+
+ask_yesno() { # ask_yesno <prompt> <default: y|n> -> exit 0 for yes
+  local __prompt="$1" __def="$2" __ans="" __hint="y/N"
+  [ "$__def" = "y" ] && __hint="Y/n"
+  printf '\033[1;36m[othoni]\033[0m %s [%s]: ' "$__prompt" "$__hint" > /dev/tty
+  IFS= read -r __ans < /dev/tty || true
+  [ -z "$__ans" ] && __ans="$__def"
+  case "$__ans" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+ask_secret() { # ask_secret <var> <prompt>
+  local __var="$1" __prompt="$2" __p1 __p2
+  while true; do
+    printf '\033[1;36m[othoni]\033[0m %s: ' "$__prompt" > /dev/tty
+    IFS= read -r -s __p1 < /dev/tty; echo > /dev/tty
+    printf '\033[1;36m[othoni]\033[0m confirm: ' > /dev/tty
+    IFS= read -r -s __p2 < /dev/tty; echo > /dev/tty
+    if [ -z "$__p1" ]; then warn "empty password — try again."; continue; fi
+    if [ "$__p1" != "$__p2" ]; then warn "passwords don't match — try again."; continue; fi
+    printf -v "$__var" '%s' "$__p1"; break
+  done
+}
+
+guided_config() {
+  interactive || return 0
+  # Only walk the wizard on a FRESH install; an upgrade keeps the existing .env.
+  [ -f "$INSTALL_DIR/.env" ] && return 0
+
+  cat > /dev/tty <<'BANNER'
+
+────────────────────────────────────────────────────────────
+  othoni guided setup — press Enter to accept each [default]
+────────────────────────────────────────────────────────────
+BANNER
+
+  ask ADMIN_USER "Admin username" "$ADMIN_USER"
+  ask PORT "Port to listen on" "$PORT"
+  ask HOST "Bind address (127.0.0.1 = behind nginx · 0.0.0.0 = direct)" "$HOST"
+  if ask_yesno "Run as a lightweight federation PEER (skips alert/check/audit loops)?" "n"; then
+    ROLE="peer"
+  fi
+  if ask_yesno "Auto-locate this server on the fleet map by its public IP?" "y"; then
+    GEOLOCATE="on"
+  else
+    GEOLOCATE="off"
+  fi
+  if [ -z "${OTHONI_ADMIN_PASSWORD:-}" ]; then
+    ask_secret OTHONI_ADMIN_PASSWORD "Admin password"
+    export OTHONI_ADMIN_PASSWORD
+  fi
+
+  cat > /dev/tty <<EOF
+
+  Summary
+    user:        $ADMIN_USER
+    listen:      $HOST:$PORT
+    role:        $ROLE
+    map geo:     $GEOLOCATE
+    install dir: $INSTALL_DIR
+EOF
+  ask_yesno "Proceed with these settings?" "y" || die "aborted by user."
 }
 
 node_ok() {
@@ -158,6 +248,9 @@ OTHONI_SAMPLE_MS=5000
 OTHONI_RETENTION_MS=86400000
 NODE_ENV=production
 EOF
+  # Optional non-default settings (guided setup or env overrides).
+  [ "${ROLE:-full}" = "peer" ] && echo "OTHONI_ROLE=peer" >> "$env_path"
+  [ "${GEOLOCATE:-on}" = "off" ] && echo "OTHONI_GEOLOCATE=off" >> "$env_path"
   chmod 600 "$env_path"
   log ".env created at $env_path (mode 600) $password_source"
 
@@ -241,6 +334,8 @@ require_root
 if ! node_ok; then
   install_node
 fi
+
+guided_config
 
 clone_or_pull
 build

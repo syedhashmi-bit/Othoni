@@ -22,6 +22,8 @@ const VALID_ACTIONS = new Set([
   'apikey.create',
   'apikey.revoke',
   'rules.update',
+  'alert.silence.add',
+  'alert.silence.remove',
   'webhook.create',
   'webhook.update',
   'webhook.delete',

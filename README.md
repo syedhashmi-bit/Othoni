@@ -117,15 +117,17 @@
 
 For a fresh VPS, the included installer handles Node setup, repo clone,
 build, `.env` generation (with a scrypt-hashed admin password and a
-random JWT secret), and the systemd unit:
+random JWT secret), and the systemd unit. A fresh install runs a short
+**guided wizard** (admin user, port, bind address, peer mode, map geo,
+password) — it reads from `/dev/tty`, so it works even when piped:
 
 ```bash
-# interactive (prompts for an admin password):
+# guided setup (interactive wizard):
 curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh | sudo bash
 
-# unattended (CI / image build):
+# unattended (CI / image build — skips the wizard):
 curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh \
-  | sudo OTHONI_ADMIN_PASSWORD='strong-password' bash
+  | sudo OTHONI_ADMIN_PASSWORD='strong-password' OTHONI_NONINTERACTIVE=1 bash
 
 # upgrade an existing install (re-running is idempotent):
 sudo bash /var/www/othoni/install.sh
@@ -177,6 +179,7 @@ $EDITOR .env
 | `OTHONI_PROMETHEUS_TOKEN` | unset      | Bearer token for the optional `/metrics` Prometheus exporter (off when unset) |
 | `OTHONI_PEER_TOKEN`     | unset        | shared secret (≥16 chars) that lets a *central* othoni read this instance over the federation proxy. When set, `Authorization: Bearer <token>` is accepted as a read-only (viewer) session. Off when unset |
 | `OTHONI_ROLE`           | `full`       | set `peer` for a lightweight federation-peer mode: still samples + serves its own metrics, but skips the process-trends sampler, alert engine, synthetic checks, and security-audit auto-run. Trims CPU + the periodic `ps`/`systemctl`/`ufw`/`iptables` spawns on a small VPS |
+| `OTHONI_GEOLOCATE`      | `on`         | fleet-map auto-location: each instance looks up its **own** public-IP location once (cached 7 days in `data/geo-cache.json`) so VPS appear on the map without manual placement. A manually-set location always wins. Set `off` to disable the outbound lookup. Default provider is `ip-api.com` (HTTP, no key — only your own non-sensitive public-IP location is looked up); point `OTHONI_GEO_PROVIDER` at an HTTPS endpoint to avoid the plain-HTTP call |
 | `OTHONI_PAGERDUTY_URL`  | `https://events.pagerduty.com/v2/enqueue` | override the PagerDuty Events API endpoint (set the EU host for EU tenants) |
 | `OTHONI_OPSGENIE_URL`   | `https://api.opsgenie.com/v2/alerts` | override the Opsgenie Alert API endpoint (use `api.eu.opsgenie.com` for the EU region) |
 | `OTHONI_ACTIONS_ENABLED`| unset        | Set `true` to enable opt-in write actions (systemd / Docker / process signal — concrete actions land in v0.32+) |
@@ -259,6 +262,9 @@ authenticated session.
 | GET    | `/api/alerts/metrics` | Available metric keys + units   |
 | GET    | `/api/alerts/stats` | Per-rule fire counts + density histogram |
 | GET    | `/api/alerts/history` | Recent rule-fire timeline (denormalized) |
+| GET    | `/api/alerts/silences` | Active mute windows (global / per-rule) |
+| POST   | `/api/alerts/silences` | Mute a rule or all rules (`{ scope, ruleId?, durationMs }`) |
+| DELETE | `/api/alerts/silences/:id` | End a silence early |
 | GET    | `/api/webhooks`     | List webhook destinations         |
 | POST   | `/api/webhooks`     | Add a webhook (label, url, format) |
 | PATCH  | `/api/webhooks/:id` | Toggle / rename                   |

@@ -34,6 +34,8 @@ const projects = require('../projects');
 const securityAudit = require('../security-audit');
 const users = require('../users');
 const peers = require('../peers');
+const geoip = require('../geoip');
+const silences = require('../silences');
 const fleetRouter = require('./fleet');
 
 const router = express.Router();
@@ -231,6 +233,51 @@ router.get('/alerts/history', (req, res) => {
   res.json(alerts.listFires({ range, limit }));
 });
 
+// Alert-rule silencing — mute windows. List is viewer-visible; add/remove are
+// admin-only via the router-level requireAdmin guard. A silenced rule still
+// records its fires (audit trail) but skips webhook dispatch + wired actions.
+router.get('/alerts/silences', (req, res) => {
+  res.json({ silences: silences.list() });
+});
+
+router.post('/alerts/silences', (req, res) => {
+  try {
+    const b = req.body || {};
+    const s = silences.add({
+      scope: b.scope,
+      ruleId: b.ruleId,
+      durationMs: b.durationMs,
+      until: b.until,
+      reason: b.reason,
+      actor: req.user && req.user.username,
+    });
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'alert.silence.add',
+      target: s.id,
+      metadata: { scope: s.scope, ruleId: s.ruleId, until: s.until },
+    });
+    res.json({ silence: s });
+  } catch (e) {
+    if (e.code === 'invalid_request') {
+      return res.status(400).json({ error: 'invalid_request', message: e.message });
+    }
+    logger.error('alerts silence add failed:', e.message);
+    res.status(500).json({ error: 'silence_failed' });
+  }
+});
+
+router.delete('/alerts/silences/:id', (req, res) => {
+  const ok = silences.remove(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'not_found' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'alert.silence.remove',
+    target: req.params.id,
+  });
+  res.json({ ok: true });
+});
+
 // ---------- webhooks ----------
 
 router.get('/webhooks', (req, res) => {
@@ -413,7 +460,9 @@ router.get('/hosts', wrap('hosts', () => {
   const selfHost = require('os').hostname().toLowerCase().split('.')[0].slice(0, 40);
   return {
     hosts: hosts.getHosts(),
-    self: { host: selfHost, meta: hostMeta.get(selfHost) },
+    // `auto` = IP-detected fallback location for the local box (null when
+    // disabled / not yet resolved). The map prefers a manual meta location.
+    self: { host: selfHost, meta: hostMeta.get(selfHost), auto: geoip.getSelf() },
   };
 }));
 
@@ -891,7 +940,16 @@ router.delete('/users/:id', requireAdminExplicit, (req, res) => {
 // via the router-level requireAdmin guard.
 
 router.get('/peers', (req, res) => {
-  res.json({ peers: peers.listSafe() });
+  const list = peers.listSafe();
+  // Attach each peer's IP-detected location (read from the peer's own
+  // /api/settings, cached weekly). Kicks a background refresh when stale; the
+  // map prefers a manual lat/lon and only falls back to `auto`.
+  for (const p of list) {
+    const raw = peers.getRaw(p.host);
+    if (raw) geoip.refreshPeer(raw);
+    p.auto = geoip.getPeerCached(p.host);
+  }
+  res.json({ peers: list });
 });
 
 router.put('/peers/:host', (req, res) => {
@@ -947,6 +1005,7 @@ router.get('/settings', (req, res) => {
     nodeEnv: process.env.NODE_ENV || 'development',
     peerToken: require('../auth').peerTokenEnabled(),
     role: (process.env.OTHONI_ROLE || 'full').toLowerCase() === 'peer' ? 'peer' : 'full',
+    geo: geoip.getSelf(),
   });
 });
 

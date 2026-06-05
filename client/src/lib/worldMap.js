@@ -59,6 +59,42 @@ export const LAND = [
   ],
 ];
 
+// Curated country-name labels at approximate [lon, lat] centroids. Kept short
+// and to major countries so the map stays clean; they're rendered small and
+// muted, and counter-scaled so they hold a constant size as you zoom.
+export const COUNTRIES = [
+  { name: 'USA', lon: -98, lat: 39 },
+  { name: 'Canada', lon: -106, lat: 58 },
+  { name: 'Mexico', lon: -102, lat: 23 },
+  { name: 'Brazil', lon: -51, lat: -10 },
+  { name: 'Argentina', lon: -64, lat: -36 },
+  { name: 'Chile', lon: -71, lat: -32 },
+  { name: 'Colombia', lon: -73, lat: 4 },
+  { name: 'UK', lon: -2, lat: 54 },
+  { name: 'France', lon: 2, lat: 47 },
+  { name: 'Spain', lon: -4, lat: 40 },
+  { name: 'Germany', lon: 10, lat: 51 },
+  { name: 'Italy', lon: 12, lat: 42 },
+  { name: 'Poland', lon: 19, lat: 52 },
+  { name: 'Sweden', lon: 16, lat: 62 },
+  { name: 'Norway', lon: 9, lat: 61 },
+  { name: 'Finland', lon: 26, lat: 64 },
+  { name: 'Russia', lon: 92, lat: 62 },
+  { name: 'Ukraine', lon: 32, lat: 49 },
+  { name: 'Turkey', lon: 35, lat: 39 },
+  { name: 'Egypt', lon: 30, lat: 27 },
+  { name: 'Nigeria', lon: 8, lat: 9 },
+  { name: 'Kenya', lon: 38, lat: 1 },
+  { name: 'South Africa', lon: 25, lat: -29 },
+  { name: 'Saudi Arabia', lon: 45, lat: 24 },
+  { name: 'India', lon: 79, lat: 22 },
+  { name: 'China', lon: 104, lat: 36 },
+  { name: 'Japan', lon: 138, lat: 37 },
+  { name: 'Indonesia', lon: 113, lat: -2 },
+  { name: 'Australia', lon: 134, lat: -25 },
+  { name: 'New Zealand', lon: 172, lat: -42 },
+];
+
 // Precompute SVG path `d` strings in viewBox space.
 export const LAND_PATHS = LAND.map((ring) => {
   const pts = ring.map(([lon, lat]) => {

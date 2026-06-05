@@ -4,7 +4,6 @@ import { api } from '../api';
 import { Sparkline } from '../Charts.jsx';
 import { formatBytes, formatRate, statusClass } from '../utils.js';
 import { useApp, AdminOnly } from '../App.jsx';
-import FleetMap from '../components/FleetMap.jsx';
 
 // Map host-metric leaf names to { label, format, range max for the
 // sparkline if appropriate, status-from-percent }. Tile order is the
@@ -155,22 +154,14 @@ function HostCard({ host }) {
 
 export default function Hosts() {
   const [data, setData] = useState(null);
-  const [self, setSelf] = useState(null);
-  const [peers, setPeers] = useState([]);
   const [err, setErr] = useState(null);
   const [envFilter, setEnvFilter] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
 
   function refresh() {
     api.hosts()
-      .then((r) => { setData(r.hosts || []); setSelf(r.self || null); })
+      .then((r) => setData(r.hosts || []))
       .catch((e) => setErr(e.message));
-    // Federation peers are a separate registry; pull them so the map can
-    // pin remote VPS that aren't pushing agent metrics. A failure here is
-    // non-fatal — the host grid still renders.
-    api.peers.list()
-      .then((r) => setPeers(r.peers || []))
-      .catch(() => { /* peers optional */ });
   }
   useEffect(() => {
     refresh();
@@ -180,58 +171,6 @@ export default function Hosts() {
     const id = setInterval(refresh, 10_000);
     return () => clearInterval(id);
   }, []);
-
-  // Merge agent hosts + the local box + federation peers into one node list
-  // for the map, de-duplicated by host name (a host pushing agent metrics
-  // that is ALSO a registered peer appears once). Coordinates come from the
-  // per-host metadata first, falling back to the peer registry.
-  const mapNodes = useMemo(() => {
-    const byHost = new Map();
-    for (const h of data || []) {
-      const m = h.meta || {};
-      byHost.set(h.host, {
-        host: h.host,
-        lat: m.lat ?? null,
-        lon: m.lon ?? null,
-        place: m.place || null,
-        status: freshnessClass(h.lastSeenAt),
-        statusLabel: freshnessLabel(h.lastSeenAt),
-        link: `/hosts/${encodeURIComponent(h.host)}`,
-      });
-    }
-    if (self && self.host) {
-      const m = self.meta || {};
-      if (!byHost.has(self.host)) {
-        byHost.set(self.host, {
-          host: self.host,
-          lat: m.lat ?? null,
-          lon: m.lon ?? null,
-          place: m.place || null,
-          status: 'ok',
-          statusLabel: 'this server',
-          link: '/',
-        });
-      }
-    }
-    for (const p of peers || []) {
-      const existing = byHost.get(p.host);
-      if (existing) {
-        if (existing.lat == null && p.lat != null) { existing.lat = p.lat; existing.lon = p.lon; }
-        if (!existing.place && p.place) existing.place = p.place;
-      } else {
-        byHost.set(p.host, {
-          host: p.host,
-          lat: p.lat ?? null,
-          lon: p.lon ?? null,
-          place: p.place || null,
-          status: 'ok',
-          statusLabel: 'peer',
-          link: `/hosts/${encodeURIComponent(p.host)}`,
-        });
-      }
-    }
-    return Array.from(byHost.values());
-  }, [data, self, peers]);
 
   // Distinct environments + owners across the current hosts list. Drives
   // the filter pill row.
@@ -264,12 +203,6 @@ export default function Hosts() {
         v0.23.0 <code>host</code> attribution. Auto-discovered from{' '}
         <code>custom.&lt;host&gt;.*</code> series in the history store.
       </p>
-
-      {mapNodes.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <FleetMap nodes={mapNodes} />
-        </div>
-      )}
 
       {(envs.length > 0 || owners.length > 0) && (
         <div className="toolbar" style={{ flexWrap: 'wrap' }}>

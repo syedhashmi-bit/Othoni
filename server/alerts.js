@@ -12,6 +12,7 @@ const logger = require('./logger');
 const history = require('./history');
 const actions = require('./actions');
 const securityAudit = require('./security-audit');
+const silences = require('./silences');
 
 const { getCpu } = require('./collectors/cpu');
 const { getMemory } = require('./collectors/memory');
@@ -356,15 +357,20 @@ async function tick() {
     // so historical rows still render correctly after rule edits/deletes.
     try { recordFires(now, fires); }
     catch (e) { logger.warn(`alerts: persist fires failed: ${e.message}`); }
-    if (typeof dispatcher === 'function') {
-      for (const f of fires) {
+    for (const f of fires) {
+      // Silenced rules still get recorded above (audit trail stays complete),
+      // but we skip the outward webhook dispatch AND any wired action.
+      const silence = silences.match(f.rule, now);
+      if (silence) {
+        logger.info(`alerts: fire for rule ${f.rule.id} suppressed by ${silence.scope} silence ${silence.id}`);
+        continue;
+      }
+      if (typeof dispatcher === 'function') {
         try { dispatcher(f); }
         catch (e) { logger.warn(`alerts: dispatcher threw: ${e.message}`); }
       }
-    }
-    // Fire any wired actions. Fire-and-forget; the action framework
-    // handles audit-logging on its own. Cooldown is enforced per rule.
-    for (const f of fires) {
+      // Fire any wired action. Fire-and-forget; the action framework handles
+      // its own audit-logging. Cooldown is enforced per rule.
       dispatchOnFire(f, now).catch((e) =>
         logger.warn(`alerts: onFire for rule ${f.rule.id} threw: ${e.message}`)
       );

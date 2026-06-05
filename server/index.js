@@ -27,6 +27,7 @@ const alerts = require('./alerts');
 const webhooks = require('./webhooks');
 const checks = require('./checks');
 const securityAudit = require('./security-audit');
+const geoip = require('./geoip');
 const logger = require('./logger');
 
 // Refuse to boot in production on placeholder JWT secret / admin password.
@@ -175,6 +176,18 @@ app.listen(PORT, HOST, () => {
   // Nightly SQLite VACUUM scheduler. Disabled when OTHONI_VACUUM_TIME
   // is unset or set to "off".
   vacuum.start();
+  // Prime IP-based self-geolocation for the fleet map (cached on disk; one
+  // outbound lookup of this box's own public IP). No-op if OTHONI_GEOLOCATE=off.
+  if (geoip.ENABLED) {
+    geoip.refreshSelf();
+    // Prime each federation peer's location too, so the map can plot them on
+    // first load instead of waiting for the next poll.
+    const peersMod = require('./peers');
+    for (const p of peersMod.listSafe()) {
+      const raw = peersMod.getRaw(p.host);
+      if (raw) geoip.refreshPeer(raw);
+    }
+  }
   if (LITE) {
     logger.info('othoni role=peer (lite): process-trends, alerts, checks, and security-audit auto-run are disabled');
   } else {
