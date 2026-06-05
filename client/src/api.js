@@ -180,8 +180,8 @@ export const api = {
   settings: () => request('/api/settings'),
   peers: {
     list:   () => request('/api/peers'),
-    upsert: (host, { url, token, label }) => request(`/api/peers/${encodeURIComponent(host)}`, {
-      method: 'PUT', body: JSON.stringify({ url, token, label }),
+    upsert: (host, { url, token, label, lat, lon, place }) => request(`/api/peers/${encodeURIComponent(host)}`, {
+      method: 'PUT', body: JSON.stringify({ url, token, label, lat, lon, place }),
     }),
     remove: (host) => request(`/api/peers/${encodeURIComponent(host)}`, { method: 'DELETE' }),
   },

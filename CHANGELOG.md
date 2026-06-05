@@ -8,6 +8,44 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.70.0] — 2026-06-05
+
+A lightweight-first release: a **fleet map** that shows where your VPS and
+federation peers are in the world, and a **lite peer mode** that stops a
+federation peer from running the full monitoring stack just to serve its
+metrics. Plus a README facelift (badges + section icons).
+
+### Added
+
+- **Fleet map on the Hosts page.** A hand-drawn inline SVG world map with a
+  dot per node — the local box, agent hosts, and federation peers — colored by
+  freshness (live / stale / down) and clickable through to each host. No map
+  library, no tiles, no GeoIP database, no external calls: the map is
+  simplified continent path data and the dots are a one-subtraction
+  equirectangular projection, so it adds only a few KB to the bundle and zero
+  server-side runtime cost. Locations are user-set under **Settings** — pick a
+  datacenter region from a ~24-city preset (Hetzner / DO / common clouds) or
+  enter lat/lon. Nodes without a location list as "unplaced" below the map.
+- **`OTHONI_ROLE=peer` — lightweight federation-peer mode.** A peer in this
+  mode still samples and serves its own metrics for a central othoni to read,
+  but no longer starts the process-trends sampler, the alert engine, synthetic
+  checks, or the security-audit auto-run. That drops the always-on alert/check
+  ticks and the periodic child-process spawns (`ps` / `systemctl` / `ufw` /
+  `iptables`), trimming CPU and memory on a small VPS. Default stays `full`;
+  on-demand endpoints are unaffected. Exposed on `/api/settings` as `role`.
+- **Per-node map location fields.** Optional `lat` / `lon` / `place` on both
+  the per-host metadata store (`data/hosts.json`) and the federation peer
+  registry (`data/peers.json`), with range validation. `/api/hosts` now also
+  returns a `self` node so the local box can be pinned on the map.
+
+### Changed
+
+- **`PUT /api/peers/:host`** accepts `lat` / `lon` / `place` alongside the
+  existing `url` / `token` / `label` (all optional; omitting them preserves
+  what's stored, and the token is still kept when omitted).
+- **README facelift.** A centered badge row (Node / React / Express / Vite /
+  SQLite / WireGuard / MIT, with logos) and an icon on every section header.
+
 ## [0.69.1] — 2026-06-02
 
 Federation polish — the v0.69.0 host switch now makes the **whole** dashboard
@@ -4012,6 +4050,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.70.0]: #0700--2026-06-05
 [0.69.1]: #0691--2026-06-02
 [0.69.0]: #0690--2026-06-02
 [0.68.0]: #0680--2026-06-02

@@ -3,6 +3,7 @@ import { api } from '../api';
 import { useApp, AdminOnly } from '../App.jsx';
 import { IconPlus, IconTrash } from '../Icons.jsx';
 import { formatBytes } from '../utils.js';
+import { REGIONS, regionKeyFor } from '../lib/regions.js';
 
 const REFRESH_OPTIONS = [
   { label: '2 seconds', value: 2000 },
@@ -742,6 +743,15 @@ function HostsCard() {
   function setDraft(host, field, value) {
     setDrafts((s) => ({ ...s, [host]: { ...(s[host] || {}), [field]: value } }));
   }
+  function setDraftFields(host, fields) {
+    setDrafts((s) => ({ ...s, [host]: { ...(s[host] || {}), ...fields } }));
+  }
+  // Region dropdown → fills lat/lon/place together; blank clears them.
+  function onRegion(host, key) {
+    if (!key) { setDraftFields(host, { lat: null, lon: null, place: '' }); return; }
+    const r = REGIONS.find((x) => x.key === key);
+    if (r) setDraftFields(host, { lat: r.lat, lon: r.lon, place: r.place });
+  }
 
   async function save(host) {
     const patch = drafts[host] || {};
@@ -801,6 +811,7 @@ function HostsCard() {
                 <th style={{ width: 140 }}>Host</th>
                 <th style={{ width: 140 }}>Owner</th>
                 <th style={{ width: 120 }}>Environment</th>
+                <th style={{ width: 180 }}>Location (map)</th>
                 <th style={{ width: 200 }}>Tags (comma-separated)</th>
                 <th>Notes</th>
                 {isAdmin && <th style={{ width: 130 }}></th>}
@@ -837,6 +848,30 @@ function HostsCard() {
                         maxLength={40}
                         disabled={!isAdmin}
                       />
+                    </td>
+                    <td>
+                      {(() => {
+                        const dLat = drafts[host]?.lat ?? cur.lat ?? null;
+                        const dLon = drafts[host]?.lon ?? cur.lon ?? null;
+                        const placeStr = drafts[host]?.place ?? cur.place ?? '';
+                        const rKey = regionKeyFor(dLat, dLon);
+                        return (
+                          <select
+                            className="input"
+                            value={rKey}
+                            onChange={(e) => onRegion(host, e.target.value)}
+                            disabled={!isAdmin}
+                            style={{ fontSize: 12 }}
+                          >
+                            <option value="">
+                              {placeStr && !rKey ? `${placeStr} (custom)` : '— none —'}
+                            </option>
+                            {REGIONS.map((r) => (
+                              <option key={r.key} value={r.key}>{r.label}</option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </td>
                     <td>
                       <input
@@ -1435,6 +1470,9 @@ function PeersCard() {
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
   const [label, setLabel] = useState('');
+  const [region, setRegion] = useState('');
+  const [lat, setLat] = useState('');
+  const [lon, setLon] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -1445,19 +1483,52 @@ function PeersCard() {
   }
   useEffect(() => { refresh(); }, []);
 
+  // Region dropdown fills lat/lon; manual lat/lon entry clears the region.
+  function pickRegion(key) {
+    setRegion(key);
+    const r = REGIONS.find((x) => x.key === key);
+    if (r) { setLat(String(r.lat)); setLon(String(r.lon)); }
+    else if (!key) { setLat(''); setLon(''); }
+  }
+
   async function add(e) {
     e?.preventDefault();
     if (!host.trim() || !url.trim() || !token.trim()) return;
     setBusy(true);
     setErr(null);
     try {
-      await api.peers.upsert(host.trim(), { url: url.trim(), token: token.trim(), label: label.trim() || undefined });
+      const r = REGIONS.find((x) => x.key === region);
+      await api.peers.upsert(host.trim(), {
+        url: url.trim(),
+        token: token.trim(),
+        label: label.trim() || undefined,
+        lat: lat === '' ? undefined : lat,
+        lon: lon === '' ? undefined : lon,
+        place: r ? r.place : undefined,
+      });
       setHost(''); setUrl(''); setToken(''); setLabel('');
+      setRegion(''); setLat(''); setLon('');
       refresh();
     } catch (e) {
       setErr(e.body?.message || e.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Inline location change on a saved peer — url is required by upsert; the
+  // token is omitted so the existing secret is preserved.
+  async function setPeerRegion(p, key) {
+    setErr(null);
+    try {
+      const r = REGIONS.find((x) => x.key === key);
+      const patch = key
+        ? { url: p.url, lat: r.lat, lon: r.lon, place: r.place }
+        : { url: p.url, lat: null, lon: null, place: '' };
+      await api.peers.upsert(p.host, patch);
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
     }
   }
 
@@ -1558,6 +1629,44 @@ function PeersCard() {
             />
           </label>
 
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 200 }}>
+            <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>Location <span style={{ textTransform: 'none', opacity: 0.6 }}>(map)</span></span>
+            <select
+              className="input"
+              value={region}
+              onChange={(e) => pickRegion(e.target.value)}
+              style={{ fontSize: 12 }}
+            >
+              <option value="">— none —</option>
+              {REGIONS.map((r) => (
+                <option key={r.key} value={r.key}>{r.label}</option>
+              ))}
+            </select>
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 90 }}>
+            <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>Lat</span>
+            <input
+              type="number" step="any" min="-90" max="90"
+              placeholder="45.5"
+              value={lat}
+              onChange={(e) => { setLat(e.target.value); setRegion(''); }}
+              className="input mono"
+              style={{ fontSize: 12 }}
+            />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 90 }}>
+            <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>Lon</span>
+            <input
+              type="number" step="any" min="-180" max="180"
+              placeholder="-123.0"
+              value={lon}
+              onChange={(e) => { setLon(e.target.value); setRegion(''); }}
+              className="input mono"
+              style={{ fontSize: 12 }}
+            />
+          </label>
+
           <button
             type="submit"
             className="btn compact"
@@ -1593,6 +1702,9 @@ function PeersCard() {
                   {p.label && (
                     <span className="chip" style={{ fontSize: 11 }}>{p.label}</span>
                   )}
+                  {p.place && (
+                    <span className="chip dim" style={{ fontSize: 10 }}>📍 {p.place}</span>
+                  )}
                 </div>
                 <a
                   href={p.url}
@@ -1605,6 +1717,22 @@ function PeersCard() {
                   {p.url}
                 </a>
               </div>
+              {isAdmin && (
+                <select
+                  className="input"
+                  value={regionKeyFor(p.lat, p.lon)}
+                  onChange={(e) => setPeerRegion(p, e.target.value)}
+                  title="Map location"
+                  style={{ fontSize: 12, width: 170 }}
+                >
+                  <option value="">
+                    {p.place && !regionKeyFor(p.lat, p.lon) ? `${p.place} (custom)` : '— locate —'}
+                  </option>
+                  {REGIONS.map((r) => (
+                    <option key={r.key} value={r.key}>{r.label}</option>
+                  ))}
+                </select>
+              )}
               <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
                 added {formatRelative(p.addedAt)}
               </span>

@@ -22,8 +22,21 @@ const MAX_ENV_LEN = 40;
 const MAX_TAG_LEN = 40;
 const MAX_TAGS = 16;
 const MAX_NOTES_LEN = 2000;
+const MAX_PLACE_LEN = 60;
 
 let cache = null;
+
+// Coerce an optional latitude/longitude. Accepts a number or numeric string;
+// an empty string or null clears the field (returns null). Throws on a
+// non-numeric or out-of-range value.
+function coerceCoord(v, max, label) {
+  if (v === null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || n < -max || n > max) {
+    throw Object.assign(new Error(`${label} must be a number between -${max} and ${max}`), { code: 'invalid_request' });
+  }
+  return n;
+}
 
 function ensureDir(p) {
   const dir = path.dirname(p);
@@ -85,17 +98,26 @@ function sanitizePatch(patch) {
     if (typeof patch.notes !== 'string') throw Object.assign(new Error('notes must be string'), { code: 'invalid_request' });
     out.notes = patch.notes.slice(0, MAX_NOTES_LEN);
   }
+  if (patch.lat !== undefined) out.lat = coerceCoord(patch.lat, 90, 'lat');
+  if (patch.lon !== undefined) out.lon = coerceCoord(patch.lon, 180, 'lon');
+  if (patch.place !== undefined) {
+    if (typeof patch.place !== 'string') throw Object.assign(new Error('place must be string'), { code: 'invalid_request' });
+    out.place = patch.place.slice(0, MAX_PLACE_LEN).trim();
+  }
   return out;
 }
 
 function isEmptyEntry(entry) {
   if (!entry) return true;
-  const { owner, environment, tags, notes } = entry;
+  const { owner, environment, tags, notes, lat, lon, place } = entry;
   return (
     !owner &&
     !environment &&
     (!Array.isArray(tags) || tags.length === 0) &&
-    !notes
+    !notes &&
+    lat == null &&
+    lon == null &&
+    !place
   );
 }
 
@@ -118,6 +140,11 @@ function upsert(host, patch) {
   load();
   const prev = cache.byHost[host] || {};
   const next = { ...prev, ...cleaned };
+  // A cleared coordinate / place comes through as null / '' — drop the key
+  // rather than persist an empty value.
+  if (next.lat == null) delete next.lat;
+  if (next.lon == null) delete next.lon;
+  if (!next.place) delete next.place;
   if (isEmptyEntry(next)) {
     delete cache.byHost[host];
   } else {

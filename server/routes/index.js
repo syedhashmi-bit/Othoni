@@ -406,7 +406,16 @@ router.get('/checks/:id/stats', (req, res) => {
 // returns the latest value of each known agent metric per host. The
 // response also overlays any per-host metadata stored via /api/host-meta
 // (v0.43).
-router.get('/hosts', wrap('hosts', () => ({ hosts: hosts.getHosts() })));
+router.get('/hosts', wrap('hosts', () => {
+  // The local box doesn't push `custom.<host>.*` about itself, so it never
+  // shows up in getHosts(). Surface it as `self` (DNS-label-sanitized
+  // hostname + any stored location) so the fleet map can pin the central box.
+  const selfHost = require('os').hostname().toLowerCase().split('.')[0].slice(0, 40);
+  return {
+    hosts: hosts.getHosts(),
+    self: { host: selfHost, meta: hostMeta.get(selfHost) },
+  };
+}));
 
 // Per-host detail (v0.44). 404 when the host has neither live samples
 // in the last 10 minutes, nor stored metadata, nor any alert_fires
@@ -892,6 +901,9 @@ router.put('/peers/:host', (req, res) => {
       url: req.body && req.body.url,
       token: req.body && req.body.token,
       label: req.body && req.body.label,
+      lat: req.body ? req.body.lat : undefined,
+      lon: req.body ? req.body.lon : undefined,
+      place: req.body ? req.body.place : undefined,
     });
     audit.log({
       ...audit.fromReq(req),
@@ -901,7 +913,7 @@ router.put('/peers/:host', (req, res) => {
     });
     res.json({ peer: saved });
   } catch (e) {
-    if (['invalid_host', 'invalid_url', 'invalid_token', 'invalid_label'].includes(e.code)) {
+    if (['invalid_host', 'invalid_url', 'invalid_token', 'invalid_label', 'invalid_request'].includes(e.code)) {
       return res.status(400).json({ error: e.code, message: e.message });
     }
     logger.error('peers upsert failed:', e.message);
@@ -934,6 +946,7 @@ router.get('/settings', (req, res) => {
     version: require('../../package.json').version,
     nodeEnv: process.env.NODE_ENV || 'development',
     peerToken: require('../auth').peerTokenEnabled(),
+    role: (process.env.OTHONI_ROLE || 'full').toLowerCase() === 'peer' ? 'peer' : 'full',
   });
 });
 

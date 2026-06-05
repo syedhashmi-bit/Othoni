@@ -42,6 +42,17 @@ const PORT = parseInt(process.env.PORT || '8088', 10);
 const HOST = process.env.HOST || '127.0.0.1';
 const VERSION = require('../package.json').version;
 
+// Role: "full" (default) runs every subsystem. "peer" is a lightweight
+// federation-peer mode (set OTHONI_ROLE=peer) — the box still samples and
+// serves its own metrics for a central othoni to read read-only, but skips
+// the subsystems a read-only peer doesn't need: the process-trends sampler,
+// the alert engine, synthetic checks, and the security-audit auto-run. That
+// drops the continuous alert/check ticks and the periodic child-process
+// spawns (ps / systemctl / ufw / iptables), trimming CPU + memory on a small
+// VPS. On-demand endpoints still work; only the always-on loops are gated.
+const ROLE = (process.env.OTHONI_ROLE || 'full').toLowerCase();
+const LITE = ROLE === 'peer';
+
 const app = express();
 
 app.disable('x-powered-by');
@@ -164,21 +175,25 @@ app.listen(PORT, HOST, () => {
   // Nightly SQLite VACUUM scheduler. Disabled when OTHONI_VACUUM_TIME
   // is unset or set to "off".
   vacuum.start();
-  // Process trends sampler — slower cadence (default 30s), shares the same
-  // SQLite handle via history.getDb() so it must start after history.start().
-  processHistory.start();
-  // Wire the alert engine to fire enabled webhooks on each rule transition.
-  alerts.setDispatcher((event) => webhooks.dispatch(event));
-  alerts.start();
-  // Synthetic checks share the same webhook dispatcher — a check that goes
-  // down N times in a row dispatches an "alert.fire"-shaped event.
-  checks.setDispatcher((event) => webhooks.dispatch(event));
-  checks.start();
-  // Security audit — auto-runs every 10 min so the diff-vs-prev row
-  // builds up without operator interaction; new crit findings dispatch
-  // through the same webhook pipeline as alert fires.
-  securityAudit.setDispatcher((event) => webhooks.dispatch(event));
-  securityAudit.startAutoRun();
+  if (LITE) {
+    logger.info('othoni role=peer (lite): process-trends, alerts, checks, and security-audit auto-run are disabled');
+  } else {
+    // Process trends sampler — slower cadence (default 30s), shares the same
+    // SQLite handle via history.getDb() so it must start after history.start().
+    processHistory.start();
+    // Wire the alert engine to fire enabled webhooks on each rule transition.
+    alerts.setDispatcher((event) => webhooks.dispatch(event));
+    alerts.start();
+    // Synthetic checks share the same webhook dispatcher — a check that goes
+    // down N times in a row dispatches an "alert.fire"-shaped event.
+    checks.setDispatcher((event) => webhooks.dispatch(event));
+    checks.start();
+    // Security audit — auto-runs every 10 min so the diff-vs-prev row
+    // builds up without operator interaction; new crit findings dispatch
+    // through the same webhook pipeline as alert fires.
+    securityAudit.setDispatcher((event) => webhooks.dispatch(event));
+    securityAudit.startAutoRun();
+  }
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {

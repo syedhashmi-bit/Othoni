@@ -5,8 +5,9 @@
 <h1 align="center">othoni</h1>
 
 <p align="center">
-  Self-hosted VPS monitoring dashboard. One Node.js process, one React UI,
-  one SQLite file. No agent, no Prometheus, no chart libraries.
+  Self-hosted VPS monitoring dashboard built with <strong>Node.js</strong> &amp;
+  <strong>React</strong> &mdash; one process, one <strong>SQLite</strong> file.
+  No agent, no Prometheus, no chart libraries.
 </p>
 
 <p align="center">
@@ -15,9 +16,19 @@
   custom metrics, all behind a login.</em>
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 18+" />
+  <img src="https://img.shields.io/badge/React-18-20232A?style=flat-square&logo=react&logoColor=61DAFB" alt="React 18" />
+  <img src="https://img.shields.io/badge/Express-4-000000?style=flat-square&logo=express&logoColor=white" alt="Express 4" />
+  <img src="https://img.shields.io/badge/Vite-5-646CFF?style=flat-square&logo=vite&logoColor=white" alt="Vite 5" />
+  <img src="https://img.shields.io/badge/SQLite-better--sqlite3-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite via better-sqlite3" />
+  <img src="https://img.shields.io/badge/WireGuard-federated-88171A?style=flat-square&logo=wireguard&logoColor=white" alt="WireGuard federated" />
+  <img src="https://img.shields.io/badge/License-MIT-3DA639?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="License MIT" />
+</p>
+
 ---
 
-## Features
+## 📊 Features
 
 - Login-gated dashboard (credentials from environment variables)
 - Live CPU, RAM, disk usage, swap, load average
@@ -87,7 +98,7 @@
 - **Keyboard shortcuts** — two-key chords (`g d`, `g h`, etc.) to jump
   between pages, `?` for the cheatsheet
 
-## Stack
+## 🧱 Stack
 
 - Node.js + Express
 - React 18 + Vite
@@ -97,12 +108,12 @@
 - JWT in an httpOnly cookie for auth
 - helmet + express-rate-limit for basic hardening
 
-## Requirements
+## 📋 Requirements
 
 - Linux server (Ubuntu/Debian/RHEL)
 - Node.js 18+ and npm
 
-## Install — one-liner
+## ⚡ Install — one-liner
 
 For a fresh VPS, the included installer handles Node setup, repo clone,
 build, `.env` generation (with a scrypt-hashed admin password and a
@@ -124,7 +135,7 @@ Defaults: install at `/var/www/othoni`, listen on `127.0.0.1:8088`. Front
 with nginx + TLS — see `nginx-othoni.conf.example` in the repo. Tunable
 via env vars; see the comment block at the top of `install.sh`.
 
-## Install — manual
+## 🔧 Install — manual
 
 ```bash
 git clone <your-fork-or-tarball> /var/www/othoni
@@ -135,7 +146,7 @@ npm install
 npm run build
 ```
 
-## Configure
+## ⚙️ Configure
 
 ```bash
 cp .env.example .env
@@ -165,12 +176,13 @@ $EDITOR .env
 | `OTHONI_LOGIN_LOCKOUT_USER_FAILS` | `20` | consecutive failures (across all IPs) before a username is locked out — catches distributed guessing; per-IP lock still trips at `OTHONI_LOGIN_LOCKOUT_FAILS` (`5`) |
 | `OTHONI_PROMETHEUS_TOKEN` | unset      | Bearer token for the optional `/metrics` Prometheus exporter (off when unset) |
 | `OTHONI_PEER_TOKEN`     | unset        | shared secret (≥16 chars) that lets a *central* othoni read this instance over the federation proxy. When set, `Authorization: Bearer <token>` is accepted as a read-only (viewer) session. Off when unset |
+| `OTHONI_ROLE`           | `full`       | set `peer` for a lightweight federation-peer mode: still samples + serves its own metrics, but skips the process-trends sampler, alert engine, synthetic checks, and security-audit auto-run. Trims CPU + the periodic `ps`/`systemctl`/`ufw`/`iptables` spawns on a small VPS |
 | `OTHONI_PAGERDUTY_URL`  | `https://events.pagerduty.com/v2/enqueue` | override the PagerDuty Events API endpoint (set the EU host for EU tenants) |
 | `OTHONI_OPSGENIE_URL`   | `https://api.opsgenie.com/v2/alerts` | override the Opsgenie Alert API endpoint (use `api.eu.opsgenie.com` for the EU region) |
 | `OTHONI_ACTIONS_ENABLED`| unset        | Set `true` to enable opt-in write actions (systemd / Docker / process signal — concrete actions land in v0.32+) |
 | `NODE_ENV`              | `production` | `production` on a VPS                       |
 
-## Run in development
+## 🛠️ Run in development
 
 In one terminal:
 
@@ -188,7 +200,7 @@ npm --prefix client run dev
 
 Open http://localhost:5173 in your browser.
 
-## Run in production
+## 🚀 Run in production
 
 ```bash
 npm run build   # builds client/dist
@@ -197,7 +209,7 @@ npm start       # starts Express on $PORT
 
 Open `http://YOUR_SERVER_IP:8088`.
 
-## Run as a systemd service
+## 🔁 Run as a systemd service
 
 A ready-to-edit example is included.
 
@@ -219,7 +231,7 @@ npm run build
 sudo systemctl restart othoni
 ```
 
-## API
+## 🔌 API
 
 All `/api/*` routes (except `/api/health` and `/api/auth/login`) require an
 authenticated session.
@@ -265,7 +277,7 @@ authenticated session.
 | GET    | `/api/security-audit/hosts`  | Remote hosts reporting audits, with latest summary |
 | GET    | `/api/security-audit/hosts/:host` | One remote host's latest run + findings |
 | GET    | `/api/peers`        | List registered federation peers (token stripped) |
-| PUT    | `/api/peers/:host`  | Register / update a peer (`{ url, token, label }`) |
+| PUT    | `/api/peers/:host`  | Register / update a peer (`{ url, token, label, lat, lon, place }`) |
 | DELETE | `/api/peers/:host`  | Remove a peer                     |
 | GET    | `/api/fleet/:host/*`| Read-only reverse proxy to a peer (GET-only; forwards `/api/*`) |
 | GET    | `/api/processes`    | Top processes (`?sortBy=cpu      memory&limit=20`) |
@@ -277,7 +289,7 @@ authenticated session.
 | GET    | `/api/db/stats`     | SQLite store footprint + per-table + per-metric counts |
 | GET    | `/api/audit`        | Audit-log events (`?range=`, `?action=`, `?limit=`) |
 | GET    | `/api/audit/actions`| Whitelist of audited action names |
-| GET    | `/api/hosts`        | Auto-discovered hosts pushing `custom.<host>.*` metrics |
+| GET    | `/api/hosts`        | Auto-discovered hosts pushing `custom.<host>.*` metrics (+ a `self` node for the local box) |
 | GET    | `/api/actions`      | Opt-in action surface state + registered kinds (`enabled:false` when off) |
 | POST   | `/api/actions/run`  | Run an action (404 when `OTHONI_ACTIONS_ENABLED` is unset) |
 | GET    | `/api/actions/history` | Action invocation history with full stdout/stderr |
@@ -303,7 +315,7 @@ authenticated session.
 request (averaged within fixed-width time buckets), so the payload is small
 regardless of the requested span.
 
-## Pushing metrics from an agent
+## 📡 Pushing metrics from an agent
 
 1. Go to **Settings** → **API keys** in the dashboard, enter a label,
    and click **Generate**. Copy the key immediately — only the SHA-256
@@ -411,7 +423,7 @@ the `Host` header, and certificate validation — TLS stays verified
 end-to-end; only DNS is bypassed. The origin must accept direct
 connections (open its firewall to the agent's IP on the dashboard's port).
 
-## Federation — full remote dashboards
+## 🌐 Federation — full remote dashboards
 
 The agent above gives you a host's **metrics**. To see another VPS's
 *complete* dashboard — Storage, Processes, Docker, Services, Projects,
@@ -463,7 +475,20 @@ the peer's port to the open internet. Since the transport already encrypts
 the link, a plain `http://` peer URL is fine. There's a full walkthrough
 (including the WireGuard setup) in [`docs/federation-peers.md`](docs/federation-peers.md).
 
-## Security notes
+**Fleet map.** The **Hosts** page renders a hand-drawn SVG world map with a
+dot per VPS (local box, agent hosts, and federation peers), colored by
+freshness. No map library, tiles, or GeoIP — locations are set per host/peer
+under **Settings** by picking a region from a preset list (or entering
+lat/lon). Hosts without a location show as "unplaced" beneath the map.
+
+**Lightweight peer mode.** Set `OTHONI_ROLE=peer` on a federation peer to skip
+the subsystems a read-only peer doesn't need — the process-trends sampler, the
+alert engine, synthetic checks, and the security-audit auto-run. It still
+samples and serves its own metrics for the central to read; it just stops
+running the monitoring loops (and their periodic `ps`/`systemctl`/`ufw`/
+`iptables` spawns), which trims CPU and memory on a small VPS.
+
+## 🔒 Security notes
 
 - Always change `OTHONI_ADMIN_PASSWORD` and set a unique `OTHONI_JWT_SECRET` in
   production. The defaults exist only to make first-time testing painless. When
@@ -491,7 +516,7 @@ the link, a plain `http://` peer URL is fine. There's a full walkthrough
   If you want Docker support and othoni runs as a non-root user, add that user
   to the `docker` group.
 
-## Project layout
+## 📁 Project layout
 
 ```
 othoni/
@@ -527,7 +552,7 @@ othoni/
 └── package.json
 ```
 
-## Optional Prometheus exporter
+## 📈 Optional Prometheus exporter
 
 Set `OTHONI_PROMETHEUS_TOKEN` in `.env` and restart the service. Then point
 your Prometheus job at the dashboard:
@@ -546,7 +571,7 @@ The exporter is off when the env var is unset (`/metrics` returns 404 in
 that state, so the endpoint isn't even advertised). Generate a random token
 with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
-## Roadmap (not built yet)
+## 🗺️ Roadmap (not built yet)
 
 - **Alert-rule silencing / mute windows** — suppress a rule (or all
   rules) during planned maintenance while still recording the suppressed

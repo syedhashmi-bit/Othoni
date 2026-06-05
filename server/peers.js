@@ -73,6 +73,19 @@ function isValidToken(s) {
   return typeof s === 'string' && s.trim().length >= 16 && s.length <= 256;
 }
 
+// Optional map location. Accepts a number or numeric string; null/'' clears.
+// Throws on a non-numeric or out-of-range value.
+function coerceCoord(v, max, label) {
+  if (v === null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || n < -max || n > max) {
+    const e = new Error(`${label} must be a number between -${max} and ${max}`);
+    e.code = 'invalid_request';
+    throw e;
+  }
+  return n;
+}
+
 function listSafe() {
   load();
   return cache.peers.map((p) => ({
@@ -81,6 +94,9 @@ function listSafe() {
     label: p.label || null,
     addedAt: p.addedAt,
     hasToken: !!p.token,
+    lat: p.lat == null ? null : p.lat,
+    lon: p.lon == null ? null : p.lon,
+    place: p.place || null,
   }));
 }
 
@@ -97,7 +113,7 @@ function has(host) {
 // Add or update a peer keyed by host. `token` is optional on update — when
 // omitted, the existing token is kept (so the UI can edit url/label without
 // re-entering the secret). On create the token is required.
-function upsert({ host, url, token, label }) {
+function upsert({ host, url, token, label, lat, lon, place }) {
   load();
   if (!isValidHost(host)) {
     const e = new Error('host must be a DNS-style label [a-z0-9-]{1,40}');
@@ -126,12 +142,22 @@ function upsert({ host, url, token, label }) {
     e.code = 'invalid_label';
     throw e;
   }
+  // Location — undefined means "leave as-is"; null/'' clears it.
+  const nextLat = lat === undefined ? (existing ? existing.lat : null) : coerceCoord(lat, 90, 'lat');
+  const nextLon = lon === undefined ? (existing ? existing.lon : null) : coerceCoord(lon, 180, 'lon');
+  let nextPlace;
+  if (place === undefined) nextPlace = existing ? existing.place : null;
+  else if (typeof place !== 'string') { const e = new Error('place must be a string'); e.code = 'invalid_request'; throw e; }
+  else nextPlace = place.slice(0, 60).trim() || null;
   const entry = {
     host,
     url: origin,
     token: tokenToStore,
     label: typeof label === 'string' && label.length ? label : (existing ? existing.label : null),
     addedAt: existing ? existing.addedAt : Date.now(),
+    lat: nextLat == null ? null : nextLat,
+    lon: nextLon == null ? null : nextLon,
+    place: nextPlace,
   };
   if (existing) Object.assign(existing, entry);
   else cache.peers.push(entry);
