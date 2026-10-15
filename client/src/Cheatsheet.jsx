@@ -20,6 +20,8 @@ const SECTIONS = [
       { keys: ['g', 'a'], label: 'Alerts' },
       { keys: ['g', 'e'], label: 'Checks' },
       { keys: ['g', 'r'], label: 'Actions (runs)' },
+      { keys: ['g', 'j'], label: 'Projects' },
+      { keys: ['g', 'u'], label: 'Security' },
       { keys: ['g', 'l'], label: 'Logs' },
       { keys: ['g', ','], label: 'Settings' },
     ],
@@ -27,6 +29,7 @@ const SECTIONS = [
   {
     title: 'Help',
     rows: [
+      { keys: ['Ctrl K'], label: 'Jump to a page, setting, or host (⌘K on Mac)' },
       { keys: ['?'], label: 'Toggle this cheatsheet' },
       { keys: ['Esc'], label: 'Close popovers / cheatsheet' },
     ],

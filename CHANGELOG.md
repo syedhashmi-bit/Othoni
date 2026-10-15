@@ -6,7 +6,52 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_Nothing yet._
+A client-only quality-of-life pass. No server or API changes.
+
+### Added
+
+- **Alert state in the browser tab.** The title shows the alert count and the
+  current page (`(2) Dashboard · Othoni`), and the favicon gains a red/amber
+  dot while alerts fire (grey when the dashboard can't reach the server), so a
+  backgrounded tab is still noticeable. `client/src/tabStatus.js`.
+- **Command palette (Ctrl/⌘+K).** Fuzzy jump to any page, any Settings
+  section, the local box, federation peers (full dashboard), agent hosts, plus
+  theme / density / shortcuts / sign-out commands. Also a "Jump to…" button in
+  the topbar. `client/src/CommandPalette.jsx`.
+- **Stale-data indicators.** `usePoller` now reports into a module-level
+  freshness registry (`useFreshness`). The topbar live pill turns amber
+  (`stale · 18s ago`) or red (`offline`) and a banner appears above the page
+  when data stops updating, instead of cards silently showing old values.
+  Time spent in a hidden tab doesn't count. `usePoller` also returns
+  `updatedAt`.
+- **Light theme.** Theme preference (Match system / Dark / Light) in Settings,
+  the topbar toggle, and the palette. It's stored per browser in `othoni.theme`,
+  resolved onto `<html data-theme>`, and applied before first paint by an inline
+  script in `index.html` so there's no flash.
+
+### Changed
+
+- **Settings is tabbed.** General / Fleet / Access / Data / Operations, driven
+  by the URL hash. `#peers`, `#api-keys` etc. open the right tab and scroll to
+  the card (shared map in `client/src/lib/settingsTabs.js`). Only the active
+  tab's cards mount, so hidden cards no longer fetch.
+- Keyboard cheatsheet now lists the existing `g j` (Projects) and `g u`
+  (Security) chords and Ctrl+K.
+
+### Fixed
+
+- **Full disk no longer crash-loops the server.** _(server, deployed
+  2026-06-18)_ On a 0-bytes-free partition, enabling WAL in `history.open()`
+  threw `SQLITE_IOERR_SHMSIZE` before the server could start. The DB now opens
+  in a degraded mode (live dashboard up, history persistence paused,
+  `storage.degraded` set), and the deferred WAL/schema setup completes once
+  `checkStorage()` sees space again. The 10-min retention `cleanup()` is
+  skipped while degraded and wrapped so a disk error can't take the process
+  down from its bare `setInterval`.
+- **Dashboard CPU heatmap rendered blank.** `Heatmap` treated
+  `useContainerWidth()`'s `[width, ref]` tuple as a number, so every cell got
+  `x`/`width = NaN` (≈1000 console errors per refresh). Now destructured and the
+  ref attached.
 
 ## [0.73.0] — 2026-06-05
 

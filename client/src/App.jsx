@@ -1,7 +1,10 @@
 import React, { useEffect, useState, useRef, createContext, useContext } from 'react';
-import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { api, setActiveHost } from './api';
-import { useLocalSetting, useInFlightCount } from './hooks';
+import { useLocalSetting, useInFlightCount, useFreshness, useNow, formatAgo } from './hooks';
+import { THEME_KEY, applyTheme, watchSystemTheme, nextTheme } from './theme';
+import { useTabStatus } from './tabStatus';
+import { CommandPalette } from './CommandPalette.jsx';
 import { notifyFire } from './alerts';
 import { AlertBadge, AlertsPopover } from './AlertsPopover.jsx';
 
@@ -31,6 +34,7 @@ import {
   IconDocker, IconServices, IconNetwork, IconConnections, IconAlerts,
   IconChecks, IconLogs, IconSettings, IconHosts, IconActions,
   IconClock, IconSignOut, IconProjects, IconShield,
+  IconSun, IconMoon, IconThemeAuto,
 } from './Icons.jsx';
 
 // Two-key navigation chords: press `g` then one of these.
@@ -71,6 +75,7 @@ function shouldIgnoreShortcut(e) {
 function useKeyboardShortcuts() {
   const navigate = useNavigate();
   const [cheatsheetOpen, setCheatsheetOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const pending = useRef(null);    // 'g' when a chord prefix is active
   const timer = useRef(null);
 
@@ -80,6 +85,14 @@ function useKeyboardShortcuts() {
       if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     }
     function onKey(e) {
+      // Ctrl/Cmd+K works everywhere, including from inside form fields.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        clearPending();
+        setCheatsheetOpen(false);
+        setPaletteOpen((v) => !v);
+        return;
+      }
       if (shouldIgnoreShortcut(e)) {
         if (pending.current) clearPending();
         return;
@@ -122,7 +135,7 @@ function useKeyboardShortcuts() {
     };
   }, [navigate, cheatsheetOpen]);
 
-  return { cheatsheetOpen, setCheatsheetOpen };
+  return { cheatsheetOpen, setCheatsheetOpen, paletteOpen, setPaletteOpen };
 }
 
 const AppCtx = createContext(null);
@@ -136,6 +149,10 @@ export function AdminOnly({ children, fallback = null }) {
   if (ctx?.user?.role !== 'admin') return fallback;
   return children;
 }
+
+const CHORD_BY_PATH = Object.fromEntries(
+  Object.entries(G_CHORDS).map(([k, path]) => [path, `g ${k}`]),
+);
 
 const NAV = [
   { to: '/', label: 'Dashboard', end: true, Icon: IconDashboard },
@@ -155,6 +172,20 @@ const NAV = [
   { to: '/logs', label: 'Logs', Icon: IconLogs },
   { to: '/settings', label: 'Settings', Icon: IconSettings },
 ];
+
+const PALETTE_PAGES = [
+  ...NAV.map(({ to, label }) => ({ to, label, chord: CHORD_BY_PATH[to] })),
+  { to: '/map', label: 'Fleet map' },
+];
+
+// Longest-prefix match so /hosts/foo is still labelled "Hosts".
+function pageLabelFor(pathname) {
+  if (pathname === '/') return 'Dashboard';
+  if (pathname.startsWith('/map')) return 'Map';
+  const hit = NAV.filter((n) => n.to !== '/' && pathname.startsWith(n.to))
+    .sort((a, b) => b.to.length - a.to.length)[0];
+  return hit ? hit.label : null;
+}
 
 function ServerClock() {
   const [now, setNow] = useState(() => new Date());
@@ -178,12 +209,70 @@ function TopProgressBar() {
   return <div className={`poll-progress ${n > 0 ? 'active' : 'idle'}`} aria-hidden="true" />;
 }
 
+// Reflects the aggregate health of every active poller, not just the
+// configured interval: amber "stale" when some data stopped updating, red
+// "offline" when every request is failing.
 function LiveIndicator({ refreshMs }) {
+  const now = useNow();
+  const f = useFreshness(now);
+  const age = f.lastOk ? formatAgo(now - f.lastOk) : 'never';
+  let title = `refreshing every ${refreshMs / 1000}s · last update ${age}`;
+  let label = `live · ${refreshMs / 1000}s`;
+  if (f.status === 'offline') {
+    label = 'offline';
+    title = `All requests failing${f.lastError ? ` — ${f.lastError}` : ''} · last update ${age}`;
+  } else if (f.status === 'stale') {
+    label = `stale · ${age}`;
+    const n = f.failing + f.stale;
+    title = `${n} of ${f.total} data source${f.total === 1 ? '' : 's'} not updating${f.lastError ? ` — ${f.lastError}` : ''}`;
+  }
   return (
-    <span className="live-indicator" title={`refreshing every ${refreshMs / 1000}s`}>
+    <span className={`live-indicator ${f.status}`} title={title}>
       <span className="live-dot" />
-      <span>live · {refreshMs / 1000}s</span>
+      <span>{label}</span>
     </span>
+  );
+}
+
+// Strip under the topbar when data on screen may be out of date. Cards keep
+// showing their last good values on error, so without this a dead peer or
+// backend looks exactly like a quiet server.
+function StaleBanner({ viewHost }) {
+  const now = useNow();
+  const f = useFreshness(now);
+  if (f.status === 'live') return null;
+  const age = f.lastOk ? `last successful update ${formatAgo(now - f.lastOk)}` : 'no successful update yet';
+  const where = viewHost ? `peer "${viewHost}"` : 'the server';
+  return (
+    <div className={`stale-banner ${f.status}`} role="status">
+      <strong>{f.status === 'offline' ? `Can't reach ${where}` : 'Some data is not updating'}</strong>
+      <span> — values shown may be out of date ({age}).</span>
+      {f.lastError && <span className="dim"> {f.lastError}</span>}
+    </div>
+  );
+}
+
+function TabStatus({ activeAlerts }) {
+  const { pathname } = useLocation();
+  const f = useFreshness(useNow(5000));
+  useTabStatus({ activeAlerts, pageLabel: pageLabelFor(pathname), offline: f.status === 'offline' });
+  return null;
+}
+
+const THEME_ICON = { system: IconThemeAuto, dark: IconMoon, light: IconSun };
+
+function ThemeToggle({ theme, setTheme }) {
+  const Icon = THEME_ICON[theme] || IconThemeAuto;
+  return (
+    <button
+      type="button"
+      className="topbar-bell"
+      onClick={() => setTheme(nextTheme(theme))}
+      title={`Theme: ${theme} — click to switch`}
+      aria-label={`Theme: ${theme}. Switch theme`}
+    >
+      <Icon />
+    </button>
   );
 }
 
@@ -282,7 +371,7 @@ function HostSwitcher() {
   );
 }
 
-function Shell({ user, onLogout, children, refreshMs, density, setDensity, activeAlerts, viewHost, onShortcutsClick }) {
+function Shell({ user, onLogout, children, refreshMs, density, setDensity, theme, setTheme, activeAlerts, viewHost, onShortcutsClick, onPaletteClick }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   return (
     <>
@@ -355,8 +444,18 @@ function Shell({ user, onLogout, children, refreshMs, density, setDensity, activ
               read-only mode
             </span>
           )}
+          <button
+            type="button"
+            className="palette-trigger"
+            onClick={onPaletteClick}
+            title="Jump to… (Ctrl+K)"
+          >
+            <span>Jump to…</span>
+            <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</kbd>
+          </button>
           <AlertBadge activeAlerts={activeAlerts} onClick={() => setPopoverOpen((v) => !v)} />
           <DensityToggle density={density} setDensity={setDensity} />
+          <ThemeToggle theme={theme} setTheme={setTheme} />
           <LiveIndicator refreshMs={refreshMs} />
           <ServerClock />
           <button
@@ -377,7 +476,10 @@ function Shell({ user, onLogout, children, refreshMs, density, setDensity, activ
           />
         )}
       </header>
-      <main className="main">{children}</main>
+      <main className="main">
+        <StaleBanner viewHost={viewHost} />
+        {children}
+      </main>
     </div>
     </>
   );
@@ -445,6 +547,7 @@ export default function App() {
   const [user, setUser] = useState(undefined); // undefined = unknown, null = logged out
   const [refreshMs, setRefreshMs] = useLocalSetting('othoni.refreshMs', 5000);
   const [density, setDensity] = useLocalSetting('othoni.density', 'comfortable');
+  const [theme, setTheme] = useLocalSetting(THEME_KEY, 'system');
   // Which host's dashboard is in view. null = the local box; otherwise the
   // `host` of a registered federation peer. Persisted so a refresh keeps the
   // remote view. Set synchronously below (not in an effect) so the module-
@@ -463,6 +566,11 @@ export default function App() {
       delete document.body.dataset.density;
     }
   }, [density]);
+
+  useEffect(() => {
+    applyTheme(theme);
+    return watchSystemTheme(theme);
+  }, [theme]);
 
   // Same trick for read-only viewer sessions — gives CSS a hook to hide
   // edit affordances (the form-disabled mixin in styles.css) without
@@ -521,7 +629,7 @@ export default function App() {
 
   return (
     <AppCtx.Provider
-      value={{ user, refreshMs, setRefreshMs, density, setDensity, viewHost, setViewHost, onLogout: handleLogout, ...alerts }}
+      value={{ user, refreshMs, setRefreshMs, density, setDensity, theme, setTheme, viewHost, setViewHost, onLogout: handleLogout, ...alerts }}
     >
       <AuthedAppBody refreshMs={refreshMs} alerts={alerts} user={user} handleLogout={handleLogout} viewHost={viewHost} />
     </AppCtx.Provider>
@@ -532,8 +640,21 @@ export default function App() {
 // inside the Shell — the unauthenticated branch never mounts the router
 // content and shouldn't install global key listeners.
 function AuthedAppBody({ refreshMs, alerts, user, handleLogout, viewHost }) {
-  const { cheatsheetOpen, setCheatsheetOpen } = useKeyboardShortcuts();
-  const { density, setDensity } = useApp();
+  const { cheatsheetOpen, setCheatsheetOpen, paletteOpen, setPaletteOpen } = useKeyboardShortcuts();
+  const { density, setDensity, theme, setTheme, setViewHost } = useApp();
+  const navigate = useNavigate();
+  const commands = [
+    { id: 'cmd:theme-light', label: 'Theme: light', keywords: 'appearance mode', run: () => setTheme('light') },
+    { id: 'cmd:theme-dark', label: 'Theme: dark', keywords: 'appearance mode', run: () => setTheme('dark') },
+    { id: 'cmd:theme-system', label: 'Theme: match system', keywords: 'appearance mode auto', run: () => setTheme('system') },
+    {
+      id: 'cmd:density', label: density === 'compact' ? 'Density: comfortable' : 'Density: compact',
+      keywords: 'layout spacing cozy dense',
+      run: () => setDensity(density === 'compact' ? 'comfortable' : 'compact'),
+    },
+    { id: 'cmd:shortcuts', label: 'Keyboard shortcuts', hint: '?', keywords: 'help cheatsheet', run: () => setCheatsheetOpen(true) },
+    { id: 'cmd:logout', label: 'Sign out', keywords: 'logout', run: handleLogout },
+  ];
   return (
     <Shell
       user={user}
@@ -541,10 +662,14 @@ function AuthedAppBody({ refreshMs, alerts, user, handleLogout, viewHost }) {
       refreshMs={refreshMs}
       density={density}
       setDensity={setDensity}
+      theme={theme}
+      setTheme={setTheme}
       activeAlerts={alerts.activeAlerts}
       viewHost={viewHost}
       onShortcutsClick={() => setCheatsheetOpen((v) => !v)}
+      onPaletteClick={() => setPaletteOpen(true)}
     >
+      <TabStatus activeAlerts={alerts.activeAlerts} />
       {/* Remount the whole page subtree when the view host changes so every
           page re-fetches against the new source instead of waiting a poll
           tick with stale data. */}
@@ -570,6 +695,14 @@ function AuthedAppBody({ refreshMs, alerts, user, handleLogout, viewHost }) {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Cheatsheet open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        pages={PALETTE_PAGES}
+        commands={commands}
+        navigate={navigate}
+        setViewHost={setViewHost}
+      />
     </Shell>
   );
 }

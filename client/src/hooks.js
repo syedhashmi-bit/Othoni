@@ -20,25 +20,106 @@ export function useInFlightCount() {
   return useSyncExternalStore(subscribeInFlight, getInFlight, getInFlight);
 }
 
-// Polls `loader` every `intervalMs`. Returns { data, error, loading, refresh }.
-// Pause when document is hidden so we don't spam the server.
+// ---------- Global freshness registry ----------
+// Every mounted usePoller reports when it last succeeded and how many times
+// in a row it has failed. The topbar live indicator + stale banner read the
+// aggregate via useFreshness(), so a dead backend or unreachable peer shows
+// up even though cards keep rendering their last good values.
+const pollers = new Map();
+let pollerSeq = 0;
+let pollersVersion = 0;
+const pollerSubs = new Set();
+function notifyPollers() {
+  pollersVersion++;
+  for (const fn of pollerSubs) fn();
+}
+function subscribePollers(fn) {
+  pollerSubs.add(fn);
+  return () => pollerSubs.delete(fn);
+}
+function getPollersVersion() {
+  return pollersVersion;
+}
+
+// Polling pauses while the tab is hidden, so time spent hidden must not
+// count against a poller's age when the tab comes back.
+let visibleSince = Date.now();
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) visibleSince = Date.now();
+  });
+}
+
+const FAILS_BEFORE_STALE = 2;
+
+// Aggregate freshness across every live poller. `now` is passed in so the
+// caller's own clock drives re-evaluation (ages grow without new events).
+export function useFreshness(now) {
+  useSyncExternalStore(subscribePollers, getPollersVersion, getPollersVersion);
+  let lastOk = 0;
+  let stale = 0;
+  let failing = 0;
+  let lastError = null;
+  for (const p of pollers.values()) {
+    if (p.lastOk > lastOk) lastOk = p.lastOk;
+    const threshold = Math.max(3 * p.intervalMs, 15_000);
+    const graceOver = now - visibleSince > threshold;
+    if (p.fails >= FAILS_BEFORE_STALE) {
+      failing++;
+      lastError = p.error || lastError;
+    } else if (p.lastOk && graceOver && now - p.lastOk > threshold) {
+      stale++;
+    }
+  }
+  const total = pollers.size;
+  let status = 'live';
+  if (total > 0 && failing === total) status = 'offline';
+  else if (failing > 0 || stale > 0) status = 'stale';
+  return { status, total, failing, stale, lastOk, lastError };
+}
+
+// Polls `loader` every `intervalMs`. Returns { data, error, loading, refresh,
+// updatedAt }. Pause when document is hidden so we don't spam the server.
 export function usePoller(loader, intervalMs = 5000, deps = []) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState(null);
   const stopped = useRef(false);
   const timer = useRef(null);
+  const idRef = useRef(null);
+  if (idRef.current === null) idRef.current = ++pollerSeq;
+
+  useEffect(() => {
+    const id = idRef.current;
+    const prev = pollers.get(id);
+    pollers.set(id, { lastOk: prev?.lastOk || 0, fails: prev?.fails || 0, error: prev?.error || null, intervalMs });
+    notifyPollers();
+    return () => {
+      pollers.delete(id);
+      notifyPollers();
+    };
+  }, [intervalMs]);
 
   const tick = useCallback(async () => {
     inFlight++; notifyInFlight();
+    const entry = () => pollers.get(idRef.current);
     try {
       const d = await loader();
       if (!stopped.current) {
         setData(d);
         setError(null);
+        const t = Date.now();
+        setUpdatedAt(t);
+        const p = entry();
+        if (p) { p.lastOk = t; p.fails = 0; p.error = null; notifyPollers(); }
       }
     } catch (e) {
-      if (!stopped.current) setError(e);
+      if (!stopped.current) {
+        setError(e);
+        const p = entry();
+        if (p) { p.fails++; p.error = e?.message || String(e); notifyPollers(); }
+      }
     } finally {
       if (!stopped.current) setLoading(false);
       inFlight = Math.max(0, inFlight - 1); notifyInFlight();
@@ -67,7 +148,25 @@ export function usePoller(loader, intervalMs = 5000, deps = []) {
     };
   }, [intervalMs, tick]);
 
-  return { data, error, loading, refresh: tick };
+  return { data, error, loading, refresh: tick, updatedAt };
+}
+
+// Ticking wall clock shared by freshness displays.
+export function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
+export function formatAgo(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.round(m / 60)}h ago`;
 }
 
 // Triggers a one-shot CSS class for `durationMs` whenever `value` changes.

@@ -859,7 +859,7 @@ export function Heatmap({
   rangeLabel = '',
 }) {
   const [hover, setHover] = useState(null);
-  const w = useContainerWidth(800);
+  const [w, ref] = useContainerWidth(800);
 
   if (!cores.length) {
     return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No per-core data in this range.</div>;
@@ -894,7 +894,7 @@ export function Heatmap({
   }
 
   return (
-    <div style={{ width: '100%', position: 'relative' }}>
+    <div ref={ref} style={{ width: '100%', position: 'relative' }}>
       <svg
         viewBox={`0 0 ${labelW + gridW} ${height}`}
         width="100%"

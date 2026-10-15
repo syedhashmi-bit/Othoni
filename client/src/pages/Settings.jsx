@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useApp, AdminOnly } from '../App.jsx';
 import { IconPlus, IconTrash } from '../Icons.jsx';
 import { formatBytes } from '../utils.js';
 import { REGIONS, regionKeyFor } from '../lib/regions.js';
+import { SETTINGS_TABS, resolveSettingsHash } from '../lib/settingsTabs.js';
+import { THEME_OPTIONS } from '../theme.js';
 
 const REFRESH_OPTIONS = [
   { label: '2 seconds', value: 2000 },
@@ -1755,8 +1758,86 @@ function PeersCard() {
   );
 }
 
-export default function Settings() {
-  const { refreshMs, setRefreshMs, density, setDensity, user } = useApp();
+const THEME_LABELS = { system: 'Match system', dark: 'Dark', light: 'Light' };
+
+function PreferencesSection() {
+  const { refreshMs, setRefreshMs, density, setDensity, theme, setTheme } = useApp();
+  return (
+    <div className="grid cols-3">
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Refresh interval</div>
+        </div>
+        <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+          How often the dashboard polls the server. Saved in your browser only.
+        </p>
+        <select
+          value={refreshMs}
+          onChange={(e) => setRefreshMs(Number(e.target.value))}
+          className="select"
+          style={{ width: '100%' }}
+        >
+          {REFRESH_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Density</div>
+        </div>
+        <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+          Tighter spacing on cards / tables / sections. Useful on dense
+          dashboards or smaller screens.
+        </p>
+        <div className="toolbar" style={{ margin: 0 }}>
+          <button
+            type="button"
+            className={`btn ghost ${density !== 'compact' ? 'active' : ''}`}
+            onClick={() => setDensity('comfortable')}
+          >
+            Comfortable
+          </button>
+          <button
+            type="button"
+            className={`btn ghost ${density === 'compact' ? 'active' : ''}`}
+            onClick={() => setDensity('compact')}
+          >
+            Compact
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Theme</div>
+        </div>
+        <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+          Light or dark colors. &ldquo;Match system&rdquo; follows your OS setting.
+          Saved in your browser only.
+        </p>
+        <div className="toolbar" style={{ margin: 0 }}>
+          {THEME_OPTIONS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`btn ghost ${theme === t ? 'active' : ''}`}
+              onClick={() => setTheme(t)}
+            >
+              {THEME_LABELS[t]}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ServerSection() {
+  const { user } = useApp();
   const [server, setServer] = useState(null);
   const [err, setErr] = useState(null);
 
@@ -1768,123 +1849,120 @@ export default function Settings() {
   }, []);
 
   return (
+    <div className="grid cols-3">
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Session</div>
+        </div>
+        <dl className="kv">
+          <dt>User</dt>
+          <dd>{user?.username || '—'}</dd>
+          <dt>Hostname</dt>
+          <dd>{server?.hostname || '—'}</dd>
+          <dt>App version</dt>
+          <dd className="mono">{server?.version || '—'}</dd>
+        </dl>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Server</div>
+        </div>
+        {err && <div className="error">{err}</div>}
+        <dl className="kv">
+          <dt>Listen host</dt>
+          <dd className="mono">{server?.host || '—'}</dd>
+          <dt>Listen port</dt>
+          <dd className="mono">{server?.port || '—'}</dd>
+          <dt>NODE_ENV</dt>
+          <dd className="mono">{server?.nodeEnv || '—'}</dd>
+        </dl>
+      </div>
+    </div>
+  );
+}
+
+const SECTION_COMPONENTS = {
+  preferences: PreferencesSection,
+  server: ServerSection,
+  hosts: HostsCard,
+  peers: PeersCard,
+  users: UsersCard,
+  sessions: SessionsCard,
+  'api-keys': ApiKeysCard,
+  storage: StorageCard,
+  retention: RetentionCard,
+  actions: ActionsCard,
+  'audit-log': AuditLogCard,
+};
+
+// Tabbed by `location.hash` (see lib/settingsTabs.js): `#access` opens a
+// tab, `#peers` opens the tab holding that card and scrolls to it. Only the
+// active tab's cards mount, so hidden cards don't fetch or poll.
+export default function Settings() {
+  const { hash } = useLocation();
+  const navigate = useNavigate();
+  const { tab, section } = resolveSettingsHash(hash);
+  const active = SETTINGS_TABS.find((t) => t.id === tab);
+  const [flash, setFlash] = useState(null);
+
+  useEffect(() => {
+    if (!section) return undefined;
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(`settings-${section}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+    setFlash(section);
+    const t = setTimeout(() => setFlash(null), 1600);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t); };
+  }, [section, hash]);
+
+  return (
     <div className="page-fade-in">
       <h1 className="page-title">Settings</h1>
       <p className="subtitle">Configuration for this Othoni instance.</p>
 
-      <div className="grid cols-3">
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">Refresh interval</div>
-          </div>
-          <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
-            How often the dashboard polls the server. Saved in your browser only.
-          </p>
-          <select
-            value={refreshMs}
-            onChange={(e) => setRefreshMs(Number(e.target.value))}
-            className="select"
-            style={{ width: '100%' }}
+      <div className="settings-tabs" role="tablist" aria-label="Settings sections">
+        {SETTINGS_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={t.id === tab}
+            className={`settings-tab${t.id === tab ? ' active' : ''}`}
+            onClick={() => navigate(`/settings#${t.id}`)}
           >
-            {REFRESH_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">Density</div>
-          </div>
-          <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
-            Tighter spacing on cards / tables / sections. Useful on dense
-            dashboards or smaller screens.
-          </p>
-          <div className="toolbar" style={{ margin: 0 }}>
-            <button
-              type="button"
-              className={`btn ghost ${density !== 'compact' ? 'active' : ''}`}
-              onClick={() => setDensity('comfortable')}
-            >
-              Comfortable
-            </button>
-            <button
-              type="button"
-              className={`btn ghost ${density === 'compact' ? 'active' : ''}`}
-              onClick={() => setDensity('compact')}
-            >
-              Compact
-            </button>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">Session</div>
-          </div>
-          <dl className="kv">
-            <dt>User</dt>
-            <dd>{user?.username || '—'}</dd>
-            <dt>Hostname</dt>
-            <dd>{server?.hostname || '—'}</dd>
-            <dt>App version</dt>
-            <dd className="mono">{server?.version || '—'}</dd>
-          </dl>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">Server</div>
-          </div>
-          {err && <div className="error">{err}</div>}
-          <dl className="kv">
-            <dt>Listen host</dt>
-            <dd className="mono">{server?.host || '—'}</dd>
-            <dt>Listen port</dt>
-            <dd className="mono">{server?.port || '—'}</dd>
-            <dt>NODE_ENV</dt>
-            <dd className="mono">{server?.nodeEnv || '—'}</dd>
-          </dl>
-        </div>
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <div className="spacer-md" />
+      {active.sections.length > 1 && (
+        <nav className="settings-jump" aria-label="On this tab">
+          {active.sections.map((s) => (
+            <a
+              key={s.id}
+              href={`#${s.id}`}
+              onClick={(e) => { e.preventDefault(); navigate(`/settings#${s.id}`); }}
+            >
+              {s.label}
+            </a>
+          ))}
+        </nav>
+      )}
 
-      <StorageCard />
-
-      <div className="spacer-md" />
-
-      <ActionsCard />
-
-      <div className="spacer-md" />
-
-      <HostsCard />
-
-      <div className="spacer-md" />
-
-      <PeersCard />
-
-      <div className="spacer-md" />
-
-      <RetentionCard />
-
-      <div className="spacer-md" />
-
-      <SessionsCard />
-
-      <div className="spacer-md" />
-
-      <UsersCard />
-
-      <div className="spacer-md" />
-
-      <ApiKeysCard />
-
-      <div className="spacer-md" />
-
-      <AuditLogCard />
+      {active.sections.map((s, i) => {
+        const Comp = SECTION_COMPONENTS[s.id];
+        return (
+          <section
+            key={s.id}
+            id={`settings-${s.id}`}
+            className={`settings-section${flash === s.id ? ' section-flash' : ''}`}
+          >
+            {i > 0 && <div className="spacer-md" />}
+            <Comp />
+          </section>
+        );
+      })}
     </div>
   );
 }
