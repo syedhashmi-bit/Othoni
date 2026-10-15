@@ -124,6 +124,10 @@ let sampleTimer = null;
 let cleanupTimer = null;
 let storageTimer = null;
 let storage = { degraded: false, freeBytes: null, freePct: null, checkedAt: 0 };
+// True when open() got a usable DB handle but could not apply WAL/schema
+// because the disk was full. The handle still serves reads of whatever was
+// already persisted; checkStorage() re-applies the pragmas once space frees up.
+let degradedOpen = false;
 let lastSnap = null;
 // Tracks every metric name we've ever inserted. Seeded once at startup from
 // SELECT DISTINCT so restarts don't miss metrics added in prior runs. Updated
@@ -135,13 +139,22 @@ function ensureDir(p) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-function open() {
-  if (db) return db;
-  ensureDir(DB_PATH);
-  db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
-  db.pragma('synchronous = NORMAL');
-  db.exec(`
+// A full data partition surfaces as one of these SQLite error codes. Entering
+// WAL mode needs to grow the -shm/-wal files, so on a 0-bytes-free disk even
+// open() throws SQLITE_IOERR_SHMSIZE before the server can serve anything.
+function isDiskError(e) {
+  const code = e && e.code ? String(e.code) : '';
+  return (
+    code.startsWith('SQLITE_IOERR') ||
+    code === 'SQLITE_FULL' ||
+    /disk i\/o error|database or disk is full/i.test(e && e.message ? e.message : '')
+  );
+}
+
+function applyPragmasAndSchema(handle) {
+  handle.pragma('journal_mode = WAL');
+  handle.pragma('synchronous = NORMAL');
+  handle.exec(`
     CREATE TABLE IF NOT EXISTS samples (
       metric TEXT NOT NULL,
       t INTEGER NOT NULL,
@@ -214,7 +227,27 @@ function open() {
     CREATE INDEX IF NOT EXISTS idx_action_history_kind_t  ON action_history(kind, t);
     CREATE INDEX IF NOT EXISTS idx_action_history_actor_t ON action_history(actor, t);
   `);
-  migrate(db);
+  migrate(handle);
+}
+
+function open() {
+  if (db) return db;
+  ensureDir(DB_PATH);
+  // Opening an existing file doesn't need free space; the WAL pragma + schema
+  // setup do. Split them so a full disk degrades (server stays up, history
+  // persistence paused) instead of crash-looping the whole process.
+  db = new Database(DB_PATH);
+  try {
+    applyPragmasAndSchema(db);
+    degradedOpen = false;
+  } catch (e) {
+    if (!isDiskError(e)) throw e;
+    degradedOpen = true;
+    storage = { ...storage, degraded: true };
+    logger.error(
+      `history: DB open degraded (${e.code || e.message}) — disk full; history persistence paused, live dashboard unaffected`
+    );
+  }
   return db;
 }
 
@@ -257,6 +290,17 @@ function checkStorage() {
       logger.info(`history: data partition recovered (${freePct.toFixed(1)}% free) — resuming sampler writes`);
     }
     storage = { degraded, freeBytes, freePct, checkedAt: Date.now() };
+    // If we booted with a full disk we never set WAL or ensured the schema.
+    // Now that space is back, finish the open we deferred so persistence works.
+    if (!degraded && degradedOpen && db) {
+      try {
+        applyPragmasAndSchema(db);
+        degradedOpen = false;
+        logger.info('history: DB open completed after disk recovery — history persistence resumed');
+      } catch (e) {
+        logger.warn(`history: deferred DB setup still failing: ${e.code || e.message}`);
+      }
+    }
   } catch {
     // statfsSync unsupported / failed — leave storage as-is (not degraded).
   }
@@ -346,6 +390,24 @@ async function takeSample() {
 }
 
 function cleanup() {
+  // A DELETE still has to write to the WAL, which needs free space — so on a
+  // full disk cleanup would throw. It runs on a bare setInterval, so an
+  // uncaught throw here would take the whole process down (the very crash-loop
+  // we're guarding against). Skip while degraded; the wrapper catches the rest.
+  if (storage.degraded || degradedOpen) return;
+  try {
+    cleanupInner();
+  } catch (e) {
+    if (isDiskError(e)) {
+      logger.warn(`history: cleanup skipped — ${e.code || e.message}`);
+      storage = { ...storage, degraded: true };
+    } else {
+      logger.warn(`history: cleanup failed: ${e.message}`);
+    }
+  }
+}
+
+function cleanupInner() {
   const now = Date.now();
   const cutoff = now - RETENTION_MS;
   // v0.47 per-metric retention. Group distinct metric names by their
