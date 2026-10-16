@@ -497,9 +497,102 @@ function MetricCell({ check, spark }) {
   return null;
 }
 
+function tlsHost(check) {
+  return (check.target || '').replace(/:\d+$/, '');
+}
+
+// Certificate renewal (v0.76) via the `certbot.renew` action. Two-step
+// confirm like the Services restart button. A plain renew is a no-op until
+// < 30 days remain; only then do we offer --force-renewal, with a warning
+// about Let's Encrypt's duplicate-certificate rate limit.
+function RenewCert({ check, renew, onRenewed }) {
+  const [phase, setPhase] = useState('idle'); // idle | confirm | confirm-force | running | done
+  const [result, setResult] = useState(null);
+  const host = tlsHost(check);
+
+  if (!renew) return null;
+  if (!renew.enabled) {
+    return (
+      <div className="ck-renew">
+        <span className="dim">
+          Renewing from here needs dashboard actions — set <code>OTHONI_ACTIONS_ENABLED=true</code> in{' '}
+          <code>.env</code> and restart othoni. certbot still renews automatically below 30 days.
+        </span>
+      </div>
+    );
+  }
+  if (!renew.targets.has(host)) {
+    return (
+      <div className="ck-renew">
+        <span className="dim">No certbot-managed certificate named <code>{host}</code> on this box.</span>
+      </div>
+    );
+  }
+
+  async function go(force) {
+    setPhase('running');
+    try {
+      const r = await api.actions.run({ kind: 'certbot.renew', target: host, params: force ? { force: true } : {} });
+      const out = `${r.result.stdout}\n${r.result.stderr}`;
+      const notDue = /not (yet )?due for renewal/i.test(out);
+      setResult({ ok: r.result.ok, notDue, out: out.trim() });
+      if (r.result.ok && !notDue) onRenewed();
+    } catch (e) {
+      setResult({ ok: false, notDue: false, out: e.body?.message || e.message });
+    }
+    setPhase('done');
+  }
+
+  return (
+    <div className="ck-renew">
+      {phase === 'idle' && (
+        <>
+          <button type="button" className="btn tiny" onClick={() => setPhase('confirm')}>Renew certificate</button>
+          <span className="dim">certbot renews automatically below 30 days; use this after fixing a failed renewal.</span>
+        </>
+      )}
+      {phase === 'confirm' && (
+        <>
+          <span>Run <code>certbot renew</code> for <strong>{host}</strong>?</span>
+          <button type="button" className="btn tiny" onClick={() => go(false)}>Renew</button>
+          <button type="button" className="btn tiny ghost" onClick={() => setPhase('idle')}>Cancel</button>
+        </>
+      )}
+      {phase === 'confirm-force' && (
+        <>
+          <span className="ck-warn-text">
+            Force a new certificate now? Let's Encrypt allows 5 duplicates per week.
+          </span>
+          <button type="button" className="btn tiny danger" onClick={() => go(true)}>Force renewal</button>
+          <button type="button" className="btn tiny ghost" onClick={() => setPhase('done')}>Cancel</button>
+        </>
+      )}
+      {phase === 'running' && <span className="dim">Running certbot…</span>}
+      {phase === 'done' && result && (
+        <>
+          {result.ok && result.notDue && (
+            <>
+              <span>Not due yet — certbot will renew it automatically below 30 days.</span>
+              <button type="button" className="btn tiny ghost" onClick={() => setPhase('confirm-force')}>Force renewal…</button>
+            </>
+          )}
+          {result.ok && !result.notDue && <span className="ck-ok-text">Renewed. The check has been re-run.</span>}
+          {!result.ok && (
+            <details className="ck-renew-fail">
+              <summary className="ck-error">Renewal failed — show certbot output</summary>
+              <pre>{result.out.slice(-2000)}</pre>
+            </details>
+          )}
+          <button type="button" className="btn tiny ghost" onClick={() => { setResult(null); setPhase('idle'); }}>Done</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Expanded panel: latency checks get the SLA stats; everything else gets a
 // plain fact sheet.
-function DetailPanel({ check }) {
+function DetailPanel({ check, isAdmin, renew, onRenewed }) {
   const rows = [['Target', check.target || (check.steps?.length ? `${check.steps.length} chained requests` : '—')]];
   if (check.type === 'heartbeat' && check.hbToken) rows[0] = ['Ping URL', pingUrl(check.hbToken)];
   if (check.detail?.expiresAt) rows.push(['Expires', fmtDate(check.detail.expiresAt)]);
@@ -530,12 +623,13 @@ function DetailPanel({ check }) {
           </React.Fragment>
         ))}
       </dl>
+      {check.type === 'tls' && isAdmin && <RenewCert check={check} renew={renew} onRenewed={onRenewed} />}
       {LATENCY_TYPES.has(check.type) && <StatsRow checkId={check.id} />}
     </div>
   );
 }
 
-function CheckRow({ check, spark, isAdmin, open, onToggleOpen, busy, onRun, onPause, onRemove, onAccept }) {
+function CheckRow({ check, spark, isAdmin, open, onToggleOpen, busy, onRun, onPause, onRemove, onAccept, renew, onRenewed }) {
   const st = stateOf(check);
   const kind = KIND[check.type] || { name: check.type, tag: check.type };
   return (
@@ -559,6 +653,11 @@ function CheckRow({ check, spark, isAdmin, open, onToggleOpen, busy, onRun, onPa
               Accept change
             </button>
           )}
+          {check.type === 'tls' && check.lastUp === 0 && !open && renew?.enabled && renew.targets.has(tlsHost(check)) && (
+            <button type="button" className="btn tiny" onClick={onToggleOpen} title="Open renewal options">
+              Renew…
+            </button>
+          )}
           <button type="button" className="icon-btn" onClick={onRun} disabled={busy || !check.enabled}
             title="Run now" aria-label="Run now">
             <IconRun className={busy ? 'ck-spin' : ''} />
@@ -572,7 +671,7 @@ function CheckRow({ check, spark, isAdmin, open, onToggleOpen, busy, onRun, onPa
           </button>
         </div>
       )}
-      {open && <DetailPanel check={check} />}
+      {open && <DetailPanel check={check} isAdmin={isAdmin} renew={renew} onRenewed={onRenewed} />}
     </div>
   );
 }
@@ -628,6 +727,18 @@ export default function Checks() {
   const [expanded, setExpanded] = useState(null);
   const [filter, setFilter] = useLocalSetting('othoni.checks.filter', 'all');
   const [sparks, setSparks] = useState({}); // id -> [{t, v}]
+  // { enabled, targets: Set<certName> } once loaded — drives the Renew UI.
+  const [renew, setRenew] = useState(null);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.actions.list()
+      .then((r) => {
+        const kind = (r.kinds || []).find((k) => k.kind === 'certbot.renew');
+        setRenew({ enabled: !!r.enabled && !!kind, targets: new Set(kind?.allowedTargets || []) });
+      })
+      .catch(() => setRenew({ enabled: false, targets: new Set() }));
+  }, [isAdmin]);
 
   function refresh() {
     api.checks.list().then((r) => setList(r.checks || [])).catch((e) => setErr(e.message));
@@ -702,7 +813,7 @@ export default function Checks() {
     <div className="page-fade-in">
       <div className="ck-head">
         <div>
-          <h1 className="page-title">Checks</h1>
+          <h1 className="page-title">Sentinel</h1>
           <p className="subtitle" style={{ marginBottom: 0 }}>
             Uptime, certificates, DNS and heartbeats for everything this box serves.
           </p>
@@ -780,6 +891,8 @@ export default function Checks() {
                       onPause={() => togglePause(c)}
                       onRemove={() => remove(c)}
                       onAccept={() => acceptDns(c)}
+                      renew={renew}
+                      onRenewed={() => act(() => api.checks.runNow(c.id))}
                     />
                   ))}
                 </div>

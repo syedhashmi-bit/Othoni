@@ -166,7 +166,7 @@ const NAV = [
   { to: '/network', label: 'Network', Icon: IconNetwork },
   { to: '/connections', label: 'Connections', Icon: IconConnections },
   { to: '/alerts', label: 'Alerts', Icon: IconAlerts },
-  { to: '/checks', label: 'Checks', Icon: IconChecks },
+  { to: '/checks', label: 'Sentinel', Icon: IconChecks },
   { to: '/security', label: 'Security', Icon: IconShield },
   { to: '/actions', label: 'Actions', Icon: IconActions },
   { to: '/logs', label: 'Logs', Icon: IconLogs },

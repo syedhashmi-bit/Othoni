@@ -8,6 +8,33 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.76.0] — 2026-10-16
+
+The Checks page becomes **Sentinel** — a nod to the standalone monitor it
+replaced — and certificate checks can now renew their certificate.
+
+### Added
+
+- **`certbot.renew` action.** Renews one Let's Encrypt certificate via
+  `certbot renew --cert-name <name> --non-interactive
+  --no-random-sleep-on-renew`. Targets are limited to the cert names in
+  certbot's own renewal dir (`OTHONI_LETSENCRYPT_RENEWAL_DIR`, default
+  `/etc/letsencrypt/renewal`) and listed as `allowedTargets` on
+  `GET /api/actions`. Optional `params.force` adds `--force-renewal`.
+  Audited and recorded in action history like every other action;
+  requires `OTHONI_ACTIONS_ENABLED=true`.
+- **Renew certificate** in an expanded TLS check: two-step confirm, then
+  certbot's verdict. "Not due yet" (certbot renews below 30 days) offers a
+  separate **Force renewal…** confirm that warns about Let's Encrypt's
+  5-duplicates-per-week limit; a real renewal re-runs the check; failures
+  show certbot's output. A failing TLS row gets a **Renew…** shortcut. When
+  actions are off the panel explains how to enable them.
+
+### Changed
+
+- Sidebar label and page title **Checks → Sentinel**. The route stays
+  `/checks` and the `g e` shortcut is unchanged, so links keep working.
+
 ## [0.75.0] — 2026-10-16
 
 A redesign of the Checks page. The flat 8-column table (misaligned headers,
@@ -4276,6 +4303,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.76.0]: #0760--2026-10-16
 [0.75.0]: #0750--2026-10-16
 [0.74.0]: #0740--2026-10-16
 [0.73.0]: #0730--2026-06-05

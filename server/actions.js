@@ -411,6 +411,55 @@ register('process.signal', {
   },
 });
 
+// ---------- certbot.renew ----------
+// Renew one Let's Encrypt certificate (v0.76). Targets are the cert names
+// certbot itself manages — one `<name>.conf` per cert in the renewal dir —
+// so nothing outside certbot's own inventory can be passed through. By
+// default certbot only renews when < 30 days remain (a no-op otherwise);
+// `params.force` adds --force-renewal, which counts against Let's
+// Encrypt's 5-duplicates-per-week limit, so the UI asks before sending it.
+// The nginx installer recorded in each renewal conf reloads nginx itself.
+const LE_RENEWAL_DIR = process.env.OTHONI_LETSENCRYPT_RENEWAL_DIR || '/etc/letsencrypt/renewal';
+const CERT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/;
+
+function listCertNames() {
+  try {
+    return fs.readdirSync(LE_RENEWAL_DIR)
+      .filter((f) => f.endsWith('.conf'))
+      .map((f) => f.slice(0, -5))
+      .filter((n) => CERT_NAME_RE.test(n))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+register('certbot.renew', {
+  description: "Renew a Let's Encrypt certificate with certbot (only when due, unless forced).",
+  auditName: 'action.certbot.renew',
+  requiresConfirmation: true,
+  targetValidator: (t) => typeof t === 'string' && CERT_NAME_RE.test(t) && listCertNames().includes(t),
+  paramsValidator: (p) => Object.keys(p).every((k) => k === 'force')
+    && (p.force === undefined || typeof p.force === 'boolean'),
+  async run({ target, params }) {
+    const startedAt = Date.now();
+    const args = ['renew', '--cert-name', target, '--non-interactive', '--no-random-sleep-on-renew'];
+    if (params && params.force) args.push('--force-renewal');
+    const r = await execRun('certbot', args, { timeout: 180_000 });
+    return {
+      ok: r.ok,
+      exitCode: r.ok
+        ? 0
+        : (r.code === 'ETIMEDOUT' ? 124 : (typeof r.code === 'number' ? r.code : 1)),
+      // certbot logs progress to stderr; keep both so the UI can show
+      // "not yet due" / "success" whichever stream it lands on.
+      stdout: r.stdout || '',
+      stderr: r.stderr || '',
+      durationMs: Date.now() - startedAt,
+    };
+  },
+});
+
 // Surface the resolved whitelist on the kinds listing so the UI can
 // disable the restart button for non-whitelisted units rather than
 // having the user click and get a 400.
@@ -418,6 +467,9 @@ function listKindsWithDetail() {
   return listKinds().map((k) => {
     if (k.kind === 'systemd.restart') {
       return { ...k, allowedTargets: Array.from(UNIT_WHITELIST).sort() };
+    }
+    if (k.kind === 'certbot.renew') {
+      return { ...k, allowedTargets: listCertNames() };
     }
     return k;
   });

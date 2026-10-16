@@ -71,7 +71,8 @@
 - **Expiry & dead-man checks** — TLS certificate validity + days to
   expiry, domain registration expiry (RDAP), DNS record-change alerts,
   and heartbeats: cron jobs `curl /ping/<token>` and you're alerted when
-  one goes quiet
+  one goes quiet. With actions enabled, a certificate check can trigger
+  `certbot renew` for its cert from the dashboard
 - **System log feed** (opt-in) — Logs page reads from
   `journalctl --output=json` with priority / since / unit / limit
   filters, **cursor-paginated "load more older"**, **search +
@@ -189,7 +190,8 @@ $EDITOR .env
 | `OTHONI_GEOLOCATE`      | `on`         | fleet-map auto-location: each instance looks up its **own** public-IP location once (cached 7 days in `data/geo-cache.json`) so VPS appear on the map without manual placement. A manually-set location always wins. Set `off` to disable the outbound lookup. Default provider is `ip-api.com` (HTTP, no key — only your own non-sensitive public-IP location is looked up); point `OTHONI_GEO_PROVIDER` at an HTTPS endpoint to avoid the plain-HTTP call |
 | `OTHONI_PAGERDUTY_URL`  | `https://events.pagerduty.com/v2/enqueue` | override the PagerDuty Events API endpoint (set the EU host for EU tenants) |
 | `OTHONI_OPSGENIE_URL`   | `https://api.opsgenie.com/v2/alerts` | override the Opsgenie Alert API endpoint (use `api.eu.opsgenie.com` for the EU region) |
-| `OTHONI_ACTIONS_ENABLED`| unset        | Set `true` to enable opt-in write actions (systemd / Docker / process signal — concrete actions land in v0.32+) |
+| `OTHONI_ACTIONS_ENABLED`| unset        | Set `true` to enable opt-in write actions (systemd restart, Docker, process signal, security remediations, `certbot renew`) |
+| `OTHONI_LETSENCRYPT_RENEWAL_DIR` | `/etc/letsencrypt/renewal` | Where the `certbot.renew` action looks up renewable cert names (one `<name>.conf` per cert) |
 | `NODE_ENV`              | `production` | `production` on a VPS                       |
 
 ## 🛠️ Run in development
