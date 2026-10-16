@@ -2011,3 +2011,141 @@ body[data-density="compact"] .toolbar.sticky {
 :root[data-theme='light'] .toolbar.sticky {
   background: rgba(244, 246, 250, 0.85);
 }
+
+/* ==========================================================================
+   Checks page (v0.75) — grouped overview. Everything keys off the theme
+   tokens, so the light theme needs no overrides.
+   ========================================================================== */
+.ck-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 16px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.ck-skeleton { display: grid; gap: 12px; }
+
+/* Hero */
+.ck-hero {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 18px 20px; margin-bottom: 14px; flex-wrap: wrap;
+  border-left: 3px solid var(--ok);
+}
+.ck-hero.warn { border-left-color: var(--warn); }
+.ck-hero.crit { border-left-color: var(--crit); }
+.ck-hero-main { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.ck-hero-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex: none;
+  background: var(--ok); box-shadow: 0 0 0 5px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+.ck-hero-dot.warn { background: var(--warn); box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 18%, transparent); }
+.ck-hero-dot.crit { background: var(--crit); box-shadow: 0 0 0 5px color-mix(in srgb, var(--crit) 18%, transparent); }
+.ck-hero-title { font-size: 18px; font-weight: 600; color: var(--text); }
+.ck-hero-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+.ck-hero-side { text-align: right; }
+.ck-hero-k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-dim); }
+.ck-hero-v { font-size: 13px; color: var(--text); margin-top: 2px; }
+
+/* Filter chips */
+.ck-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.ck-filter {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 999px; font-size: 12.5px; cursor: pointer;
+  background: transparent; color: var(--text-muted); border: 1px solid var(--border);
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.ck-filter:hover { color: var(--text); border-color: var(--border-strong); }
+.ck-filter.active { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
+.ck-count {
+  font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-dim);
+  background: var(--bg-card-2); border-radius: 999px; padding: 0 6px; min-width: 18px; text-align: center;
+}
+.ck-filter.alert .ck-count { background: var(--crit); color: #fff; }
+
+/* Groups */
+.ck-groups { display: grid; gap: 14px; }
+.ck-group { padding: 0; overflow: hidden; }
+.ck-group-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.ck-group-head h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+.ck-group-state { font-size: 11.5px; color: var(--ok); }
+.ck-group-state.crit { color: var(--crit); }
+
+/* Rows */
+.ck-row { position: relative; border-bottom: 1px solid var(--border); }
+.ck-row:last-child { border-bottom: none; }
+.ck-row-main {
+  display: grid; align-items: center; gap: 16px; width: 100%;
+  grid-template-columns: 10px minmax(170px, 260px) minmax(0, 1fr) 110px;
+  padding: 12px 136px 12px 16px; /* right room for the action buttons */
+  background: transparent; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+  transition: background var(--transition);
+}
+.ck-row-main:hover, .ck-row.open .ck-row-main { background: var(--bg-hover); }
+.ck-row.paused .ck-row-main { opacity: .55; }
+.ck-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
+.ck-dot.ok { background: var(--ok); }
+.ck-dot.warn { background: var(--warn); }
+.ck-dot.crit { background: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 25%, transparent); }
+.ck-name { display: flex; flex-direction: column; min-width: 0; }
+.ck-kind { font-size: 13.5px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.ck-label { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ck-tag {
+  font-size: 9.5px; font-weight: 600; letter-spacing: .5px; color: var(--text-muted);
+  border: 1px solid var(--border-strong); border-radius: 4px; padding: 0 4px; line-height: 15px;
+}
+.ck-metric { min-width: 0; }
+.ck-big { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+.ck-big small { font-size: 11.5px; font-weight: 500; color: var(--text-muted); }
+.ck-big.ok { color: var(--ok); }
+.ck-big.warn { color: var(--warn); }
+.ck-big.crit { color: var(--crit); }
+.ck-latency { display: flex; align-items: center; gap: 14px; }
+.ck-latency .ck-big { min-width: 56px; }
+.ck-spark { flex: 1; max-width: 340px; min-width: 80px; }
+.ck-days { display: grid; gap: 6px; max-width: 400px; }
+.ck-days-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; }
+.ck-bar { height: 4px; border-radius: 4px; background: var(--bg-card-2); overflow: hidden; }
+.ck-bar span { display: block; height: 100%; border-radius: 4px; background: var(--ok); }
+.ck-bar span.warn { background: var(--warn); }
+.ck-bar span.crit { background: var(--crit); }
+.ck-dns { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); min-width: 0; }
+.ck-dns .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck-error { font-size: 12.5px; color: var(--crit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck-sched { display: flex; flex-direction: column; align-items: flex-end; font-size: 12px; color: var(--text-muted); }
+
+/* Hover-revealed actions (always visible on touch) */
+.ck-actions {
+  position: absolute; top: 10px; right: 12px; display: flex; align-items: center; gap: 4px;
+  opacity: 0; transition: opacity var(--transition);
+}
+.ck-row:hover .ck-actions, .ck-row.open .ck-actions, .ck-actions:focus-within { opacity: 1; }
+@media (hover: none) { .ck-actions { opacity: 1; } }
+.icon-btn.danger:hover { color: var(--crit); }
+.ck-spin { animation: ck-spin .8s linear infinite; }
+@keyframes ck-spin { to { transform: rotate(360deg); } }
+
+/* Expanded detail */
+.ck-detail { background: var(--bg-card-2); border-top: 1px solid var(--border); }
+.ck-facts {
+  display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px;
+  margin: 0; padding: 14px 16px 12px 42px; font-size: 12.5px;
+}
+.ck-facts dt { color: var(--text-dim); }
+.ck-facts dd { margin: 0; color: var(--text); word-break: break-all; }
+.ck-detail > div { padding-left: 42px !important; }
+
+/* Narrow screens: name + schedule on one line, metric underneath. */
+@media (max-width: 760px) {
+  .ck-row-main {
+    grid-template-columns: 10px 1fr auto;
+    grid-template-areas: "dot name sched" ". metric metric";
+    padding-right: 16px; row-gap: 8px;
+  }
+  .ck-row-main > .ck-dot { grid-area: dot; }
+  .ck-name { grid-area: name; }
+  .ck-metric { grid-area: metric; }
+  .ck-sched { grid-area: sched; }
+  .ck-actions { position: static; opacity: 1; padding: 0 16px 10px 42px; }
+  .ck-hero-side { text-align: left; }
+  .ck-facts, .ck-detail > div { padding-left: 16px !important; }
+}

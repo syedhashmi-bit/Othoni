@@ -8,6 +8,38 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.75.0] — 2026-10-16
+
+A redesign of the Checks page. The flat 8-column table (misaligned headers,
+stacked buttons, lots of empty space) is replaced by a grouped overview built
+around "is anything wrong, and what's next to expire". Client only — no
+server or API changes.
+
+### Changed
+
+- **Checks page is grouped by host.** Each site gets a card holding its
+  website / certificate / DNS checks; domain registrations and heartbeats get
+  their own groups. Failing groups and failing rows sort to the top.
+- **Status summary.** A hero card reads "All N checks passing" or "X of N
+  checks failing" (naming the failures), plus the soonest certificate /
+  domain expiry across all checks.
+- **Filter chips** — All / Failing / Websites / Certificates / DNS / Domains /
+  Heartbeats with counts (types with no checks are hidden; Failing turns red
+  when non-zero). Remembered per browser in `othoni.checks.filter`.
+- **Per-type metric column.** Website / port / ping rows show current latency
+  plus a 1-hour latency sparkline (`/api/history`, refreshed every 60 s);
+  certificates and registrations show days left with a colour-coded meter
+  (amber under 2× `warnDays`, red under `warnDays`); DNS shows the current
+  records with a `pinned` tag; heartbeats show the last ping. A failing row
+  shows its error instead.
+- **Quieter actions.** Run now / pause-resume / delete are icon buttons that
+  appear on row hover (always shown on touch and narrow screens), replacing
+  the always-visible button stack and the "On" checkbox column.
+- **Click a row for details** — a fact sheet (target or ping URL with copy,
+  expiry date, issuer, warn threshold, pinned DNS baseline, alert policy,
+  last error), plus the existing SLA stats for latency checks.
+- Narrow screens collapse each row to name + schedule over the metric.
+
 ## [0.74.0] — 2026-10-16
 
 othoni absorbs Sentinel. The separate uptime/TLS monitor
@@ -4244,6 +4276,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.75.0]: #0750--2026-10-16
 [0.74.0]: #0740--2026-10-16
 [0.73.0]: #0730--2026-06-05
 [0.72.0]: #0720--2026-06-05
