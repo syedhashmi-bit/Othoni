@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { IconPlus, IconTrash } from '../Icons.jsx';
 import { useApp } from '../App.jsx';
@@ -676,7 +677,149 @@ function CheckRow({ check, spark, isAdmin, open, onToggleOpen, busy, onRun, onPa
   );
 }
 
-function Hero({ list }) {
+// ---------- alert destination quick setup (v0.77) ----------
+// The full webhook manager lives on the Alerts page; this is the short path
+// for the common case, shown on Sentinel while no destination exists —
+// otherwise failing checks notify nobody.
+const DEST_TYPES = [
+  {
+    format: 'discord', label: 'Discord',
+    placeholder: 'https://discord.com/api/webhooks/…',
+    help: 'In the channel: Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL.',
+    looksRight: (u) => /^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\//.test(u),
+  },
+  {
+    format: 'slack', label: 'Slack',
+    placeholder: 'https://hooks.slack.com/services/…',
+    help: 'Slack app → Incoming Webhooks → Add New Webhook to Workspace → pick a channel → copy the URL.',
+    looksRight: (u) => /^https:\/\/hooks\.slack\.com\//.test(u),
+  },
+  {
+    format: 'teams', label: 'Teams',
+    placeholder: 'https://…webhook.office.com/…',
+    help: 'In the channel: ⋯ More options → Workflows (or Connectors) → "Post to a channel when a webhook request is received" → copy the URL.',
+    looksRight: (u) => /^https:\/\//.test(u),
+  },
+  {
+    format: 'email', label: 'Email',
+    placeholder: 'you@example.com',
+    help: 'Sent through the SMTP server configured in othoni’s .env.',
+    looksRight: (u) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(u),
+  },
+];
+
+function AlertSetup({ smtp, onCreated }) {
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState('discord');
+  const [url, setUrl] = useState('');
+  const [phase, setPhase] = useState('idle'); // idle | saving | done
+  const [msg, setMsg] = useState(null);
+  const t = DEST_TYPES.find((x) => x.format === type);
+  const emailBlocked = type === 'email' && !smtp?.enabled;
+  const trimmed = url.trim();
+  const suspicious = trimmed && !t.looksRight(trimmed);
+
+  async function save(e) {
+    e.preventDefault();
+    setPhase('saving'); setMsg(null);
+    let created;
+    try {
+      const r = await api.webhooks.create({ label: `Sentinel alerts (${t.label})`, url: trimmed, format: type });
+      created = r.webhook;
+    } catch (err) {
+      setMsg({ tone: 'crit', text: err.body?.message || err.message });
+      setPhase('idle');
+      return;
+    }
+    try {
+      const r = await api.webhooks.test(created.id);
+      setMsg(r.ok
+        ? { tone: 'ok', text: `Saved, and a test alert was sent — check ${type === 'email' ? 'your inbox' : `your ${t.label} channel`}.` }
+        : { tone: 'warn', text: `Saved, but the test failed: ${r.error || 'unknown error'}. Fix or remove it on the Alerts page.` });
+    } catch (err) {
+      setMsg({ tone: 'warn', text: `Saved, but the test couldn’t run: ${err.message}` });
+    }
+    setPhase('done');
+  }
+
+  if (phase === 'done') {
+    return (
+      <div className={`card ck-setup done ${msg?.tone || 'ok'}`}>
+        <div className="ck-setup-msg">{msg?.text}</div>
+        <button type="button" className="btn tiny" onClick={onCreated}>Done</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card ck-setup">
+      <div className="ck-setup-head">
+        <div>
+          <div className="ck-setup-title">Alerts aren’t going anywhere yet</div>
+          <div className="dim">
+            Sentinel can see failures but has no destination to send them to. Add one and you’ll hear
+            about outages, expiring certificates and missed heartbeats.
+          </div>
+        </div>
+        {!open && <button type="button" className="btn compact" onClick={() => setOpen(true)}>Set up alerts</button>}
+      </div>
+      {open && (
+        <form className="ck-setup-form" onSubmit={save}>
+          <div className="ck-filters" role="tablist" style={{ marginBottom: 0 }}>
+            {DEST_TYPES.map((d) => (
+              <button
+                key={d.format}
+                type="button"
+                role="tab"
+                aria-selected={type === d.format}
+                className={`ck-filter ${type === d.format ? 'active' : ''}`}
+                onClick={() => { setType(d.format); setMsg(null); }}
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
+          <div className="dim ck-setup-help">{t.help}</div>
+          {emailBlocked ? (
+            <div className="ck-warn-text">
+              Email needs an SMTP server first — set <code>OTHONI_SMTP_HOST</code>, <code>OTHONI_SMTP_FROM</code>{' '}
+              (and usually <code>OTHONI_SMTP_USER</code> / <code>OTHONI_SMTP_PASS</code>) in <code>.env</code>, then restart othoni.
+            </div>
+          ) : (
+            <>
+              <input
+                type={type === 'email' ? 'email' : 'url'}
+                className="input mono"
+                placeholder={t.placeholder}
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                autoFocus
+                required
+              />
+              {suspicious && (
+                <div className="ck-warn-text" style={{ fontSize: 12 }}>
+                  That doesn’t look like a {t.label} {type === 'email' ? 'address' : 'webhook URL'} — double-check it.
+                </div>
+              )}
+            </>
+          )}
+          {msg && <div className={`ck-${msg.tone === 'crit' ? 'error' : 'warn-text'}`}>{msg.text}</div>}
+          <div className="toolbar" style={{ margin: 0 }}>
+            <button type="submit" className="btn compact" disabled={phase === 'saving' || emailBlocked || !trimmed}>
+              {phase === 'saving' ? 'Saving…' : 'Save & send test'}
+            </button>
+            <button type="button" className="btn ghost" onClick={() => { setOpen(false); setMsg(null); }}>Cancel</button>
+            <span className="dim" style={{ fontSize: 12, marginLeft: 'auto' }}>
+              More options (PagerDuty, Opsgenie, per-host filters) on the <Link to="/alerts">Alerts</Link> page.
+            </span>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function Hero({ list, destinations }) {
   const active = list.filter((c) => c.enabled);
   const failing = active.filter((c) => c.lastUp === 0);
   const pending = active.filter((c) => c.lastUp == null).length;
@@ -704,15 +847,27 @@ function Hero({ list }) {
           </div>
         </div>
       </div>
-      {expiring && (
-        <div className="ck-hero-side">
-          <div className="ck-hero-k">Soonest expiry</div>
-          <div className="ck-hero-v">
-            <strong>{expiring.detail.daysLeft} days</strong>
-            <span className="dim"> · {expiring.label}</span>
+      <div className="ck-hero-sides">
+        {destinations && destinations.length > 0 && (
+          <div className="ck-hero-side">
+            <div className="ck-hero-k">Alerts to</div>
+            <div className="ck-hero-v">
+              <Link to="/alerts" title="Manage destinations on the Alerts page">
+                {destinations.map((w) => (DEST_TYPES.find((d) => d.format === w.format)?.label || w.format)).join(', ')}
+              </Link>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+        {expiring && (
+          <div className="ck-hero-side">
+            <div className="ck-hero-k">Soonest expiry</div>
+            <div className="ck-hero-v">
+              <strong>{expiring.detail.daysLeft} days</strong>
+              <span className="dim"> · {expiring.label}</span>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -729,6 +884,15 @@ export default function Checks() {
   const [sparks, setSparks] = useState({}); // id -> [{t, v}]
   // { enabled, targets: Set<certName> } once loaded — drives the Renew UI.
   const [renew, setRenew] = useState(null);
+  // Webhook destinations + SMTP status — drives the "Set up alerts" card.
+  const [dest, setDest] = useState(null);
+
+  function loadDest() {
+    api.webhooks.list()
+      .then((r) => setDest({ list: (r.webhooks || []).filter((w) => w.enabled !== false), smtp: r.smtp || null }))
+      .catch(() => setDest(null));
+  }
+  useEffect(() => { if (isAdmin) loadDest(); }, [isAdmin]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -845,7 +1009,9 @@ export default function Checks() {
 
       {list != null && list.length > 0 && (
         <>
-          <Hero list={list} />
+          {isAdmin && dest && dest.list.length === 0 && <AlertSetup smtp={dest.smtp} onCreated={loadDest} />}
+
+          <Hero list={list} destinations={dest?.list} />
 
           <div className="ck-filters" role="tablist">
             {FILTERS.filter((f) => f.key === 'all' || f.key === 'failing' || counts[f.key] > 0).map((f) => (

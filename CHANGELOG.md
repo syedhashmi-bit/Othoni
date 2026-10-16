@@ -8,6 +8,25 @@ follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.77.0] — 2026-10-16
+
+Alert destinations become discoverable. The webhook manager has lived on the
+Alerts page since v0.28, but nothing on Sentinel pointed at it — so a box
+could run every check with nowhere to send a failure. Client only.
+
+### Added
+
+- **"Set up alerts" card on Sentinel**, shown to admins while no enabled
+  webhook destination exists. Pick Discord / Slack / Teams / Email, follow
+  the one-line "where do I get this URL" hint, paste, and **Save & send
+  test** creates the destination (`Sentinel alerts (<type>)`) and fires the
+  existing test event, reporting whether delivery worked. Warns when the URL
+  doesn't look like the chosen service's webhook; Email is disabled with
+  instructions until SMTP is configured. PagerDuty / Opsgenie / per-host
+  filters stay on the Alerts page, linked from the card.
+- **"Alerts to" in the Sentinel status hero** — lists the active
+  destination types and links to the Alerts page once one exists.
+
 ## [0.76.0] — 2026-10-16
 
 The Checks page becomes **Sentinel** — a nod to the standalone monitor it
@@ -4303,6 +4322,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.77.0]: #0770--2026-10-16
 [0.76.0]: #0760--2026-10-16
 [0.75.0]: #0750--2026-10-16
 [0.74.0]: #0740--2026-10-16
