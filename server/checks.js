@@ -5,17 +5,33 @@
 // (`check.<id>.up` ∈ {0, 1}, `check.<id>.latency_ms` ≥ 0) so they show up
 // on the History page like everything else. Consecutive failures dispatch
 // to the same webhook destinations as threshold alerts.
+//
+// v0.74 — absorbed Sentinel's watchers:
+//   - `tls`       cert validity + expiry (down when < warnDays left or invalid)
+//   - `domain`    registrar expiry via RDAP (down when < warnDays left)
+//   - `heartbeat` dead-man switch: jobs hit /ping/<token>; down when no ping
+//                 arrives within intervalSec + graceSec
+//   - `dns` gained `trackChanges`: first answer is pinned as the baseline,
+//     any later change is "down" until re-baselined.
+// tls/domain also record `check.<id>.days_left`.
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const net = require('net');
+const tls = require('tls');
 const { execFile } = require('child_process');
 const logger = require('./logger');
 const history = require('./history');
 
 const STORE_PATH = process.env.OTHONI_CHECKS_PATH || path.join(__dirname, '..', 'data', 'checks.json');
-const VALID_TYPES = ['http', 'tcp', 'ping', 'dns'];
+const VALID_TYPES = ['http', 'tcp', 'ping', 'dns', 'tls', 'domain', 'heartbeat'];
+const DAY_MS = 86_400_000;
+const RDAP_URL = 'https://rdap.org/domain/';
+// Heartbeats are evaluated at most this often, independent of their
+// expected period, so a missed ping is noticed within a minute of the grace
+// window closing rather than a whole period later.
+const HEARTBEAT_EVAL_SEC = 60;
 const MIN_INTERVAL_SEC = 10;
 const MAX_INTERVAL_SEC = 24 * 3600;
 
@@ -64,6 +80,11 @@ function persist() {
 
 function newId() { return crypto.randomBytes(4).toString('hex'); }
 
+function clampInt(v, min, max, def) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : def;
+}
+
 function setDispatcher(fn) { dispatcher = fn; }
 
 // ---------- validation ----------
@@ -88,8 +109,18 @@ function validateTarget(type, target) {
     const [host, recType] = target.split('|');
     if (!host || !/^[A-Za-z0-9._-]{1,253}$/.test(host)) return 'dns target must be a hostname';
     if (recType && !DNS_TYPES.has(recType.toUpperCase())) return `dns type must be one of ${[...DNS_TYPES].join(', ')}`;
+  } else if (type === 'tls') {
+    // host[:port], port defaults to 443.
+    if (!/^[A-Za-z0-9._-]{1,253}(:\d{1,5})?$/.test(target)) return 'tls target must be host or host:port';
+  } else if (type === 'domain') {
+    if (!/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(target) || target.length > 253) return 'domain target must be a registered domain (e.g. example.com)';
   }
   return null;
+}
+
+function splitHostPort(target, defPort) {
+  const m = /^(.*?)(?::(\d{1,5}))?$/.exec(target);
+  return { host: m[1], port: m[2] ? parseInt(m[2], 10) : defPort };
 }
 
 // Compile a user-supplied regex; returns null + reason on failure.
@@ -187,6 +218,14 @@ function sanitize(c) {
     // v0.54 — multi-step HTTP. When set, `target` + body assertions on the
     // check itself are ignored in favor of the steps array.
     steps: Array.isArray(c.steps) ? c.steps : null,
+    // v0.74 — Sentinel-derived fields
+    warnDays:     c.warnDays     ?? null,
+    graceSec:     c.graceSec     ?? null,
+    hbToken:      c.hbToken      || null,
+    lastPingAt:   c.lastPingAt   || null,
+    trackChanges: !!c.trackChanges,
+    dnsBaseline:  c.dnsBaseline  || null,
+    detail:       c.detail       || null,
     createdAt: c.createdAt,
     lastRunAt: c.lastRunAt || null,
     lastUp: typeof c.lastUp === 'number' ? c.lastUp : null,
@@ -285,6 +324,14 @@ async function runDns(check, timeoutMs) {
         if (!re) return { up: 0, error: error || 'invalid regex' };
         if (!re.test(flat)) return { up: 0, error: 'no record matched regex' };
       }
+      if (check.trackChanges) {
+        const sig = results.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).sort().join(', ');
+        if (!check.dnsBaseline) check.dnsBaseline = sig; // first answer becomes the pin
+        if (sig !== check.dnsBaseline) {
+          return { up: 0, error: `records changed: ${check.dnsBaseline} → ${sig}`, detail: { records: sig } };
+        }
+        return { up: 1, error: null, detail: { records: sig } };
+      }
       return { up: 1, error: null };
     } catch (e) {
       return { up: 0, error: e.code || e.message || 'dns failed' };
@@ -325,6 +372,88 @@ function runPing(target, timeoutMs) {
   });
 }
 
+// TLS certificate check (v0.74). Connects without rejecting so we can still
+// read an invalid cert's expiry, then fails on chain/hostname errors (Node
+// folds checkServerIdentity into `authorizationError`) or < warnDays left.
+function runTls(check, timeoutMs) {
+  const { host, port } = splitHostPort(check.target, 443);
+  const warnDays = check.warnDays ?? 14;
+  return new Promise((resolve) => {
+    let done = false;
+    const s = tls.connect({
+      host, port,
+      servername: net.isIP(host) ? undefined : host,
+      rejectUnauthorized: false,
+    });
+    const tid = setTimeout(() => finish({ up: 0, error: 'timeout' }), timeoutMs);
+    function finish(r) {
+      if (done) return;
+      done = true;
+      clearTimeout(tid);
+      try { s.destroy(); } catch { /* ignore */ }
+      resolve(r);
+    }
+    s.once('secureConnect', () => {
+      const cert = s.getPeerCertificate();
+      if (!cert || !cert.valid_to) return finish({ up: 0, error: 'no certificate presented' });
+      const expiresAt = Date.parse(cert.valid_to);
+      const daysLeft = Math.floor((expiresAt - Date.now()) / DAY_MS);
+      const issuer = (cert.issuer && (cert.issuer.O || cert.issuer.CN)) || null;
+      const detail = { daysLeft, expiresAt, issuer };
+      if (!s.authorized) return finish({ up: 0, error: `invalid certificate (${s.authorizationError})`, detail });
+      if (daysLeft < warnDays) return finish({ up: 0, error: `certificate expires in ${daysLeft}d`, detail });
+      finish({ up: 1, error: null, detail });
+    });
+    s.once('error', (e) => finish({ up: 0, error: e.code || e.message || 'failed' }));
+  });
+}
+
+// Domain registration expiry via RDAP (v0.74). rdap.org redirects to the
+// TLD's authoritative RDAP server; we read the `expiration` event.
+async function runDomain(check, timeoutMs) {
+  const warnDays = check.warnDays ?? 30;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(RDAP_URL + encodeURIComponent(check.target.toLowerCase()), {
+      redirect: 'follow',
+      signal: ctrl.signal,
+      headers: { Accept: 'application/rdap+json', 'User-Agent': 'othoni-check/1' },
+    });
+    if (!res.ok) return { up: 0, error: `RDAP HTTP ${res.status}` };
+    const body = await res.json();
+    const ev = (body.events || []).find((e) => e.eventAction === 'expiration');
+    const expiresAt = ev ? Date.parse(ev.eventDate) : NaN;
+    if (!Number.isFinite(expiresAt)) return { up: 0, error: 'RDAP response has no expiration date' };
+    const daysLeft = Math.floor((expiresAt - Date.now()) / DAY_MS);
+    const detail = { daysLeft, expiresAt };
+    if (daysLeft < warnDays) return { up: 0, error: `registration expires in ${daysLeft}d`, detail };
+    return { up: 1, error: null, detail };
+  } catch (e) {
+    return { up: 0, error: e.name === 'AbortError' ? 'timeout' : (e.message || 'RDAP failed') };
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+// Heartbeat evaluation (v0.74). Nothing is probed — we only judge whether
+// the last ping is recent enough. Until the first ping arrives the check
+// stays pending, unless a full window passes since creation with no ping.
+function runHeartbeat(check) {
+  const windowMs = (check.intervalSec + (check.graceSec ?? 300)) * 1000;
+  const since = check.lastPingAt || check.createdAt;
+  const overdue = Date.now() - since > windowMs;
+  if (!check.lastPingAt && !overdue) return { pending: true };
+  if (overdue) {
+    return {
+      up: 0,
+      error: check.lastPingAt ? `no ping for ${Math.round((Date.now() - check.lastPingAt) / 60_000)}m` : 'never pinged',
+      detail: { lastPingAt: check.lastPingAt || null },
+    };
+  }
+  return { up: 1, error: null, detail: { lastPingAt: check.lastPingAt } };
+}
+
 async function runOnce(c) {
   const t0 = Date.now();
   let result;
@@ -335,17 +464,31 @@ async function runOnce(c) {
     else if (c.type === 'tcp')    result = await runTcp(c.target,  c.timeoutMs);
     else if (c.type === 'ping')   result = await runPing(c.target, c.timeoutMs);
     else if (c.type === 'dns')    result = await runDns(c, c.timeoutMs);
+    else if (c.type === 'tls')    result = await runTls(c, c.timeoutMs);
+    else if (c.type === 'domain') result = await runDomain(c, c.timeoutMs);
+    else if (c.type === 'heartbeat') result = runHeartbeat(c);
     else                          result = { up: 0, error: 'unknown_type' };
   } catch (e) {
     result = { up: 0, error: e.message || 'failed' };
   }
   const latencyMs = Date.now() - t0;
 
+  // Heartbeat with no ping yet and still inside its first window.
+  if (result.pending) {
+    c.lastRunAt = Date.now();
+    persist();
+    return;
+  }
+
   // Persist samples (best-effort — never throw out of the scheduler).
   try { history.insertSample(`check.${c.id}.up`, result.up); }
   catch (e) { logger.warn(`check ${c.id}: insertSample(up) failed: ${e.message}`); }
   try { history.insertSample(`check.${c.id}.latency_ms`, latencyMs); }
   catch (e) { logger.warn(`check ${c.id}: insertSample(latency) failed: ${e.message}`); }
+  if (result.detail && typeof result.detail.daysLeft === 'number') {
+    try { history.insertSample(`check.${c.id}.days_left`, result.detail.daysLeft); }
+    catch (e) { logger.warn(`check ${c.id}: insertSample(days_left) failed: ${e.message}`); }
+  }
 
   // Update in-memory state (and persist so the UI sees fresh fields).
   c.lastRunAt = Date.now();
@@ -353,6 +496,7 @@ async function runOnce(c) {
   c.lastLatencyMs = latencyMs;
   c.lastError = result.up ? null : (result.error || 'failed');
   c.lastStep  = result.step != null ? result.step : null;
+  if (result.detail) c.detail = result.detail;
   if (result.up === 0) {
     c.consecutiveFailures = (c.consecutiveFailures || 0) + 1;
     // Fire to webhooks exactly once — at the moment we cross the threshold.
@@ -364,7 +508,11 @@ async function runOnce(c) {
       const event = {
         rule: {
           id: `check:${c.id}`,
-          label: `${c.label || c.id} is down`,
+          // Expiry / heartbeat / DNS-drift failures aren't outages, so say
+          // what actually happened instead of "is down".
+          label: ['tls', 'domain', 'heartbeat'].includes(c.type) || (c.type === 'dns' && c.trackChanges)
+            ? `${c.label || c.id}: ${c.lastError}`
+            : `${c.label || c.id} is down`,
           metric: `check.${c.id}.up`,
           comparator: 'lt',
           threshold: 1,
@@ -393,7 +541,8 @@ function clearAll() {
 
 function scheduleOne(c) {
   if (!c.enabled) return;
-  const interval = Math.max(MIN_INTERVAL_SEC, Math.min(MAX_INTERVAL_SEC, c.intervalSec || 60)) * 1000;
+  let interval = Math.max(MIN_INTERVAL_SEC, Math.min(MAX_INTERVAL_SEC, c.intervalSec || 60)) * 1000;
+  if (c.type === 'heartbeat') interval = Math.min(interval, HEARTBEAT_EVAL_SEC * 1000);
   // First run a couple seconds after scheduling so the user sees state quickly.
   setTimeout(() => runOnce(c).catch(() => {}), 2000 + Math.random() * 1500);
   const id = setInterval(() => runOnce(c).catch(() => {}), interval);
@@ -466,7 +615,7 @@ function validateSteps(steps) {
 
 function createCheck(body) {
   const { label, type, target, intervalSec, timeoutMs, alertAfterFailures, alertSeverity,
-          bodyRegex, jsonPath, jsonPathEquals, steps } = body;
+          bodyRegex, jsonPath, jsonPathEquals, steps, warnDays, graceSec, trackChanges } = body;
   if (typeof label !== 'string' || !label.trim() || label.length > 80) {
     throw Object.assign(new Error('label must be 1–80 chars'), { code: 'invalid_label' });
   }
@@ -475,7 +624,7 @@ function createCheck(body) {
   }
   // For multi-step HTTP the `target` is unused; skip its validation.
   const usingSteps = type === 'http' && Array.isArray(steps) && steps.length > 0;
-  if (!usingSteps) {
+  if (!usingSteps && type !== 'heartbeat') {
     const targetErr = validateTarget(type, target);
     if (targetErr) throw Object.assign(new Error(targetErr), { code: 'invalid_target' });
   }
@@ -494,7 +643,7 @@ function createCheck(body) {
     id: newId(),
     label: label.trim(),
     type,
-    target: usingSteps ? '' : target,
+    target: usingSteps || type === 'heartbeat' ? '' : target,
     intervalSec: interval,
     timeoutMs: timeout,
     alertAfterFailures: alertN,
@@ -503,6 +652,14 @@ function createCheck(body) {
     jsonPath:       typeof jsonPath       === 'string' ? jsonPath       : null,
     jsonPathEquals: jsonPathEquals != null ? String(jsonPathEquals)    : null,
     steps: Array.isArray(steps) && steps.length > 0 ? steps : null,
+    warnDays: type === 'tls' || type === 'domain'
+      ? clampInt(warnDays, 0, 365, type === 'tls' ? 14 : 30) : null,
+    graceSec: type === 'heartbeat' ? clampInt(graceSec, 0, MAX_INTERVAL_SEC, 300) : null,
+    hbToken: type === 'heartbeat' ? crypto.randomBytes(16).toString('hex') : null,
+    lastPingAt: null,
+    trackChanges: type === 'dns' && trackChanges === true,
+    dnsBaseline: null,
+    detail: null,
     enabled: true,
     createdAt: Date.now(),
     lastRunAt: null,
@@ -555,6 +712,21 @@ function updateCheck(id, patch) {
     const e = validateSteps(patch.steps);
     if (e) throw Object.assign(new Error(e), { code: 'invalid_steps' });
     c.steps = Array.isArray(patch.steps) && patch.steps.length > 0 ? patch.steps : null;
+  }
+  if (patch.warnDays !== undefined && (c.type === 'tls' || c.type === 'domain')) {
+    c.warnDays = clampInt(patch.warnDays, 0, 365, c.warnDays);
+  }
+  if (patch.graceSec !== undefined && c.type === 'heartbeat') {
+    c.graceSec = clampInt(patch.graceSec, 0, MAX_INTERVAL_SEC, c.graceSec);
+  }
+  if (typeof patch.trackChanges === 'boolean' && c.type === 'dns') {
+    c.trackChanges = patch.trackChanges;
+    if (!c.trackChanges) c.dnsBaseline = null;
+  }
+  // Accept the current DNS answer as the new normal.
+  if (patch.resetBaseline === true && c.type === 'dns') {
+    c.dnsBaseline = null;
+    c.consecutiveFailures = 0;
   }
   persist();
   // Re-schedule this one check so interval changes take effect immediately.
@@ -657,9 +829,30 @@ async function runNow(id) {
   return sanitize(c);
 }
 
+// Heartbeat ping (v0.74) — called from the public /ping/:token route.
+// Constant-time token compare against every heartbeat so lookup timing
+// doesn't reveal how much of a guessed token matched. Re-evaluates right
+// away so a recovering job flips back to "up" without waiting a cycle.
+function recordPing(token) {
+  load();
+  const want = Buffer.from(String(token || ''));
+  if (want.length !== 32) return false;
+  let hit = null;
+  for (const c of cache.checks) {
+    if (c.type !== 'heartbeat' || !c.hbToken) continue;
+    const have = Buffer.from(c.hbToken);
+    if (have.length === want.length && crypto.timingSafeEqual(have, want)) hit = c;
+  }
+  if (!hit || hit.enabled === false) return false;
+  hit.lastPingAt = Date.now();
+  runOnce(hit).catch(() => {});
+  return true;
+}
+
 module.exports = {
   start, stop, reset,
   setDispatcher,
   listChecks, createCheck, updateCheck, removeCheck, runNow,
   getCheckStats,
+  recordPing,
 };

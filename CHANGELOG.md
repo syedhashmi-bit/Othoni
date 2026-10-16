@@ -6,10 +6,41 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-A client-only quality-of-life pass. No server or API changes.
+_Nothing yet._
+
+## [0.74.0] — 2026-10-16
+
+othoni absorbs Sentinel. The separate uptime/TLS monitor
+(`sentinel.syedhashmi.trade`) is retired; its watchers are now three new check
+types plus DNS change tracking, so one dashboard and one set of webhook
+destinations cover both the box and the sites on it. Also rolls up the
+previously-unreleased client quality-of-life pass.
 
 ### Added
 
+- **`tls` check type.** Connects to `host[:port]` (default 443), reads the
+  certificate, and goes down on an invalid chain, a hostname/SAN mismatch, or
+  fewer than `warnDays` (default 14) days to expiry. Records
+  `check.<id>.days_left`. Setting `warnDays` above certbot's 30-day renewal
+  window (e.g. 21) turns it into a "renewal is failing" alarm.
+- **`domain` check type.** Registrar expiry via RDAP (`rdap.org` → the TLD's
+  authoritative server). Down when fewer than `warnDays` (default 30) days
+  remain. Records `check.<id>.days_left`.
+- **`heartbeat` check type (dead-man switch).** Each heartbeat gets a random
+  32-hex token; jobs hit `GET|POST|HEAD /ping/<token>` (public, rate-limited,
+  404 on unknown tokens, constant-time compare). Down when no ping arrives
+  within `intervalSec + graceSec`; stays pending until the first ping or a full
+  missed window. Evaluated every ≤ 60 s regardless of interval; a ping
+  re-evaluates immediately so a recovering job flips back to up at once.
+- **DNS change tracking.** `dns` checks accept `trackChanges: true`: the first
+  answer is pinned as `dnsBaseline`; any later difference is down
+  (`records changed: old → new`) until accepted via
+  `PATCH /api/checks/:id {resetBaseline: true}` or the new **Accept change**
+  button.
+- Checks page: the three new types in the form with per-type options (warn
+  days / grace / track changes), sensible default intervals, 6 h and 1 day
+  intervals, a copyable ping URL for heartbeats, and days-left / issuer /
+  last-ping / records shown in the status chip.
 - **Alert state in the browser tab.** The title shows the alert count and the
   current page (`(2) Dashboard · Othoni`), and the favicon gains a red/amber
   dot while alerts fire (grey when the dashboard can't reach the server), so a
@@ -37,6 +68,11 @@ A client-only quality-of-life pass. No server or API changes.
   tab's cards mount, so hidden cards no longer fetch.
 - Keyboard cheatsheet now lists the existing `g j` (Projects) and `g u`
   (Security) chords and Ctrl+K.
+- Webhook alerts from tls / domain / heartbeat / tracked-DNS checks now say
+  what happened (`Protek TLS: certificate expires in 12d`) instead of
+  "`… is down`".
+- `check.<id>.days_left` added to the internal check-metric allowlist in
+  `history.js`.
 
 ### Fixed
 
@@ -4208,6 +4244,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.74.0]: #0740--2026-10-16
 [0.73.0]: #0730--2026-06-05
 [0.72.0]: #0720--2026-06-05
 [0.71.0]: #0710--2026-06-05

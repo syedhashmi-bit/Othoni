@@ -13,7 +13,7 @@ const cookieParser = require('cookie-parser');
 const { auth, requireAdmin, login, logout, me, totpEnabled, assertProductionSecrets } = require('./auth');
 const csrf = require('./csrf');
 const loginLockout = require('./login-lockout');
-const { loginLimiter } = require('./middleware');
+const { loginLimiter, metricsLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
 const remoteAuditRouter = require('./routes/remote-audit');
@@ -141,6 +141,15 @@ app.get('/api/export', (req, res) => exportEndpoint.handleRequest(req, res));
 // dashboard session — that's the whole point.
 const statusPage = require('./status-page');
 app.get('/status', (req, res) => statusPage.handleRequest(req, res));
+
+// Heartbeat pings (v0.74). The 32-hex token in the path IS the credential,
+// so this sits before the cookie wall; cron jobs just `curl` it. Unknown
+// tokens get a 404 like the other token-gated endpoints.
+app.all('/ping/:token', metricsLimiter, (req, res) => {
+  if (!['GET', 'POST', 'HEAD'].includes(req.method)) return res.status(405).end();
+  if (!checks.recordPing(req.params.token)) return res.status(404).type('text').send('not found\n');
+  res.type('text').send('ok\n');
+});
 
 // Protected API routes. `requireAdmin` runs after `auth` so the viewer
 // can still GET everything but is 403'd on PUT/POST/PATCH/DELETE. CSRF

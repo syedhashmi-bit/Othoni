@@ -9,6 +9,9 @@ const TYPES = [
   { value: 'tcp',  label: 'TCP',  placeholder: 'host:port (e.g. db.internal:5432)' },
   { value: 'ping', label: 'Ping', placeholder: 'host or IP (e.g. 1.1.1.1)' },
   { value: 'dns',  label: 'DNS',  placeholder: 'example.com|A (or just example.com)' },
+  { value: 'tls',       label: 'TLS cert',     placeholder: 'host or host:port (e.g. example.com)' },
+  { value: 'domain',    label: 'Domain expiry', placeholder: 'registered domain (e.g. example.com)' },
+  { value: 'heartbeat', label: 'Heartbeat',    placeholder: '' },
 ];
 
 const INTERVALS = [
@@ -17,10 +20,30 @@ const INTERVALS = [
   { value: 300,   label: '5 min' },
   { value: 900,   label: '15 min' },
   { value: 3600,  label: '1 hour' },
+  { value: 21600, label: '6 hours' },
+  { value: 86400, label: '1 day' },
 ];
+
+// Sensible starting interval per type — certs and registrations change
+// slowly, and a heartbeat's interval is "how often the job runs".
+const DEFAULT_INTERVAL = { tls: 3600, domain: 86400, heartbeat: 86400 };
 
 function placeholderFor(type) {
   return TYPES.find((t) => t.value === type)?.placeholder || '';
+}
+
+function pingUrl(token) {
+  return `${window.location.origin}/ping/${token}`;
+}
+
+// One-line summary of the extra state the Sentinel-derived types carry.
+function detailText(c) {
+  const d = c.detail;
+  if (c.type === 'heartbeat') return c.lastPingAt ? `pinged ${relativeTime(c.lastPingAt)}` : 'waiting for first ping';
+  if (!d) return null;
+  if (typeof d.daysLeft === 'number') return `${d.daysLeft}d left${d.issuer ? ` · ${d.issuer}` : ''}`;
+  if (d.records) return d.records;
+  return null;
 }
 
 function relativeTime(ms) {
@@ -31,6 +54,13 @@ function relativeTime(ms) {
   if (d < 3_600_000) return `${Math.round(d / 60_000)}m ago`;
   if (d < 86_400_000) return `${Math.round(d / 3_600_000)}h ago`;
   return `${Math.round(d / 86_400_000)}d ago`;
+}
+
+function fmtInterval(sec) {
+  if (sec % 86400 === 0) return `${sec / 86400}d`;
+  if (sec % 3600 === 0)  return `${sec / 3600}h`;
+  if (sec % 60 === 0)    return `${sec / 60}m`;
+  return `${sec}s`;
 }
 
 function fmtMs(ms) {
@@ -44,10 +74,13 @@ function StatusChip({ check }) {
     return <span className="chip"><span className="dot" />pending</span>;
   }
   if (check.lastUp === 1) {
+    const extra = detailText(check);
     return (
       <span className="chip ok">
         <span className="dot" />
-        up <strong>· {check.lastLatencyMs}ms</strong>
+        {extra && check.type !== 'dns'
+          ? <>ok <strong>· {extra}</strong></>
+          : <>up <strong>· {check.lastLatencyMs}ms</strong></>}
       </span>
     );
   }
@@ -119,6 +152,60 @@ function Stat({ label, value }) {
   );
 }
 
+// Per-type options for the Sentinel-derived checks.
+function TypeOptions({ form, setForm }) {
+  const rowStyle = { gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 13 };
+  if (form.type === 'tls' || form.type === 'domain') {
+    return (
+      <label style={rowStyle}>
+        Warn when fewer than
+        <input
+          type="number"
+          value={form.warnDays}
+          min={0} max={365} step={1}
+          onChange={(e) => setForm({ ...form, warnDays: parseInt(e.target.value, 10) })}
+          className="input mono"
+          style={{ width: 70 }}
+        />
+        <span className="dim" style={{ fontSize: 12 }}>
+          days remain{form.type === 'tls' ? ' — also fails on an invalid chain or hostname mismatch' : ''}
+        </span>
+      </label>
+    );
+  }
+  if (form.type === 'heartbeat') {
+    return (
+      <label style={rowStyle}>
+        Grace
+        <input
+          type="number"
+          value={form.graceSec}
+          min={0} step={60}
+          onChange={(e) => setForm({ ...form, graceSec: parseInt(e.target.value, 10) })}
+          className="input mono"
+          style={{ width: 90 }}
+        />
+        <span className="dim" style={{ fontSize: 12 }}>
+          sec of slack after the interval. A ping URL is generated on save — have your job <code>curl</code> it.
+        </span>
+      </label>
+    );
+  }
+  if (form.type === 'dns') {
+    return (
+      <label style={rowStyle}>
+        <input
+          type="checkbox"
+          checked={!!form.trackChanges}
+          onChange={(e) => setForm({ ...form, trackChanges: e.target.checked })}
+        />
+        Alert when the records change (first answer is pinned as the baseline)
+      </label>
+    );
+  }
+  return null;
+}
+
 // Optional body-assertion inputs. Shown only for HTTP / DNS types since the
 // other types don't have a meaningful "body" to match against.
 function AssertionFields({ form, setForm }) {
@@ -182,6 +269,9 @@ function AddCheckForm({ onCreated, onCancel }) {
     bodyRegex: '',
     jsonPath: '',
     jsonPathEquals: '',
+    warnDays: 14,
+    graceSec: 300,
+    trackChanges: false,
   });
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -218,22 +308,33 @@ function AddCheckForm({ onCreated, onCancel }) {
         />
         <select
           value={form.type}
-          onChange={(e) => setForm({ ...form, type: e.target.value, target: '' })}
+          onChange={(e) => {
+            const type = e.target.value;
+            setForm({
+              ...form, type, target: '',
+              intervalSec: DEFAULT_INTERVAL[type] || 60,
+              warnDays: type === 'domain' ? 30 : 14,
+              alertAfterFailures: ['tls', 'domain', 'heartbeat'].includes(type) ? 1 : 3,
+            });
+          }}
           className="select"
         >
           {TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
-        <input
-          type="text"
-          placeholder={placeholderFor(form.type)}
-          value={form.target}
-          onChange={(e) => setForm({ ...form, target: e.target.value })}
-          className="input mono"
-          style={{ gridColumn: '1 / -1' }}
-        />
+        {form.type !== 'heartbeat' && (
+          <input
+            type="text"
+            placeholder={placeholderFor(form.type)}
+            value={form.target}
+            onChange={(e) => setForm({ ...form, target: e.target.value })}
+            className="input mono"
+            style={{ gridColumn: '1 / -1' }}
+          />
+        )}
+        <TypeOptions form={form} setForm={setForm} />
         <AssertionFields form={form} setForm={setForm} />
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 13 }}>
-          Interval
+          {form.type === 'heartbeat' ? 'Expect a ping every' : 'Interval'}
           <select
             value={form.intervalSec}
             onChange={(e) => setForm({ ...form, intervalSec: parseInt(e.target.value, 10) })}
@@ -316,6 +417,10 @@ export default function Checks() {
     try { await api.checks.remove(c.id); refresh(); }
     catch (e) { setErr(e.message); }
   }
+  async function acceptDns(c) {
+    try { await api.checks.update(c.id, { resetBaseline: true }); await api.checks.runNow(c.id); refresh(); }
+    catch (e) { setErr(e.message); }
+  }
   async function runNow(c) {
     setRunning(c.id);
     try { await api.checks.runNow(c.id); refresh(); }
@@ -336,10 +441,11 @@ export default function Checks() {
     <div className="page-fade-in">
       <h1 className="page-title">Checks</h1>
       <p className="subtitle">
-        Synthetic probes — HTTP / TCP / ICMP / DNS — recorded into the same
-        history store as built-in metrics (<code>check.&lt;id&gt;.up</code> and{' '}
-        <code>.latency_ms</code>). Click a row to see latency percentiles and
-        uptime over a window.
+        Synthetic probes — HTTP / TCP / ICMP / DNS — plus TLS-certificate and
+        domain-registration expiry, and heartbeats for cron jobs. Results are
+        recorded into the same history store as built-in metrics
+        (<code>check.&lt;id&gt;.up</code> and <code>.latency_ms</code>). Click a
+        row to see latency percentiles and uptime over a window.
       </p>
 
       {summary && (
@@ -396,7 +502,7 @@ export default function Checks() {
 
       {list != null && list.length === 0 && !adding && (
         <div className="card empty" style={{ padding: 32 }}>
-          No checks yet. Click <strong>Add check</strong> to set up an HTTP, TCP, ping, or DNS probe.
+          No checks yet. Click <strong>Add check</strong> to set up an HTTP, TCP, ping, DNS, TLS, domain, or heartbeat check.
         </div>
       )}
 
@@ -434,15 +540,41 @@ export default function Checks() {
                       </td>
                       <td>{c.label}{c.steps?.length ? <span className="dim" style={{ marginLeft: 6, fontSize: 11 }}>{c.steps.length}-step</span> : null}</td>
                       <td className="mono muted" style={{ fontSize: 12 }}>{c.type}</td>
-                      <td className="mono" style={{ fontSize: 12, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.target}>
-                        {c.target || (c.steps?.length ? `${c.steps.length} chained requests` : '—')}
-                      </td>
-                      <td className="muted" style={{ fontSize: 12 }}>{c.intervalSec}s</td>
+                      {c.type === 'heartbeat' && c.hbToken ? (
+                        <td className="mono" style={{ fontSize: 12, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }} title={pingUrl(c.hbToken)} onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="btn tiny ghost"
+                            onClick={() => navigator.clipboard?.writeText(pingUrl(c.hbToken))}
+                            title="Copy ping URL"
+                            style={{ marginRight: 6 }}
+                          >
+                            Copy
+                          </button>
+                          /ping/{c.hbToken.slice(0, 6)}…
+                        </td>
+                      ) : (
+                        <td className="mono" style={{ fontSize: 12, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.target}>
+                          {c.target || (c.steps?.length ? `${c.steps.length} chained requests` : '—')}
+                        </td>
+                      )}
+                      <td className="muted" style={{ fontSize: 12 }}>{fmtInterval(c.intervalSec)}</td>
                       <td><StatusChip check={c} /></td>
                       <td className="muted" style={{ fontSize: 12 }}>{relativeTime(c.lastRunAt)}</td>
                       <td onClick={(e) => e.stopPropagation()}>
                         {isAdmin && (
                           <>
+                            {c.type === 'dns' && c.trackChanges && c.lastUp === 0 && (
+                              <button
+                                type="button"
+                                className="btn tiny"
+                                onClick={() => acceptDns(c)}
+                                title="Accept the current records as the new baseline"
+                                style={{ marginRight: 6 }}
+                              >
+                                Accept change
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="btn tiny"

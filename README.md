@@ -65,9 +65,13 @@
   platforms **PagerDuty** (Events API v2) and **Opsgenie** (Alert API),
   with per-rule host filtering, a per-destination test button, retry-on-
   failure, and a delivery-history strip
-- **Synthetic checks** — periodic HTTP / TCP / ICMP probes recorded
+- **Synthetic checks** — periodic HTTP / TCP / ICMP / DNS probes recorded
   into the same history store as built-in metrics. Consecutive
   failures dispatch to your webhooks
+- **Expiry & dead-man checks** — TLS certificate validity + days to
+  expiry, domain registration expiry (RDAP), DNS record-change alerts,
+  and heartbeats: cron jobs `curl /ping/<token>` and you're alerted when
+  one goes quiet
 - **System log feed** (opt-in) — Logs page reads from
   `journalctl --output=json` with priority / since / unit / limit
   filters, **cursor-paginated "load more older"**, **search +
@@ -245,6 +249,7 @@ authenticated session.
 | Method | Path                | Description                       |
 |--------|---------------------|-----------------------------------|
 | GET    | `/api/health`       | Public liveness probe             |
+| GET/POST | `/ping/:token`    | Public heartbeat ping (token = credential; 404 if unknown) |
 | POST   | `/api/auth/login`   | `{username, password}` → cookie   |
 | POST   | `/api/auth/logout`  | Clears session cookie             |
 | GET    | `/api/auth/me`      | Current user                      |
