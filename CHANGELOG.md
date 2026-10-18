@@ -6,7 +6,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **`data/checks.json` is written 0600.** Heartbeat checks store their ping
+  token (the credential behind `/ping/<token>`) in that file, and it was
+  being rewritten world-readable (0644) on every check run. `persist()` now
+  creates the temp file with mode 0600 before the atomic rename.
 
 ## [0.77.0] — 2026-10-16
 

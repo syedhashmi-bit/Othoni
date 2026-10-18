@@ -74,7 +74,9 @@ function load() {
 function persist() {
   ensureDir(STORE_PATH);
   const tmp = `${STORE_PATH}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(cache, null, 2));
+  // 0600: heartbeat checks carry their ping token (the credential) in here.
+  fs.writeFileSync(tmp, JSON.stringify(cache, null, 2), { mode: 0o600 });
+  try { fs.chmodSync(tmp, 0o600); } catch { /* best effort */ }
   fs.renameSync(tmp, STORE_PATH);
 }
 
