@@ -6,6 +6,68 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.78.0] — 2026-10-28
+
+Sign-in is **Google-only**. Passwords, TOTP codes and the lockout that
+guarded them are gone; a Google account on an email allowlist in `.env` is
+the only way into the dashboard — the same design RiMM uses on this box.
+**Breaking for existing installs:** set the four Google settings below
+before upgrading, or nobody can sign in.
+
+### Added
+
+- **Sign in with Google.** `/api/auth/google` starts a standard OIDC
+  authorization-code flow (PKCE S256, `state` pinned to the browser by a
+  10-minute path-scoped cookie, `nonce`); `/api/auth/google/callback`
+  exchanges the code server-to-server, verifies the ID token's RS256
+  signature against Google's published keys (cached per `Cache-Control`,
+  refetched on key rotation), its audience, issuer and nonce, and requires a
+  verified email. No new dependencies — Node's `fetch` + `crypto` and the
+  existing `jsonwebtoken`. New `server/google-auth.js`.
+- **New `.env` settings:** `OTHONI_PUBLIC_URL` (builds the redirect URI —
+  register `<url>/api/auth/google/callback` on the OAuth client),
+  `OTHONI_GOOGLE_CLIENT_ID`, `OTHONI_GOOGLE_CLIENT_SECRET`,
+  `OTHONI_ADMIN_EMAILS` and `OTHONI_VIEWER_EMAILS` (comma-separated; admin
+  wins if an email is in both).
+- **Settings → Access → Google sign-in** (replaces the Users card):
+  read-only list of allowed accounts and their role, plus the exact redirect
+  URI the server expects. Admin-only, via new `GET /api/sign-in`.
+- **Login page** is a single "Sign in with Google" button with plain-English
+  reasons when Google sends someone back (cancelled, not allowed, unverified
+  email, expired attempt, rate-limited), or setup instructions when no
+  client is configured (`/api/health` → `auth.google`).
+
+### Changed
+
+- **The allowlist is re-checked on every request.** Removing or demoting an
+  email and restarting takes effect immediately, even for open sessions —
+  and every session issued by the old password login stops working on
+  upgrade.
+- **Production startup checks** now refuse a half-filled Google config
+  (some settings but not all, or a non-https `OTHONI_PUBLIC_URL`) instead
+  of checking the admin password. With no Google config at all the server
+  starts and logs that nobody can sign in — fine for a federation peer.
+  Leftover password-era settings are listed once at startup as ignored.
+- **Sign-in rate limit** is 20 hits / 15 min per IP across the start and
+  callback routes, and sends the browser back to the login page with a
+  message instead of a JSON body.
+- **`install.sh`** asks for the Google settings instead of an admin
+  password, writes them commented out if incomplete, and its final banner
+  says how to finish setup — including on upgrades of password-era
+  installs. **`scripts/deploy-peer.sh`** no longer generates an admin
+  password; peers are read through the central.
+
+### Removed
+
+- `POST /api/auth/login`, `OTHONI_ADMIN_USER` / `OTHONI_ADMIN_PASSWORD[_HASH]`,
+  `OTHONI_VIEWER_USER` / `OTHONI_VIEWER_PASSWORD[_HASH]`, `OTHONI_TOTP_SECRET`,
+  `OTHONI_LOGIN_LOCKOUT_*`, `npm run hash-password`, `npm run totp:setup`.
+- Stored users (`data/users.json`) and the `/api/users` endpoints — accounts
+  now live in the `.env` allowlist.
+- `auth.totp` and `auth.lockout` from `/api/health`.
+
 ### Fixed
 
 - **`data/checks.json` is written 0600.** Heartbeat checks store their ping
@@ -4327,6 +4389,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.78.0]: #0780--2026-10-28
 [0.77.0]: #0770--2026-10-16
 [0.76.0]: #0760--2026-10-16
 [0.75.0]: #0750--2026-10-16

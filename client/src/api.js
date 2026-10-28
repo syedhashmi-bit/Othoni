@@ -21,7 +21,7 @@ let activeHost = null;
 // remediations all belong to the host you're viewing. Mutations (PUT/POST/DELETE)
 // route through the read-only proxy and return 405 for a remote host — to change
 // a peer's config you log into that peer directly. Genuinely central surfaces
-// (peers registry, users/sessions/keys, webhooks, central audit log, settings,
+// (peers registry, sign-in/sessions/keys, webhooks, central audit log, settings,
 // retention/vacuum, host-meta, the Hosts grid) stay on the local instance.
 const HOST_SCOPED = [
   '/api/system', '/api/cpu', '/api/memory', '/api/disks', '/api/network',
@@ -88,11 +88,6 @@ async function request(path, options = {}) {
 export const api = {
   health: () => request('/api/health'),
   me: () => request('/api/auth/me'),
-  login: (username, password, totp) =>
-    request('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(totp ? { username, password, totp } : { username, password }),
-    }),
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   overview: () => request('/api/overview'),
   hosts: () => request('/api/hosts'),
@@ -190,20 +185,7 @@ export const api = {
     list:   () => request('/api/sessions'),
     revoke: (sid) => request(`/api/sessions/${encodeURIComponent(sid)}`, { method: 'DELETE' }),
   },
-  users: {
-    list:   () => request('/api/users'),
-    create: ({ username, password, role }) => request('/api/users', {
-      method: 'POST',
-      body: JSON.stringify({ username, password, role }),
-    }),
-    update: (id, patch) => request(`/api/users/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(patch),
-    }),
-    remove: (id) => request(`/api/users/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    }),
-  },
+  signIn: () => request('/api/sign-in'),
   audit: ({ range = '24h', action = null, limit = 200 } = {}) => {
     const qs = new URLSearchParams({ range, limit: String(limit) });
     if (action) qs.set('action', action);

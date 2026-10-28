@@ -24,7 +24,7 @@ export const SETTINGS_TABS = [
     id: 'access',
     label: 'Access',
     sections: [
-      { id: 'users', label: 'Users', keywords: 'accounts viewer admin password' },
+      { id: 'sign-in', label: 'Google sign-in', keywords: 'users accounts google email allowlist viewer admin login' },
       { id: 'sessions', label: 'Sessions', keywords: 'logins revoke devices' },
       { id: 'api-keys', label: 'API keys', keywords: 'agent ingest metrics token' },
     ],

@@ -5,12 +5,13 @@ const logger = require('./logger');
 const audit = require('./audit');
 const sessions = require('./sessions');
 const csrf = require('./csrf');
-const loginLockout = require('./login-lockout');
-const { verifyTotp } = require('./totp');
-const { verifyPassword, isHash } = require('./password-hash');
-const users = require('./users');
+const google = require('./google-auth');
 
 const COOKIE_NAME = 'othoni_session';
+// Holds the OAuth `state` between /api/auth/google and its callback; scoped
+// to that path so it never rides along on normal API traffic.
+const FLOW_COOKIE = 'othoni_oauth';
+const FLOW_COOKIE_PATH = '/api/auth/google';
 
 // Same TTL used for both the JWT signature and the sessions row's
 // `expiresAt`. Parses the same duration string jsonwebtoken accepts,
@@ -24,29 +25,21 @@ function sessionTtlMs() {
   return n * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[unit] || 3_600_000);
 }
 
-// True iff a TOTP secret is configured. The login page reads this via
-// /api/health to decide whether to render the code field.
-function totpEnabled() {
-  return !!(process.env.OTHONI_TOTP_SECRET && process.env.OTHONI_TOTP_SECRET.trim());
-}
-
 const DEFAULT_JWT_SECRETS = new Set([
   'change-me-please-use-a-long-random-string',
   'othoni-dev-insecure-secret',
 ]);
-const DEFAULT_ADMIN_PASSWORD = 'admin123';
 
 function getSecret() {
   const s = process.env.OTHONI_JWT_SECRET;
   return s && !DEFAULT_JWT_SECRETS.has(s) ? s : 'othoni-dev-insecure-secret';
 }
 
-// Production must not boot on placeholder credentials. Outside production we
-// allow the insecure defaults so `npm start` works with zero config, but in
-// production a forgotten secret means a predictable JWT signing key (forge
-// any session/role) or a default admin password — both full-takeover bugs.
-// Fail closed: collect every problem and throw so the operator sees all of
-// them at once. Called once at startup from index.js, before listen().
+// Production must not boot on a placeholder JWT secret (anyone could forge
+// a session for any role) or on a half-filled Google config. Outside
+// production we allow the insecure default so `npm start` works with zero
+// config. Fail closed: collect every problem and throw so the operator sees
+// all of them at once. Called once at startup from index.js, before listen().
 function assertProductionSecrets() {
   if (process.env.NODE_ENV !== 'production') return;
   const problems = [];
@@ -56,16 +49,7 @@ function assertProductionSecrets() {
   } else if (jwt.length < 32) {
     problems.push('OTHONI_JWT_SECRET is too short — use at least 32 random characters');
   }
-  // The env admin account is always active (defaults to admin/admin123), so
-  // a strong admin credential must be provided unless a password HASH is set.
-  const adminHash = process.env.OTHONI_ADMIN_PASSWORD_HASH;
-  const adminPass = process.env.OTHONI_ADMIN_PASSWORD;
-  const haveValidHash = adminHash && isHash(adminHash);
-  if (!haveValidHash && (!adminPass || adminPass === DEFAULT_ADMIN_PASSWORD)) {
-    problems.push(
-      'OTHONI_ADMIN_PASSWORD is unset or the default "admin123" — set a strong password (or OTHONI_ADMIN_PASSWORD_HASH)'
-    );
-  }
+  problems.push(...google.configProblems());
   if (problems.length) {
     const err = new Error(
       'Refusing to start in production with insecure auth config:\n  - ' +
@@ -73,6 +57,27 @@ function assertProductionSecrets() {
     );
     err.code = 'insecure_prod_config';
     throw err;
+  }
+}
+
+// Startup notes about sign-in that shouldn't stop the boot: no Google
+// client means nobody can log in (fine for a federation peer, surprising
+// anywhere else), and leftover password-era settings now do nothing.
+const RETIRED_AUTH_VARS = [
+  'OTHONI_ADMIN_USER', 'OTHONI_ADMIN_PASSWORD', 'OTHONI_ADMIN_PASSWORD_HASH',
+  'OTHONI_VIEWER_USER', 'OTHONI_VIEWER_PASSWORD', 'OTHONI_VIEWER_PASSWORD_HASH',
+  'OTHONI_TOTP_SECRET', 'OTHONI_LOGIN_LOCKOUT_FAILS', 'OTHONI_LOGIN_LOCKOUT_MS',
+];
+function logAuthConfig() {
+  if (!google.isConfigured()) {
+    logger.warn(
+      'Google sign-in is not configured — nobody can log in to the dashboard. ' +
+        'Set OTHONI_GOOGLE_CLIENT_ID, OTHONI_GOOGLE_CLIENT_SECRET, OTHONI_PUBLIC_URL and OTHONI_ADMIN_EMAILS.'
+    );
+  }
+  const leftover = RETIRED_AUTH_VARS.filter((k) => process.env[k]);
+  if (leftover.length) {
+    logger.info(`sign-in is Google-only; these .env settings are ignored and can be removed: ${leftover.join(', ')}`);
   }
 }
 
@@ -134,16 +139,18 @@ function auth(req, res, next) {
   if (!decoded.sid || !sessions.getActive(decoded.sid)) {
     return res.status(401).json({ error: 'unauthorized' });
   }
+  // .env is the source of truth for who's allowed: re-resolve the role on
+  // every request so removing (or demoting) an email and restarting takes
+  // effect immediately rather than when the cookie expires. This also
+  // retires every session minted by the old password login.
+  const role = google.roleFor(decoded.sub);
+  if (!role) return res.status(401).json({ error: 'unauthorized' });
   sessions.touch(decoded.sid);
   // Backfill the CSRF cookie for sessions that pre-date v0.39 so the next
   // state-changing request from the same browser will find a cookie to
   // echo. No-op when the cookie already exists.
   csrf.ensureCookie(req, res, sessionTtlMs());
-  req.user = {
-    username: decoded.sub,
-    role: decoded.role === 'viewer' ? 'viewer' : 'admin',
-    sid: decoded.sid,
-  };
+  req.user = { username: decoded.sub, role, sid: decoded.sid };
   next();
 }
 
@@ -165,102 +172,9 @@ function constantTimeEqual(a, b) {
   return diff === 0;
 }
 
-// True iff a viewer account is configured. Viewer creds are optional —
-// no env vars = no viewer login path.
-function viewerEnabled() {
-  const u = process.env.OTHONI_VIEWER_USER;
-  if (typeof u !== 'string' || u.trim().length === 0) return false;
-  const h = process.env.OTHONI_VIEWER_PASSWORD_HASH;
-  const p = process.env.OTHONI_VIEWER_PASSWORD;
-  return !!((h && isHash(h)) || (typeof p === 'string' && p.length > 0));
-}
-
-// Check creds against a (user, hash-or-plaintext) pair. Always runs the
-// hash path when a hash is provided to avoid a timing channel between
-// hash-configured and plaintext-configured deployments.
-function checkPasswordFor(plaintextPass, hash, plaintextExpected) {
-  if (hash && isHash(hash)) return verifyPassword(plaintextPass, hash);
-  if (typeof plaintextExpected === 'string') return constantTimeEqual(plaintextPass, plaintextExpected);
-  return false;
-}
-
-function login(req, res) {
-  const { username, password, totp } = req.body || {};
-  if (typeof username !== 'string' || typeof password !== 'string') {
-    return res.status(400).json({ error: 'invalid_request' });
-  }
-  // v0.40 lockout: stop checking credentials entirely while the IP is
-  // locked. Returns 429 with a Retry-After header so well-behaved
-  // clients back off. Locked IPs don't consume scrypt CPU.
-  const lock = loginLockout.check(req.ip, username);
-  if (lock.locked) {
-    res.set('Retry-After', String(lock.retryAfterSec));
-    return res.status(429).json({
-      error: 'locked_out',
-      message: `Too many failed attempts. Try again in ${lock.retryAfterSec}s.`,
-      retryAfterSec: lock.retryAfterSec,
-      unlockAt: lock.unlockAt,
-    });
-  }
-  const expectedAdminUser = process.env.OTHONI_ADMIN_USER || 'admin';
-  const adminHash = process.env.OTHONI_ADMIN_PASSWORD_HASH;
-  const adminPass = process.env.OTHONI_ADMIN_PASSWORD || 'admin123';
-
-  // Always run both username comparisons + both password checks so the
-  // login timing doesn't reveal which account exists. The viewer slot
-  // returns false on every check when it isn't configured.
-  const adminUserMatch = constantTimeEqual(username, expectedAdminUser);
-  const adminPassMatch = checkPasswordFor(password, adminHash, adminPass);
-
-  const viewerUser = process.env.OTHONI_VIEWER_USER || ' nope ';
-  const viewerHash = process.env.OTHONI_VIEWER_PASSWORD_HASH;
-  const viewerPass = process.env.OTHONI_VIEWER_PASSWORD;
-  const viewerEnabledNow = viewerEnabled();
-  const viewerUserMatch = constantTimeEqual(username, viewerUser);
-  const viewerPassMatch = viewerEnabledNow
-    ? checkPasswordFor(password, viewerHash, viewerPass)
-    : checkPasswordFor(password, null, ' nope ');
-
-  let role = null;
-  if (adminUserMatch && adminPassMatch) role = 'admin';
-  else if (viewerEnabledNow && viewerUserMatch && viewerPassMatch) role = 'viewer';
-
-  // v0.60 — stored multi-user. Checked AFTER the env-based slots so a
-  // legacy deployment relying on env vars keeps the same behaviour.
-  // Reserved-name guard at create time prevents a stored user from
-  // shadowing either env account, so this can never silently downgrade
-  // an admin login to viewer.
-  if (!role) {
-    const storedMatch = users.verifyLogin(username, password);
-    if (storedMatch) role = storedMatch.role;
-  }
-
-  let totpOk = true;
-  if (totpEnabled()) {
-    totpOk = typeof totp === 'string' && verifyTotp(process.env.OTHONI_TOTP_SECRET, totp);
-  }
-  if (!role || !totpOk) {
-    logger.warn(`failed login for "${username}" from ${req.ip}`);
-    const result = loginLockout.recordFailure(req.ip, { actor: username, username });
-    audit.log({
-      actor: typeof username === 'string' ? username : null,
-      action: 'login.fail',
-      ip: req.ip || null,
-      metadata: { totp: totpEnabled(), failsRemaining: result.failsRemaining },
-    });
-    if (result.locked) {
-      res.set('Retry-After', String(result.retryAfterSec));
-      return res.status(429).json({
-        error: 'locked_out',
-        message: `Too many failed attempts. Try again in ${result.retryAfterSec}s.`,
-        retryAfterSec: result.retryAfterSec,
-        unlockAt: result.unlockAt,
-      });
-    }
-    return res.status(401).json({ error: 'invalid_credentials' });
-  }
-  // Successful login clears the lockout counters for this IP and username.
-  loginLockout.recordSuccess(req.ip, username);
+// Seat a session for an identity that has already been verified: sessions
+// row, JWT cookie carrying its sid, and the sibling CSRF cookie.
+function startSession(req, res, { username, role, metadata }) {
   const ttl = sessionTtlMs();
   const sid = sessions.create({
     actor: username,
@@ -285,9 +199,70 @@ function login(req, res) {
     actor: username,
     action: 'login.ok',
     ip: req.ip || null,
-    metadata: { totp: totpEnabled(), role, sid },
+    metadata: { ...metadata, role, sid },
   });
-  res.json({ ok: true, user: { username, role } });
+}
+
+// GET /api/auth/google — first leg of Google sign-in. Pins a fresh `state`
+// to this browser and bounces it to Google's account chooser.
+function googleStart(req, res) {
+  if (!google.isConfigured()) return res.redirect(302, '/login?error=not_configured');
+  const { state, url } = google.beginFlow(google.redirectUri(req));
+  res.cookie(FLOW_COOKIE, state, {
+    httpOnly: true,
+    // Lax still sends the cookie on Google's top-level GET redirect back.
+    sameSite: 'lax',
+    secure: cookieSecure(req),
+    maxAge: google.FLOW_TTL_MS,
+    path: FLOW_COOKIE_PATH,
+  });
+  res.redirect(302, url);
+}
+
+// Reasons the login page knows how to explain. Anything else is "failed".
+const PUBLIC_FAILURES = new Set(['denied', 'expired', 'unverified', 'not_allowed']);
+
+// GET /api/auth/google/callback — Google sends the browser back here with
+// ?code&state (or ?error). Every outcome ends in a redirect: `/` with a
+// session on success, `/login?error=<reason>` otherwise.
+async function googleCallback(req, res) {
+  const q = req.query || {};
+  const cookieState = (req.cookies && req.cookies[FLOW_COOKIE]) || '';
+  res.clearCookie(FLOW_COOKIE, { path: FLOW_COOKIE_PATH });
+
+  const fail = (reason, detail, email) => {
+    logger.warn(`google sign-in failed (${reason}) from ${req.ip}${detail ? `: ${detail}` : ''}`);
+    audit.log({
+      actor: email || null,
+      action: 'login.fail',
+      ip: req.ip || null,
+      metadata: { method: 'google', reason },
+    });
+    const shown = PUBLIC_FAILURES.has(reason) ? reason : 'failed';
+    res.redirect(302, `/login?error=${shown}`);
+  };
+
+  // The user backed out on Google's side (access_denied) or Google refused.
+  if (typeof q.error === 'string') return fail('denied', q.error);
+  const state = typeof q.state === 'string' ? q.state : '';
+  // State must match the cookie this browser got in googleStart — that's
+  // what stops someone from completing *their* login in *your* browser.
+  if (!state || !constantTimeEqual(state, cookieState)) return fail('expired', 'state mismatch');
+  const flow = google.takeFlow(state);
+  if (!flow) return fail('expired', 'unknown or expired state');
+  if (typeof q.code !== 'string' || !q.code) return fail('failed', 'missing code');
+
+  try {
+    const identity = await google.completeFlow(q.code, flow);
+    startSession(req, res, {
+      username: identity.email,
+      role: identity.role,
+      metadata: { method: 'google', sub: identity.sub },
+    });
+    res.redirect(302, '/');
+  } catch (e) {
+    fail(e.code || 'failed', e.message, e.email);
+  }
 }
 
 function logout(req, res) {
@@ -329,4 +304,4 @@ function peerTokenEnabled() {
   return typeof t === 'string' && t.trim().length >= 16;
 }
 
-module.exports = { auth, requireAdmin, login, logout, me, COOKIE_NAME, totpEnabled, viewerEnabled, peerTokenEnabled, assertProductionSecrets };
+module.exports = { auth, requireAdmin, googleStart, googleCallback, logout, me, COOKIE_NAME, peerTokenEnabled, assertProductionSecrets, logAuthConfig };

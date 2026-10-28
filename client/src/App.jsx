@@ -599,11 +599,6 @@ export default function App() {
     };
   }, []);
 
-  const handleLogin = (u) => {
-    setUser(u);
-    navigate('/', { replace: true });
-  };
-
   const handleLogout = async () => {
     try {
       await api.logout();
@@ -621,7 +616,7 @@ export default function App() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/login" element={<Login onLogin={handleLogin} />} />
+        <Route path="/login" element={<Login />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );

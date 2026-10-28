@@ -130,14 +130,14 @@ What it does, in order:
 3. `npm ci`, then `npm run client:build`.
 4. Writes/updates `.env`:
    - `NODE_ENV=production`, `HOST=<wg-ip>`, `PORT=8088` — always set.
-   - `OTHONI_PEER_TOKEN`, `OTHONI_JWT_SECRET`, `OTHONI_ADMIN_PASSWORD` —
-     generated **only if missing**, so re-runs never rotate working secrets.
+   - `OTHONI_PEER_TOKEN`, `OTHONI_JWT_SECRET` — generated **only if
+     missing**, so re-runs never rotate working secrets. No sign-in is set
+     up: a peer is read through the central, not logged into directly.
 5. Installs the systemd unit from `othoni.service.example` (if not already
    present), `daemon-reload`, `enable --now`, restart.
 6. If `ufw` is active, allows the WireGuard subnet to the port.
 7. Smoke-tests `http://<wg-ip>:8088/api/health`.
-8. Prints the **host / url / token** to register on the central (and the
-   box's own admin password, if it generated one).
+8. Prints the **host / url / token** to register on the central.
 
 Copy the printed token — you'll paste it into the central in Step 4.
 
@@ -157,7 +157,6 @@ NODE_ENV=production
 HOST=10.8.0.6
 PORT=8088
 OTHONI_JWT_SECRET=$(openssl rand -hex 32)
-OTHONI_ADMIN_PASSWORD=<pick-a-strong-password>
 OTHONI_PEER_TOKEN=${PEER_TOKEN}
 EOF
 chmod 600 .env
@@ -223,17 +222,17 @@ the fix.
 | `systemctl is-active` → `activating` (loops) | service crashes on boot and systemd retries | `journalctl -u othoni --since "2 min ago"` — read the actual error |
 | `Cannot find module 'dotenv'` (or any module) | `npm ci` never ran / failed | run `npm ci` in the othoni dir |
 | `EADDRNOTAVAIL` on boot | `HOST` is a WG IP not assigned to the box | check `ip -4 addr show wg0`; set `HOST` to the address it actually shows |
-| `Refusing to start … insecure auth config` | weak/default `OTHONI_JWT_SECRET` (<32 chars) or default admin password | set a 32+ char secret and a non-default password |
+| `Refusing to start … insecure auth config` | weak/default `OTHONI_JWT_SECRET` (<32 chars), or a half-filled Google sign-in config | set a 32+ char secret; either set all of `OTHONI_PUBLIC_URL` / `OTHONI_GOOGLE_CLIENT_ID` / `OTHONI_GOOGLE_CLIENT_SECRET` / `OTHONI_ADMIN_EMAILS` or none |
 | central `curl` → "Connection refused" but ping works | peer bound to `127.0.0.1`, not the WG IP | set `HOST=<wg-ip>` in `.env`, restart; `ss -lntp \| grep 8088` should show the WG IP |
 | peer `/api/system` returns 401 even via the proxy | `OTHONI_PEER_TOKEN` unset/empty on the peer, or mismatched on the central | confirm `grep OTHONI_PEER_TOKEN .env` on the peer is non-empty and matches the central registration |
 | two boxes share a session unexpectedly | the peer's `.env` was copied from another box (shared `OTHONI_JWT_SECRET`) | give the peer its own `OTHONI_JWT_SECRET`; this is why Step 1 excludes `.env` |
-| proxy returns 405 when you click a button | mutation through the read-only proxy | expected — log into the peer directly to change its config |
+| proxy returns 405 when you click a button | mutation through the read-only proxy | expected — change the peer's config by signing in to it directly (give it its own Google sign-in settings) |
 | proxy returns 502 | peer unreachable within 10s | check the tunnel (`wg show`), the peer service, and the firewall |
 
 A copied `.env` is the subtle one: if the box already had an `.env` from a
 clone of another instance, `deploy-peer.sh` preserves its existing secrets
 (idempotency), which means it would keep the *wrong* box's `OTHONI_JWT_SECRET`
-and admin password. If you suspect this, delete the `.env` and re-run the
+and peer token. If you suspect this, delete the `.env` and re-run the
 script so the peer gets its own freshly-generated secrets.
 
 ---

@@ -90,11 +90,6 @@ if [ -z "$PEER_TOKEN" ]; then
 fi
 has_kv OTHONI_JWT_SECRET || printf 'OTHONI_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" >> "$ENV_FILE"
 
-ADMIN_PW=""
-if ! has_kv OTHONI_ADMIN_PASSWORD && ! has_kv OTHONI_ADMIN_PASSWORD_HASH; then
-  ADMIN_PW="$(openssl rand -hex 12)"
-  printf 'OTHONI_ADMIN_PASSWORD=%s\n' "$ADMIN_PW" >> "$ENV_FILE"
-fi
 chmod 600 "$ENV_FILE"
 
 # ---- systemd unit ------------------------------------------------------
@@ -130,10 +125,7 @@ echo " Register it on the CENTRAL othoni → Settings → Federated peers:"
 echo "   host : $HOSTID"
 echo "   url  : http://$WG_IP:$PORT"
 echo "   token: $PEER_TOKEN"
-if [ -n "$ADMIN_PW" ]; then
-  echo ""
-  echo " This box's own admin login (only needed to reach it directly): admin / $ADMIN_PW"
-  echo " (Direct browser login over plain http won't set a cookie in production —"
-  echo "  that's expected; you view this box THROUGH central, not directly.)"
-fi
+echo ""
+echo " No direct login is set up on this box — you view it THROUGH central."
+echo " (To sign in to it directly, add Google sign-in to its .env; see README.)"
 echo "────────────────────────────────────────────────────────"

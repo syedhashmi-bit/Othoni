@@ -10,9 +10,9 @@ const express = require('express');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
-const { auth, requireAdmin, login, logout, me, totpEnabled, assertProductionSecrets } = require('./auth');
+const { auth, requireAdmin, googleStart, googleCallback, logout, me, assertProductionSecrets, logAuthConfig } = require('./auth');
 const csrf = require('./csrf');
-const loginLockout = require('./login-lockout');
+const google = require('./google-auth');
 const { loginLimiter, metricsLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
@@ -34,11 +34,12 @@ const logger = require('./logger');
 // Must run before anything binds a port so a misconfigured deploy fails
 // loudly instead of serving a forgeable session.
 assertProductionSecrets();
+logAuthConfig();
 
 const PORT = parseInt(process.env.PORT || '8088', 10);
 // Default to loopback so a deploy that forgets to set HOST isn't reachable
 // directly (which would let clients spoof X-Forwarded-For past the per-IP
-// login lockout / rate limiter). Production sits behind nginx on 127.0.0.1;
+// sign-in rate limiter). Production sits behind nginx on 127.0.0.1;
 // set HOST=0.0.0.0 explicitly only if you intend to expose the port.
 const HOST = process.env.HOST || '127.0.0.1';
 const VERSION = require('../package.json').version;
@@ -84,21 +85,15 @@ app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
 // Public endpoints
 app.get('/api/health', (_req, res) => {
-  const lockout = loginLockout.snapshot();
   const store = history.getStorage();
   res.json({
     ok: true,
     version: VERSION,
     time: new Date().toISOString(),
     auth: {
-      totp: totpEnabled(),
+      // The login page shows the Google button only when this is true.
+      google: google.isConfigured(),
       csrf: csrf.isEnabled(),
-      lockout: {
-        enabled: lockout.enabled,
-        lockedNow: lockout.lockedNow,
-        // Surfaces auth-surface degradation for a future status-page integration.
-        degraded: lockout.lockedNow > 0,
-      },
     },
     storage: {
       // True when the data partition is nearly full and the sampler has paused
@@ -109,7 +104,8 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-app.post('/api/auth/login', loginLimiter, login);
+app.get('/api/auth/google', loginLimiter, googleStart);
+app.get('/api/auth/google/callback', loginLimiter, googleCallback);
 app.post('/api/auth/logout', logout);
 app.get('/api/auth/me', auth, me);
 

@@ -3,12 +3,15 @@
 const rateLimit = require('express-rate-limit');
 const apiKeys = require('./api-keys');
 
+// Google sign-in round trips (start + callback = 2 hits per login). Both
+// are browser navigations, so send the user back to the login page with a
+// readable reason instead of a bare JSON body.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'too_many_attempts' },
+  handler: (_req, res) => res.redirect(302, '/login?error=rate_limited'),
 });
 
 // Reads `Authorization: Bearer othoni_<hex>`, looks up the key, attaches

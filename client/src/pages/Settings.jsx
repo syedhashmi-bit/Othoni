@@ -1061,224 +1061,84 @@ function SessionsCard() {
   );
 }
 
-function UsersCard() {
+function SignInCard() {
   const { user } = useApp();
   const isAdmin = user?.role === 'admin';
-  const [list, setList] = useState(null);
+  const [info, setInfo] = useState(null);
   const [err, setErr] = useState(null);
-  const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ username: '', password: '', role: 'viewer' });
-  const [busy, setBusy] = useState(false);
-  const [resetId, setResetId] = useState(null);
-  const [resetPw, setResetPw] = useState('');
 
-  // Viewers can't see this card at all — the API would 403 them, and
-  // the user list itself is sensitive. Render nothing instead of a
-  // half-broken "loading" state.
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.signIn()
+      .then((r) => { setInfo(r); setErr(null); })
+      .catch((e) => setErr(e.body?.message || e.message));
+  }, [isAdmin]);
+
+  // Viewers can't see this card at all — the API would 403 them, and the
+  // list of account emails is sensitive.
   if (!isAdmin) return null;
 
-  function refresh() {
-    api.users.list()
-      .then((r) => { setList(r.users || []); setErr(null); })
-      .catch((e) => setErr(e.body?.message || e.message));
-  }
-  useEffect(() => { refresh(); }, []);
-
-  async function create(e) {
-    e?.preventDefault();
-    setErr(null);
-    setBusy(true);
-    try {
-      await api.users.create({
-        username: form.username.trim().toLowerCase(),
-        password: form.password,
-        role: form.role,
-      });
-      setForm({ username: '', password: '', role: 'viewer' });
-      setAdding(false);
-      refresh();
-    } catch (e) {
-      setErr(e.body?.message || e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function resetPassword(u) {
-    if (resetId !== u.id) { setResetId(u.id); setResetPw(''); return; }
-    if (!resetPw || resetPw.length < 8) { setErr('New password must be at least 8 chars'); return; }
-    try {
-      await api.users.update(u.id, { password: resetPw });
-      setResetId(null);
-      setResetPw('');
-      setErr(null);
-      refresh();
-    } catch (e) {
-      setErr(e.body?.message || e.message);
-    }
-  }
-
-  async function toggleDisabled(u) {
-    const verb = u.disabled ? 'Enable' : 'Disable';
-    if (!confirm(`${verb} user "${u.username}"?${!u.disabled ? ' This also revokes any active sessions.' : ''}`)) return;
-    try { await api.users.update(u.id, { disabled: !u.disabled }); refresh(); }
-    catch (e) { setErr(e.body?.message || e.message); }
-  }
-
-  async function remove(u) {
-    if (!confirm(`Delete user "${u.username}"? This revokes any active sessions and cannot be undone.`)) return;
-    try { await api.users.remove(u.id); refresh(); }
-    catch (e) { setErr(e.body?.message || e.message); }
-  }
+  const rows = info
+    ? [
+        ...info.admins.map((email) => ({ email, role: 'admin' })),
+        ...info.viewers.map((email) => ({ email, role: 'viewer' })),
+      ]
+    : [];
 
   return (
     <div className="card">
       <div className="card-header" style={{ alignItems: 'flex-start' }}>
         <div style={{ flex: 1 }}>
-          <div className="card-title">Users</div>
+          <div className="card-title">Google sign-in</div>
           <div className="card-sub" style={{ fontSize: 12 }}>
-            Additional accounts on top of the env-based admin
-            (<code>OTHONI_ADMIN_USER</code>). Create viewer accounts
-            here so each operator gets their own credentials — the
-            audit log and session list both attribute actions back to
-            them. Disabling a user revokes their active sessions
-            immediately.
+            Sign-in is Google-only. Who gets in is set in <code>.env</code> —{' '}
+            <code>OTHONI_ADMIN_EMAILS</code> and <code>OTHONI_VIEWER_EMAILS</code>,
+            comma-separated. Edit them and restart othoni; a removed or demoted
+            account loses access on its next request, even mid-session.
           </div>
         </div>
-        {!adding && (
-          <button
-            type="button"
-            className="btn compact"
-            onClick={() => setAdding(true)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          >
-            <IconPlus /> Add user
-          </button>
-        )}
       </div>
 
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
 
-      {adding && (
-        <form onSubmit={create} className="toolbar" style={{ marginTop: 14, flexWrap: 'wrap' }}>
-          <input
-            type="text"
-            placeholder="username (e.g. alice)"
-            value={form.username}
-            maxLength={32}
-            onChange={(e) => setForm({ ...form, username: e.target.value })}
-            className="input"
-            style={{ width: 200 }}
-            autoComplete="off"
-          />
-          <input
-            type="password"
-            placeholder="password (≥ 8 chars)"
-            value={form.password}
-            maxLength={256}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-            className="input"
-            style={{ width: 220 }}
-            autoComplete="new-password"
-          />
-          <select
-            value={form.role}
-            onChange={(e) => setForm({ ...form, role: e.target.value })}
-            className="select"
-            title="Viewer = read-only; admin = full access (use sparingly)"
-          >
-            <option value="viewer">Viewer (read-only)</option>
-            <option value="admin">Admin</option>
-          </select>
-          <button type="submit" className="btn compact" disabled={busy || !form.username.trim() || form.password.length < 8}>
-            Create
-          </button>
-          <button
-            type="button"
-            className="btn ghost"
-            onClick={() => { setAdding(false); setForm({ username: '', password: '', role: 'viewer' }); }}
-          >
-            Cancel
-          </button>
-        </form>
-      )}
-
-      {list != null && list.length === 0 && !adding && (
-        <div className="empty" style={{ padding: '20px 0', fontSize: 13 }}>
-          No stored users yet. Click <strong>Add user</strong> to create one. The env-based admin is always available regardless.
+      {info && !info.configured && (
+        <div className="error" style={{ marginTop: 12 }}>
+          Google sign-in isn't fully configured — set <code>OTHONI_GOOGLE_CLIENT_ID</code>,{' '}
+          <code>OTHONI_GOOGLE_CLIENT_SECRET</code> and at least one allowed email.
         </div>
       )}
 
-      {list != null && list.length > 0 && (
+      {info && rows.length > 0 && (
         <div className="table-wrap" style={{ marginTop: 14 }}>
           <table className="t">
             <thead>
               <tr>
-                <th>Username</th>
+                <th>Google account</th>
                 <th>Role</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Last login</th>
-                <th style={{ width: 320 }}></th>
               </tr>
             </thead>
             <tbody>
-              {list.map((u) => (
-                <tr key={u.id} style={{ opacity: u.disabled ? 0.55 : 1 }}>
-                  <td className="mono">{u.username}</td>
+              {rows.map((r) => (
+                <tr key={r.email}>
+                  <td className="mono">
+                    {r.email}
+                    {r.email === user.username && <span className="muted"> (you)</span>}
+                  </td>
                   <td>
-                    <span className={`pill ${u.role === 'admin' ? 'crit' : 'dim'}`} style={{ fontSize: 10 }}>
-                      {u.role}
+                    <span className={`pill ${r.role === 'admin' ? 'crit' : 'dim'}`} style={{ fontSize: 10 }}>
+                      {r.role}
                     </span>
-                  </td>
-                  <td>
-                    {u.disabled
-                      ? <span className="pill" style={{ fontSize: 10, background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}>Disabled</span>
-                      : <span className="pill ok" style={{ fontSize: 10 }}>Active</span>}
-                  </td>
-                  <td className="muted" style={{ fontSize: 12 }}>{formatRelative(u.createdAt)}</td>
-                  <td className="muted" style={{ fontSize: 12 }}>{formatRelative(u.lastLoginAt)}</td>
-                  <td>
-                    {resetId === u.id ? (
-                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                        <input
-                          type="password"
-                          autoFocus
-                          placeholder="new password (≥ 8 chars)"
-                          value={resetPw}
-                          maxLength={256}
-                          onChange={(e) => setResetPw(e.target.value)}
-                          className="input"
-                          style={{ width: 180, fontSize: 12 }}
-                          autoComplete="new-password"
-                        />
-                        <button type="button" className="btn tiny" onClick={() => resetPassword(u)}>Save</button>
-                        <button type="button" className="btn ghost tiny" onClick={() => { setResetId(null); setResetPw(''); }}>Cancel</button>
-                      </span>
-                    ) : (
-                      <span style={{ display: 'inline-flex', gap: 6 }}>
-                        <button type="button" className="btn ghost tiny" onClick={() => { setResetId(u.id); setResetPw(''); }}>
-                          Reset password
-                        </button>
-                        <button type="button" className="btn ghost tiny" onClick={() => toggleDisabled(u)}>
-                          {u.disabled ? 'Enable' : 'Disable'}
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          onClick={() => remove(u)}
-                          title="Delete user"
-                          aria-label="Delete user"
-                        >
-                          <IconTrash />
-                        </button>
-                      </span>
-                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {info && (
+        <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+          Authorized redirect URI on the Google OAuth client: <code>{info.redirectUri}</code>
         </div>
       )}
     </div>
@@ -1887,7 +1747,7 @@ const SECTION_COMPONENTS = {
   server: ServerSection,
   hosts: HostsCard,
   peers: PeersCard,
-  users: UsersCard,
+  'sign-in': SignInCard,
   sessions: SessionsCard,
   'api-keys': ApiKeysCard,
   storage: StorageCard,

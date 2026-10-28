@@ -544,6 +544,29 @@ table.t td.cmd {
   margin: 0 0 24px;
   font-size: 13px;
 }
+.login-card .error code {
+  font-size: 12px;
+}
+.btn.google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-decoration: none;
+}
+.btn.google-btn[aria-disabled='true'] {
+  opacity: 0.6;
+  pointer-events: none;
+}
+/* The G mark needs a white tile to read on the accent button in either theme. */
+.google-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: #fff;
+}
 
 .field {
   margin-bottom: 14px;
