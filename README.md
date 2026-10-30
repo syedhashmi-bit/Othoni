@@ -108,6 +108,25 @@
 - **Keyboard shortcuts** — two-key chords (`g d`, `g h`, etc.) to jump
   between pages, `?` for the cheatsheet
 
+## 🎯 Scope — what othoni is and isn't
+
+othoni is a **monitoring** tool: it watches servers and tells you when
+something's wrong. That's the test for anything new — if it isn't watching
+or alerting, it doesn't belong here.
+
+- **In:** the server's own metrics, processes, services, containers, logs
+  and security posture; checks on what it serves (HTTP / TCP / ping / DNS,
+  TLS and domain expiry, cron heartbeats); history, alert rules and
+  notifications; several servers in one view via federation.
+- **Out:** a full uptime or status-page product (escalations, repeat
+  reminders, probes from several regions) — use a dedicated tool, ideally
+  on another machine, since a server can't report its own outage. On-call
+  scheduling — send alerts to PagerDuty or Opsgenie for that. Deployment,
+  configuration management, backups.
+- **Opt-in, off by default:** actions that *change* the server (service
+  restarts, container start / stop, process signals, security fixes,
+  certbot renewals) — `OTHONI_ACTIONS_ENABLED=true` turns them on.
+
 ## 🧱 Stack
 
 - Node.js + Express
@@ -774,12 +793,7 @@ The exporter is off when the env var is unset (`/metrics` returns 404 in
 that state, so the endpoint isn't even advertised). Generate a random token
 with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
-## 🗺️ Roadmap (not built yet)
+## 🗺️ Roadmap
 
-- **Alert-rule silencing / mute windows** — suppress a rule (or all
-  rules) during planned maintenance while still recording the suppressed
-  fire
-- **On-call rotation** — time-window routing so different webhook
-  destinations receive alerts on a schedule
-
-See `ROADMAP.md` for details and `CHANGELOG.md` for what's already shipped.
+See `CHANGELOG.md` for what's shipped. New work has to fit the
+[scope](#-scope--what-othoni-is-and-isnt) above.
