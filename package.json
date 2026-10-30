@@ -16,7 +16,7 @@
     "postinstall": "npm --prefix client install --no-audit --no-fund || true"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",

@@ -4,7 +4,8 @@
 #      sudo cp /var/www/othoni/othoni.service.example /etc/systemd/system/othoni.service
 #
 # 2. Adjust User=, WorkingDirectory= and EnvironmentFile= if you installed in a
-#    different location.
+#    different location, and the node path in ExecStart= if `command -v node`
+#    isn't /usr/bin/node. (install.sh fills in both for you.)
 #
 # 3. Reload, enable, start:
 #      sudo systemctl daemon-reload

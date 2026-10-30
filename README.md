@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 18+" />
+  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 20+" />
   <img src="https://img.shields.io/badge/React-18-20232A?style=flat-square&logo=react&logoColor=61DAFB" alt="React 18" />
   <img src="https://img.shields.io/badge/Express-4-000000?style=flat-square&logo=express&logoColor=white" alt="Express 4" />
   <img src="https://img.shields.io/badge/Vite-5-646CFF?style=flat-square&logo=vite&logoColor=white" alt="Vite 5" />
@@ -117,16 +117,31 @@
 
 ## 📋 Requirements
 
-- Linux server (Ubuntu/Debian/RHEL)
-- Node.js 18+ and npm
+- A Linux server with systemd (Ubuntu / Debian / RHEL family)
+- Node.js 20+ and npm — the installer sets up Node 24 if Node is missing,
+  older, or came without npm (Debian's and Ubuntu's own `nodejs` package
+  doesn't include it)
+- **A domain name pointing at the server.** Sign-in is Google-only, and
+  Google only sends people back to an `https://` hostname — not a bare IP.
+  The installer can get the HTTPS certificate for you (nginx + Let's
+  Encrypt)
+- **A Google account**, to create the OAuth client that sign-in uses
+  (free — steps under [Google sign-in](#google-sign-in))
 
 ## ⚡ Install — one-liner
 
-For a fresh VPS, the included installer handles Node setup, repo clone,
-build, `.env` generation (with your Google sign-in settings and a random
-JWT secret), and the systemd unit. A fresh install runs a short **guided
-wizard** (port, bind address, peer mode, map geo, Google sign-in) — it
-reads from `/dev/tty`, so it works even when piped:
+Before you start, have two things ready: a DNS record pointing your
+hostname (e.g. `othoni.example.com`) at the server, and a Google OAuth
+client for it ([Google sign-in](#google-sign-in) walks through it — about
+five minutes). You can also skip the Google part during setup and fill it
+into `.env` afterwards.
+
+For a fresh VPS, the included installer handles git / Node setup, repo
+clone, build, `.env` generation (with your Google sign-in settings and a
+random JWT secret), the systemd unit, and — if you say yes — nginx with a
+Let's Encrypt certificate. A fresh install runs a short **guided wizard**
+(port, bind address, peer mode, map geo, Google sign-in, HTTPS) — it reads
+from `/dev/tty`, so it works even when piped:
 
 ```bash
 # guided setup (interactive wizard):
@@ -136,15 +151,16 @@ curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.
 curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh \
   | sudo OTHONI_PUBLIC_URL=https://othoni.example.com \
          OTHONI_GOOGLE_CLIENT_ID=... OTHONI_GOOGLE_CLIENT_SECRET=... \
-         OTHONI_ADMIN_EMAILS=you@example.com OTHONI_NONINTERACTIVE=1 bash
+         OTHONI_ADMIN_EMAILS=you@example.com \
+         OTHONI_SETUP_TLS=1 OTHONI_NONINTERACTIVE=1 bash
 
 # upgrade an existing install (re-running is idempotent):
 sudo bash /var/www/othoni/install.sh
 ```
 
-Defaults: install at `/var/www/othoni`, listen on `127.0.0.1:8088`. Front
-with nginx + TLS — see `nginx-othoni.conf.example` in the repo. Tunable
-via env vars; see the comment block at the top of `install.sh`.
+Defaults: install at `/var/www/othoni`, listen on `127.0.0.1:8088`, with
+nginx in front if you chose HTTPS (see [HTTPS](#https)). Tunable via env
+vars; see the comment block at the top of `install.sh`.
 
 ## 🔧 Install — manual
 
@@ -169,31 +185,75 @@ $EDITOR .env
 
 ### Google sign-in
 
-Sign-in is Google-only. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-→ **APIs & Services → Credentials → Create credentials → OAuth client ID**,
-pick **Web application** and add one **Authorized redirect URI**:
+Sign-in is Google-only. Setting it up is free and takes about five minutes
+in [Google Cloud Console](https://console.cloud.google.com/auth/overview):
 
-```
-https://<your-othoni-host>/api/auth/google/callback
-```
+1. **Pick a project** — create one (e.g. "othoni"), or reuse one you
+   already have for another app.
+2. **Set up the consent screen** — *Google Auth Platform → Get started*
+   (*APIs & Services → OAuth consent screen* in older consoles). Give it an
+   app name and your email; for the audience pick **External** (or
+   **Internal** if everyone signing in is in your Google Workspace).
+3. **Let your accounts through.** A new External app is in *Testing*: only
+   accounts listed under **Audience → Test users** can sign in, and anyone
+   else gets Google's "Access blocked" page. Add every email you'll put in
+   `OTHONI_ADMIN_EMAILS` / `OTHONI_VIEWER_EMAILS` there — or click
+   **Publish app**. othoni only asks for `openid` + `email`, so publishing
+   needs no Google review.
+4. **Create the client** — *Clients → Create client → Web application*,
+   with one **Authorized redirect URI**:
 
-(If you already have a Google Cloud project for another app, add a new
-client there — the consent screen is shared, the client and its secret
-aren't.) Then set in `.env`:
+   ```
+   https://<your-othoni-host>/api/auth/google/callback
+   ```
 
-```bash
-OTHONI_PUBLIC_URL=https://<your-othoni-host>
-OTHONI_GOOGLE_CLIENT_ID=<client id>.apps.googleusercontent.com
-OTHONI_GOOGLE_CLIENT_SECRET=<client secret>
-OTHONI_ADMIN_EMAILS=you@example.com
-# OTHONI_VIEWER_EMAILS=teammate@example.com   # read-only accounts
-```
+5. Copy the client ID and secret into `.env` (the installer asks for them
+   too):
+
+   ```bash
+   OTHONI_PUBLIC_URL=https://<your-othoni-host>
+   OTHONI_GOOGLE_CLIENT_ID=<client id>.apps.googleusercontent.com
+   OTHONI_GOOGLE_CLIENT_SECRET=<client secret>
+   OTHONI_ADMIN_EMAILS=you@example.com
+   # OTHONI_VIEWER_EMAILS=teammate@example.com   # read-only accounts
+   ```
 
 Only those emails can sign in; any other Google account is turned away.
 The allowlist is checked on every request, so removing or demoting an
 email and restarting othoni takes effect immediately, even for open
 sessions. **Settings → Access → Google sign-in** shows the current list
 and the exact redirect URI the server expects.
+
+If sign-in fails at Google's end:
+
+- **`Error 400: redirect_uri_mismatch`** — the redirect URI on the client
+  doesn't exactly match `OTHONI_PUBLIC_URL` + `/api/auth/google/callback`
+  (check `https`, the hostname, and no trailing slash).
+- **"Access blocked" / `Error 403: access_denied`** — the app is still in
+  Testing and that account isn't a test user (step 3).
+- **`Error 401: invalid_client`** — the client ID or secret in `.env` is
+  wrong; restart othoni after fixing it.
+
+### HTTPS
+
+Google sign-in needs othoni on `https://`, so it runs behind nginx with a
+Let's Encrypt certificate. The installer sets that up when you say yes in
+the wizard (or pass `OTHONI_SETUP_TLS=1`): it installs nginx + certbot,
+writes `/etc/nginx/sites-available/othoni` (`conf.d/othoni.conf` on RHEL),
+opens ports 80/443 if ufw or firewalld is on, and runs `certbot --nginx`,
+which also sets up automatic renewal. The Let's Encrypt account email is
+the first admin email unless you set `OTHONI_TLS_EMAIL`. It never touches an
+nginx site that already serves the same hostname.
+
+To add it to an existing install, re-run the installer with the flag:
+
+```bash
+sudo OTHONI_SETUP_TLS=1 bash /var/www/othoni/install.sh
+```
+
+Or do it by hand — `nginx-othoni.conf.example` walks through the same steps.
+If certbot fails, it's almost always DNS not pointing at the server yet or
+port 80 blocked by a cloud firewall / security group.
 
 `.env` keys:
 
@@ -248,14 +308,18 @@ Open http://localhost:5173 in your browser.
 
 ```bash
 npm run build   # builds client/dist
-npm start       # starts Express on $PORT
+npm start       # starts Express on $HOST:$PORT (127.0.0.1:8088 by default)
 ```
 
-Open `http://YOUR_SERVER_IP:8088`.
+othoni only listens on localhost by default and production sign-in needs
+https, so browse to it through nginx at `OTHONI_PUBLIC_URL` (see
+[HTTPS](#https)) — not `http://<server-ip>:8088`.
 
 ## 🔁 Run as a systemd service
 
-A ready-to-edit example is included.
+A ready-to-edit example is included (the installer does this for you). It
+runs `/usr/bin/node` — if `command -v node` says otherwise, fix `ExecStart=`
+after copying it.
 
 ```bash
 sudo cp /var/www/othoni/othoni.service.example /etc/systemd/system/othoni.service

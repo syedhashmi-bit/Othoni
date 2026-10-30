@@ -48,10 +48,12 @@ if ! ip -4 addr show | grep -qw "$WG_IP"; then
 fi
 
 # ---- toolchain check -----------------------------------------------------
-command -v node >/dev/null || { echo "ERROR: node not found — install Node 18+ first." >&2; exit 1; }
+command -v node >/dev/null || { echo "ERROR: node not found — install Node 20+ first." >&2; exit 1; }
+command -v npm >/dev/null || { echo "ERROR: npm not found — Debian/Ubuntu's own nodejs package doesn't include it; install Node from NodeSource." >&2; exit 1; }
 NODE_MAJOR="$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))')"
-if [ "$NODE_MAJOR" -lt 18 ]; then
-  echo "ERROR: Node $NODE_MAJOR found; othoni needs Node >= 18." >&2
+if [ "$NODE_MAJOR" -lt 20 ]; then
+  # better-sqlite3 only ships prebuilt binaries for Node 20+.
+  echo "ERROR: Node $NODE_MAJOR found; othoni needs Node >= 20." >&2
   exit 1
 fi
 command -v openssl >/dev/null || { echo "ERROR: openssl not found." >&2; exit 1; }

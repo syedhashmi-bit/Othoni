@@ -1,38 +1,33 @@
-# Example nginx server block for othoni.
+# Example nginx site for othoni: reverse proxy, then HTTPS via certbot.
 #
-# Drop into /etc/nginx/sites-available/othoni and link from sites-enabled,
-# or paste into /etc/nginx/conf.d/othoni.conf — your distro's choice.
-# Replace `othoni.example.com` with your hostname.
+# install.sh does all of this for you — it asks during guided setup, or
+# re-run it on an existing install with:
+#     sudo OTHONI_SETUP_TLS=1 bash /var/www/othoni/install.sh
 #
-# Prerequisites:
-#   1. othoni listening on 127.0.0.1:8088 (the install.sh default)
-#   2. A TLS cert. The simplest path: install certbot and run
-#         sudo certbot --nginx -d othoni.example.com
-#      Certbot will fill in the ssl_certificate paths below automatically;
-#      if you'd rather manage it by hand, point them at your live PEM files.
-#   3. othoni.service.example uses `app.set('trust proxy', 1)`, so the
-#      X-Forwarded-* headers below are honored cleanly by express-rate-limit
-#      and the secure-cookie logic.
+# To do it by hand:
+#   1. Point a DNS A/AAAA record for your hostname at this server, and allow
+#      ports 80 + 443 through any firewall (ufw, your cloud's security group).
+#   2. sudo apt install nginx certbot python3-certbot-nginx
+#   3. Copy this file to /etc/nginx/sites-available/othoni and symlink it into
+#      /etc/nginx/sites-enabled/ (or to /etc/nginx/conf.d/othoni.conf on
+#      RHEL-family distros), replacing othoni.example.com with your hostname.
+#   4. sudo nginx -t && sudo systemctl reload nginx
+#   5. sudo certbot --nginx -d othoni.example.com --redirect
+#      certbot gets the certificate and edits this file: it adds the 443
+#      listener, the certificate paths and an http → https redirect, and
+#      sets up automatic renewal.
+#
+# The file starts out plain-HTTP on purpose: a server block naming
+# certificate files that don't exist yet fails `nginx -t`, and certbot needs
+# a working nginx to get the certificate in the first place.
+#
+# othoni runs with `app.set('trust proxy', 1)`, so the X-Forwarded-* headers
+# below are honored by express-rate-limit and the secure-cookie logic.
 
-# Plain-HTTP redirect.
 server {
     listen 80;
     listen [::]:80;
     server_name othoni.example.com;
-    return 301 https://$host$request_uri;
-}
-
-# HTTPS server.
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name othoni.example.com;
-
-    # Filled in by certbot --nginx, or set manually:
-    ssl_certificate     /etc/letsencrypt/live/othoni.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/othoni.example.com/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
 
     # The dashboard never serves user uploads. 1 MB is more than enough for
     # the largest expected POST (an /api/metrics batch capped at 256 KB).

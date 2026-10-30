@@ -6,7 +6,61 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_Nothing yet._
+Making the installer work for people who aren't us: a fresh VPS now gets
+from `curl | sudo bash` to a working https sign-in page, and the setups
+that used to break it (Node 18 from apt, no git, no npm) are handled.
+
+### Added
+
+- **Installer can set up HTTPS.** When the public URL is a hostname, the
+  wizard offers to install nginx + certbot, write the othoni site, open
+  ports 80/443 in ufw / firewalld, and get a Let's Encrypt certificate
+  (with an http → https redirect and auto-renewal). Unattended or on an
+  existing install: `OTHONI_SETUP_TLS=1` (account email:
+  `OTHONI_TLS_EMAIL`, default the first admin email). Never touches an
+  nginx site that already serves the hostname, removes its own site again
+  if `nginx -t` rejects it, and if anything fails (DNS not pointing here
+  yet, port 80 taken by Apache/Caddy, certbot error) othoni is still
+  installed and the banner says what's left to do.
+- README: requirements now say up front that a domain name and a Google
+  account are needed; Google sign-in setup is numbered steps covering the
+  consent screen and test users (a new Google app only lets listed test
+  users in), plus the three errors people actually hit; new HTTPS section.
+
+### Changed
+
+- **Node 20+ required** (`engines`, installer, `deploy-peer.sh`).
+  better-sqlite3 12 has no prebuilt binaries for Node 18, so npm tried to
+  compile it and failed on boxes without a C++ toolchain — and Node 18 is
+  what Debian 12 and Ubuntu 24.04 install from apt. The installer now
+  installs Node 24 (Node 20 has been end-of-life since April 2026).
+- `nginx-othoni.conf.example` is a plain-HTTP site that `certbot --nginx`
+  upgrades to https. The old one named certificate files before they
+  existed, so `nginx -t` failed and certbot couldn't run.
+- The installer asks its wizard questions first, then does all the
+  installing without stopping (apt and Ubuntu's needrestart run
+  non-interactively).
+
+### Fixed
+
+- Installer installs git and curl when they're missing (minimal Debian
+  images have no git), and installs Node when npm is missing — Debian's
+  and Ubuntu's own `nodejs` package doesn't include npm.
+- The systemd unit runs the `node` the installer found instead of
+  hard-coding `/usr/bin/node`.
+- The wizard turns `othoni.example.com` or `http://…` into an `https://`
+  public URL instead of writing one that makes production refuse to start.
+- Upgrades smoke-test the port in `.env` rather than the default 8088.
+- **Upgrades no longer break on lockfile changes.** The committed
+  `package-lock.json` was still on version 0.73.0, so every `npm install`
+  rewrote it and left the checkout modified — and the next upstream
+  lockfile change made `git pull --ff-only` refuse. The lockfile is synced,
+  and the installer drops npm's lockfile edits before pulling.
+- Installs under cloud-init / CI without `OTHONI_NONINTERACTIVE=1` no longer
+  die at the first wizard prompt: `/dev/tty` exists there but can't be
+  opened, so the installer now checks it can open it.
+- README no longer says to open `http://YOUR_SERVER_IP:8088`, which
+  couldn't work (loopback by default, https-only sign-in).
 
 ## [0.78.0] — 2026-10-28
 
