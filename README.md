@@ -176,7 +176,8 @@ env vars; see the comment block at the top of `install.sh`.
 ## 🐳 Docker
 
 ```bash
-git clone https://github.com/syedhashmi-bit/Othoni.git othoni && cd othoni
+mkdir othoni && cd othoni
+curl -fsSLO https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/docker-compose.yml
 docker compose up -d
 docker compose logs othoni     # → "create the first admin at http://…/setup?code=…"
 ```
@@ -184,7 +185,12 @@ docker compose logs othoni     # → "create the first admin at http://…/setup
 Then open `http://<server-ip>:8088` (the setup link in the log has
 `<this-server-ip>` in it — put the server's address there). Settings go in
 an optional `.env` next to `docker-compose.yml` (see `.env.example`); data
-lives in `./data`.
+lives in `./data`. Upgrade with `docker compose pull && docker compose up -d`.
+
+The image is `ghcr.io/syedhashmi-bit/othoni` (amd64 + arm64), built and
+smoke-tested by GitHub Actions on every push to `main`: `latest`, plus
+`sha-<commit>` to pin an exact build. To build it yourself instead, clone
+the repo and swap `image:` for `build: .` in `docker-compose.yml`.
 
 othoni watches the *host*, so the compose file runs it with the host's
 network and process list, the host filesystem mounted read-only, and the

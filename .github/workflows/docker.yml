@@ -1,0 +1,99 @@
+# Builds the Docker image, smoke-tests it, and publishes it to GHCR as
+# ghcr.io/<owner>/othoni (amd64 + arm64). Pull requests build and test but
+# don't push. Tags: `latest` and `sha-<commit>` from main; `X.Y.Z` and
+# `X.Y` from `vX.Y.Z` git tags.
+
+name: Docker image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['**.md', 'docs/**', 'test/**', 'assets/**']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'test/**', 'assets/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/othoni
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      # amd64 first, loaded into the runner's Docker so it can be started.
+      - name: Build (amd64, for the smoke test)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: othoni:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          docker run -d --name othoni -p 8088:8088 othoni:ci
+          for i in $(seq 1 60); do curl -fs http://127.0.0.1:8088/api/health >/dev/null && break; sleep 1; done
+          health="$(curl -fsS http://127.0.0.1:8088/api/health)"
+          echo "$health"
+          want="$(node -p "require('./package.json').version")"
+          echo "$health" | grep -q "\"version\":\"$want\"" || { echo "::error::wrong version (want $want)"; exit 1; }
+          echo "$health" | grep -q '"setup":true' || { echo "::error::fresh container should be waiting for setup"; exit 1; }
+          docker logs othoni 2>&1 | grep -q 'create the first admin at' || { echo "::error::no setup link in the log"; exit 1; }
+          code="$(docker exec othoni cat data/setup-code)"
+          status="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+            -d "{\"code\":\"$code\",\"email\":\"ci@example.com\",\"password\":\"ci-password-1\"}" \
+            http://127.0.0.1:8088/api/setup)"
+          [ "$status" = 200 ] || { echo "::error::setup returned $status"; exit 1; }
+          docker exec othoni docker --version
+          docker exec othoni ps -p 1 -o comm=
+          docker inspect --format '{{.State.Health.Status}}' othoni
+
+      - name: Container log
+        if: always()
+        run: docker logs othoni 2>&1 | tail -40 || true
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push (amd64 + arm64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

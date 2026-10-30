@@ -6,7 +6,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Published Docker image** `ghcr.io/syedhashmi-bit/othoni` (amd64 +
+  arm64), built by a new GitHub Actions workflow
+  (`.github/workflows/docker.yml`) on every push to `main` (`latest`,
+  `sha-<commit>`) and on `vX.Y.Z` tags. Each build boots the image and walks
+  the setup link before anything is pushed; pull requests build and test
+  only.
+
+### Changed
+
+- `docker-compose.yml` uses the published image, so Docker users no longer
+  clone or build: download the compose file and `docker compose up -d`.
 
 ## [0.79.0] — 2026-10-30
 

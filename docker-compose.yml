@@ -1,12 +1,14 @@
-# othoni with Docker Compose:
+# othoni with Docker Compose — no clone needed, just this file:
 #
-#   git clone https://github.com/syedhashmi-bit/Othoni.git othoni && cd othoni
+#   mkdir othoni && cd othoni
+#   curl -fsSLO https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/docker-compose.yml
 #   docker compose up -d
 #   docker compose logs othoni     # → "create the first admin at http://…/setup?code=…"
 #
-# Then open http://<this-server's-ip>:8088. Settings go in a .env file next
-# to this one (optional — see .env.example), e.g. OTHONI_PUBLIC_URL when it
-# sits behind HTTPS, or the Google sign-in settings.
+# Then open http://<this-server's-ip>:8088. Upgrade with
+# `docker compose pull && docker compose up -d`. Settings go in a .env file
+# next to this one (optional — see .env.example), e.g. OTHONI_PUBLIC_URL when
+# it sits behind HTTPS, or the Google sign-in settings.
 #
 # othoni monitors the HOST, so the container shares the host's network and
 # process list and sees its filesystem read-only. A few host features need
@@ -16,8 +18,10 @@
 
 services:
   othoni:
-    build: .
-    image: othoni:local
+    # Published by .github/workflows/docker.yml (amd64 + arm64). To build it
+    # from a checkout of the repo instead, swap these two lines.
+    image: ghcr.io/syedhashmi-bit/othoni:latest
+    # build: .
     container_name: othoni
     restart: unless-stopped
     # Host network: real interfaces, connections and listening ports, and
