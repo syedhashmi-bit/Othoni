@@ -6,12 +6,53 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Making the installer work for people who aren't us: a fresh VPS now gets
-from `curl | sudo bash` to a working https sign-in page, and the setups
-that used to break it (Node 18 from apt, no git, no npm) are handled.
+_Nothing yet._
+
+## [0.79.0] — 2026-10-30
+
+Easy to install for people who aren't us. A fresh server goes from
+`curl | sudo bash` (or `docker compose up -d`) to a signed-in dashboard
+with no domain, no Google Cloud project and no secrets to generate: the
+installer prints a one-time link that creates the first admin account.
+Email + password accounts are back as the default way in; Google sign-in
+stays as an option, and `OTHONI_PASSWORD_LOGIN=off` keeps an instance
+Google-only. The setups that used to break the installer (Node 18 from
+apt, no git, no npm) are handled too.
 
 ### Added
 
+- **Email + password accounts.** Admins add, disable, remove accounts and
+  reset passwords in Settings → Access → **Accounts**; everyone can change
+  their own under **Your password**. Admin and read-only viewer roles.
+  scrypt-hashed in `data/accounts.json` (0600); per-IP (5) and per-account
+  (20) wrong-password lockout and a rate limit on the login form, restored
+  from before v0.78; unknown emails cost the same time as wrong passwords.
+  Deleting, disabling or resetting an account ends its sessions at once;
+  the last admin can't be removed or disabled. New `POST /api/auth/login`,
+  `/api/accounts` (admin) and `POST /api/account/password`.
+- **First-run setup link.** With no accounts yet, othoni writes a one-time
+  code to `data/setup-code` (0600), logs `…/setup?code=XXXX-XXXX`, and the
+  installer prints it. The new `/setup` page creates the first admin with
+  it — so whoever reaches a new instance first can't claim it. Wrong codes
+  count toward the lockout. `GET/POST /api/setup`.
+- **Login page** shows the email + password form, the Google button when
+  Google is configured (both, with an "or"), or setup instructions when no
+  account exists; warns quietly when a password would cross the network
+  over plain http.
+- **`scripts/reset-password.js`** (`npm run reset-password -- <email>`):
+  prints a new password for a locked-out account; lists accounts without
+  an argument.
+- **Docker:** `Dockerfile` + `docker-compose.yml` (host network and PID
+  namespace, host filesystem read-only, Docker socket) — `docker compose
+  up -d`, then the setup link from `docker compose logs`. Services, Logs,
+  certbot and the firewall checks need the host and don't work in the
+  container; README says so.
+- **Installer: no-domain path.** The wizard now asks for a domain name
+  instead of a bind address. With one: nginx + HTTPS as before. Without
+  one: othoni listens on `0.0.0.0` and is opened at
+  `http://<server-ip>:8088` (the installer opens the port in ufw /
+  firewalld). Google sign-in is an optional question, only offered with a
+  domain.
 - **Installer can set up HTTPS.** When the public URL is a hostname, the
   wizard offers to install nginx + certbot, write the othoni site, open
   ports 80/443 in ufw / firewalld, and get a Let's Encrypt certificate
@@ -29,6 +70,27 @@ that used to break it (Node 18 from apt, no git, no npm) are handled.
 
 ### Changed
 
+- **Google sign-in is optional** (v0.78 made it the only way in). Existing
+  Google sessions keep working; an install that wants to stay Google-only
+  sets `OTHONI_PASSWORD_LOGIN=off` — otherwise, with no accounts yet, it
+  starts offering the setup link.
+- **`OTHONI_JWT_SECRET` can be left unset**: othoni generates one in
+  `data/session-secret` (0600) and keeps it. Production still refuses a
+  known-default or short one.
+- **Session cookies** are `Secure` when `OTHONI_PUBLIC_URL` is https or the
+  request came over https, instead of always in production — so a
+  plain-http install keeps its session.
+- **`X-Forwarded-For` is trusted only from a proxy on the same machine**
+  (was: one hop from anywhere), so clients reaching othoni directly can't
+  fake their IP past the login limits. `OTHONI_TRUST_PROXY` overrides it.
+- Fresh unattended installs without `OTHONI_PUBLIC_URL` listen on
+  `0.0.0.0` (was `127.0.0.1`); set `OTHONI_HOST` to choose. Upgrades keep
+  their `.env`.
+- `deploy-peer.sh` sets `OTHONI_PASSWORD_LOGIN=off` on new peers (they're
+  read through the central, not signed into).
+- The sign-in test moved to `test/sign-in/` and now also covers setup,
+  password accounts, lockout, password-off and the no-domain install
+  (`npm run test:auth`).
 - **Node 20+ required** (`engines`, installer, `deploy-peer.sh`).
   better-sqlite3 12 has no prebuilt binaries for Node 18, so npm tried to
   compile it and failed on boxes without a C++ toolchain — and Node 18 is
@@ -4443,6 +4505,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.79.0]: #0790--2026-10-30
 [0.78.0]: #0780--2026-10-28
 [0.77.0]: #0770--2026-10-16
 [0.76.0]: #0760--2026-10-16

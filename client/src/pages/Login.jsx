@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { Logo } from '../Logo.jsx';
 
@@ -11,6 +12,7 @@ const ERRORS = {
   not_allowed:
     "That Google account isn't allowed to sign in here. Ask an admin to add it to OTHONI_ADMIN_EMAILS or OTHONI_VIEWER_EMAILS.",
   rate_limited: 'Too many sign-in attempts. Wait a few minutes and try again.',
+  not_configured: "Google sign-in isn't set up on this server.",
   failed: 'Signing in with Google failed. Try again — if it keeps happening, check the server log.',
 };
 
@@ -25,25 +27,59 @@ function GoogleMark() {
   );
 }
 
-export default function Login() {
-  // null = unknown (health not back yet / failed) — show the button anyway;
-  // the server redirects back with ?error=not_configured if it can't work.
-  const [configured, setConfigured] = useState(null);
+// Plain http to anything but this machine: the password crosses the
+// network unencrypted. Worth a quiet warning, not a block — a LAN-only
+// install is a legitimate choice.
+function insecureConnection() {
+  const { protocol, hostname } = window.location;
+  return protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(hostname);
+}
+
+export default function Login({ onLogin }) {
+  // health.auth: { password, google, setup }. null until it answers; if it
+  // fails, assume the password form so there's still a way in.
+  const [auth, setAuth] = useState(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [formErr, setFormErr] = useState(null);
   const [redirecting, setRedirecting] = useState(false);
   const [err] = useState(() => new URLSearchParams(window.location.search).get('error'));
 
-  // /api/health is public — it says whether a Google client is set up.
   useEffect(() => {
     let alive = true;
     api.health()
-      .then((h) => { if (alive) setConfigured(!!h?.auth?.google); })
-      .catch(() => { /* ignore */ });
+      .then((h) => { if (alive) setAuth(h?.auth || { password: true }); })
+      .catch(() => { if (alive) setAuth({ password: true }); });
     // Drop ?error= from the address bar so a refresh doesn't re-show it.
     if (window.location.search) window.history.replaceState(null, '', window.location.pathname);
     return () => { alive = false; };
   }, []);
 
-  const notConfigured = configured === false || err === 'not_configured';
+  const submit = async (e) => {
+    e.preventDefault();
+    setFormErr(null);
+    setBusy(true);
+    try {
+      const r = await api.login(email.trim(), password);
+      onLogin(r.user);
+    } catch (e) {
+      if (e.status === 401) setFormErr('Wrong email or password.');
+      else if (e.status === 429) setFormErr(e.body?.message || 'Too many attempts. Wait a few minutes and try again.');
+      else if (e.status === 404) setFormErr('Password sign-in is turned off on this server.');
+      else setFormErr('Sign-in failed. Please try again.');
+      setPassword('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!auth) {
+    return <div className="login-wrap"><div className="login-card"><div className="muted">Loading…</div></div></div>;
+  }
+
+  const showPassword = auth.password && !auth.setup;
+  const showGoogle = !!auth.google;
 
   return (
     <div className="login-wrap">
@@ -53,26 +89,79 @@ export default function Login() {
         </h1>
         <p className="hint">Sign in to view VPS monitoring data.</p>
 
-        {notConfigured ? (
-          <div className="error">
-            Google sign-in isn't configured on this server. Set{' '}
-            <code>OTHONI_GOOGLE_CLIENT_ID</code>, <code>OTHONI_GOOGLE_CLIENT_SECRET</code>,{' '}
-            <code>OTHONI_PUBLIC_URL</code> and <code>OTHONI_ADMIN_EMAILS</code> in <code>.env</code>,
-            then restart othoni.
+        {auth.setup && (
+          <div className="info">
+            <strong>Almost there.</strong> No account exists yet — create the first
+            admin with the setup link shown at the end of the install.
+            <div style={{ marginTop: 8 }}>Lost it? The code is on the server:</div>
+            <code className="cmd">sudo cat /var/www/othoni/data/setup-code</code>
+            <div>Docker:</div>
+            <code className="cmd">docker compose logs othoni</code>
+            <Link to="/setup">Enter the code →</Link>
           </div>
-        ) : (
-          <>
-            {err && <div className="error">{ERRORS[err] || ERRORS.failed}</div>}
-            <a
-              className="btn google-btn"
-              href="/api/auth/google"
-              onClick={() => setRedirecting(true)}
-              aria-disabled={redirecting}
-            >
-              <span className="google-mark"><GoogleMark /></span>
-              {redirecting ? 'Redirecting to Google…' : 'Sign in with Google'}
-            </a>
-          </>
+        )}
+
+        {err && <div className="error">{ERRORS[err] || ERRORS.failed}</div>}
+        {formErr && <div className="error">{formErr}</div>}
+
+        {showPassword && (
+          <form onSubmit={submit}>
+            <div className="field">
+              <label htmlFor="email">Email</label>
+              <input
+                id="email"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoFocus
+                required
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="password">Password</label>
+              <input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            <button className="btn" type="submit" disabled={busy}>
+              {busy ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+        )}
+
+        {showPassword && showGoogle && <div className="login-divider">or</div>}
+
+        {showGoogle && (
+          <a
+            className={`btn google-btn${showPassword ? ' ghost' : ''}`}
+            href="/api/auth/google"
+            onClick={() => setRedirecting(true)}
+            aria-disabled={redirecting}
+          >
+            <span className="google-mark"><GoogleMark /></span>
+            {redirecting ? 'Redirecting to Google…' : 'Sign in with Google'}
+          </a>
+        )}
+
+        {!auth.password && !showGoogle && (
+          <div className="error">
+            No sign-in method is turned on. Remove <code>OTHONI_PASSWORD_LOGIN=off</code> from{' '}
+            <code>.env</code>, or set up Google sign-in, then restart othoni.
+          </div>
+        )}
+
+        {showPassword && insecureConnection() && (
+          <p className="fine">
+            This connection isn't encrypted, so your password crosses the network in plain
+            text. Fine on a home network; if othoni is reachable from the internet, give it a
+            domain with HTTPS (README → HTTPS).
+          </p>
         )}
       </div>
     </div>

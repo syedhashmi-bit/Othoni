@@ -88,7 +88,19 @@ async function request(path, options = {}) {
 export const api = {
   health: () => request('/api/health'),
   me: () => request('/api/auth/me'),
+  login: (email, password) => request('/api/auth/login', {
+    method: 'POST', body: JSON.stringify({ email, password }),
+  }),
   logout: () => request('/api/auth/logout', { method: 'POST' }),
+  setup: {
+    status: () => request('/api/setup'),
+    complete: ({ code, email, password }) => request('/api/setup', {
+      method: 'POST', body: JSON.stringify({ code, email, password }),
+    }),
+  },
+  changePassword: (current, password) => request('/api/account/password', {
+    method: 'POST', body: JSON.stringify({ current, password }),
+  }),
   overview: () => request('/api/overview'),
   hosts: () => request('/api/hosts'),
   hostDetail: (host) => request(`/api/hosts/${encodeURIComponent(host)}`),
@@ -186,6 +198,16 @@ export const api = {
     revoke: (sid) => request(`/api/sessions/${encodeURIComponent(sid)}`, { method: 'DELETE' }),
   },
   signIn: () => request('/api/sign-in'),
+  accounts: {
+    list: () => request('/api/accounts'),
+    create: ({ email, password, role }) => request('/api/accounts', {
+      method: 'POST', body: JSON.stringify({ email, password, role }),
+    }),
+    update: (id, patch) => request(`/api/accounts/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify(patch),
+    }),
+    remove: (id) => request(`/api/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
   audit: ({ range = '24h', action = null, limit = 200 } = {}) => {
     const qs = new URLSearchParams({ range, limit: String(limit) });
     if (action) qs.set('action', action);

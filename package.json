@@ -1,6 +1,6 @@
 {
   "name": "othoni",
-  "version": "0.78.0",
+  "version": "0.79.0",
   "private": true,
   "license": "MIT",
   "description": "Self-hosted VPS monitoring dashboard",
@@ -11,7 +11,8 @@
     "client:install": "npm --prefix client install",
     "client:build": "npm --prefix client run build",
     "client:dev": "npm --prefix client run dev",
-    "test:auth": "bash test/google-signin/run.sh",
+    "test:auth": "bash test/sign-in/run.sh",
+    "reset-password": "node scripts/reset-password.js",
     "build": "npm run client:install && npm run client:build",
     "postinstall": "npm --prefix client install --no-audit --no-fund || true"
   },

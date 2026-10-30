@@ -13,7 +13,7 @@
 <p align="center">
   <em>Drop it on a VPS &mdash; see live CPU / RAM / disk / network / process /
   Docker / systemd state, 24h history, threshold alerts, and externally-pushed
-  custom metrics, all behind Google sign-in.</em>
+  custom metrics, all behind a login.</em>
 </p>
 
 <p align="center">
@@ -30,9 +30,12 @@
 
 ## 📊 Features
 
-- **Google sign-in only** — no passwords to leak or brute-force. An email
-  allowlist in `.env` decides who gets in and as which role (admin or
-  read-only viewer), re-checked on every request
+- **Up and running in minutes** — one command installs it; a one-time
+  setup link creates your admin account. No domain needed (open it by IP),
+  or give it one and the installer sets up HTTPS. Docker works too
+- **Accounts** — email + password sign-in with admin and read-only viewer
+  roles, managed in Settings → Access; scrypt-hashed passwords, per-IP and
+  per-account lockout. Optional **Google sign-in** on top (or instead)
 - Live CPU, RAM, disk usage, swap, load average
 - **Per-core CPU grid** — live mini-bar widget on the Dashboard
 - **Disk I/O** — read/write bytes/sec per physical device
@@ -112,7 +115,7 @@
 - `systeminformation` for /proc and `df` parsing
 - `better-sqlite3` for the historical samples store (single local file,
   WAL mode, ~MB-scale)
-- JWT in an httpOnly cookie for auth
+- JWT in an httpOnly cookie for auth; scrypt password hashes
 - helmet + express-rate-limit for basic hardening
 
 ## 📋 Requirements
@@ -121,46 +124,75 @@
 - Node.js 20+ and npm — the installer sets up Node 24 if Node is missing,
   older, or came without npm (Debian's and Ubuntu's own `nodejs` package
   doesn't include it)
-- **A domain name pointing at the server.** Sign-in is Google-only, and
-  Google only sends people back to an `https://` hostname — not a bare IP.
-  The installer can get the HTTPS certificate for you (nginx + Let's
-  Encrypt)
-- **A Google account**, to create the OAuth client that sign-in uses
-  (free — steps under [Google sign-in](#google-sign-in))
+- Optional: a domain name pointing at the server, for HTTPS — the
+  installer gets the certificate for you (nginx + Let's Encrypt). Without
+  one, open the dashboard by IP over plain http
+- Or just Docker — see [Docker](#-docker)
 
 ## ⚡ Install — one-liner
 
-Before you start, have two things ready: a DNS record pointing your
-hostname (e.g. `othoni.example.com`) at the server, and a Google OAuth
-client for it ([Google sign-in](#google-sign-in) walks through it — about
-five minutes). You can also skip the Google part during setup and fill it
-into `.env` afterwards.
+```bash
+curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh | sudo bash
+```
 
-For a fresh VPS, the included installer handles git / Node setup, repo
-clone, build, `.env` generation (with your Google sign-in settings and a
-random JWT secret), the systemd unit, and — if you say yes — nginx with a
-Let's Encrypt certificate. A fresh install runs a short **guided wizard**
-(port, bind address, peer mode, map geo, Google sign-in, HTTPS) — it reads
-from `/dev/tty`, so it works even when piped:
+A short **guided setup** asks a few questions — mainly whether the
+dashboard gets a domain name. Leave it blank and it's opened by IP
+(`http://<server-ip>:8088`); give one and the installer sets up nginx with
+a Let's Encrypt certificate. It then installs everything (git, Node, the
+app, a systemd service) and ends with a one-time link:
+
+```
+  ➜  Create your admin account (one-time link):
+
+        http://203.0.113.7:8088/setup?code=K7Q2-9XMP
+```
+
+Open it, pick an email and password, and you're in. Add more people (admin
+or read-only viewer) in **Settings → Access → Accounts**.
 
 ```bash
-# guided setup (interactive wizard):
-curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh | sudo bash
-
-# unattended (CI / image build — skips the wizard):
+# unattended (CI / image build — skips the questions), opened by IP:
 curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh \
-  | sudo OTHONI_PUBLIC_URL=https://othoni.example.com \
-         OTHONI_GOOGLE_CLIENT_ID=... OTHONI_GOOGLE_CLIENT_SECRET=... \
-         OTHONI_ADMIN_EMAILS=you@example.com \
-         OTHONI_SETUP_TLS=1 OTHONI_NONINTERACTIVE=1 bash
+  | sudo OTHONI_NONINTERACTIVE=1 bash
+
+# …or on a domain with HTTPS:
+curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh \
+  | sudo OTHONI_PUBLIC_URL=https://othoni.example.com OTHONI_SETUP_TLS=1 \
+         OTHONI_NONINTERACTIVE=1 bash
 
 # upgrade an existing install (re-running is idempotent):
 sudo bash /var/www/othoni/install.sh
 ```
 
-Defaults: install at `/var/www/othoni`, listen on `127.0.0.1:8088`, with
-nginx in front if you chose HTTPS (see [HTTPS](#https)). Tunable via env
-vars; see the comment block at the top of `install.sh`.
+Lost the setup link? `sudo cat /var/www/othoni/data/setup-code` and open
+`/setup`. Forgot your password? `sudo node /var/www/othoni/scripts/reset-password.js
+you@example.com` prints a new one.
+
+Defaults: install at `/var/www/othoni`; listen on `0.0.0.0:8088` without a
+domain (the installer opens the port if ufw / firewalld is on), or on
+`127.0.0.1:8088` behind nginx with one (see [HTTPS](#https)). Tunable via
+env vars; see the comment block at the top of `install.sh`.
+
+## 🐳 Docker
+
+```bash
+git clone https://github.com/syedhashmi-bit/Othoni.git othoni && cd othoni
+docker compose up -d
+docker compose logs othoni     # → "create the first admin at http://…/setup?code=…"
+```
+
+Then open `http://<server-ip>:8088` (the setup link in the log has
+`<this-server-ip>` in it — put the server's address there). Settings go in
+an optional `.env` next to `docker-compose.yml` (see `.env.example`); data
+lives in `./data`.
+
+othoni watches the *host*, so the compose file runs it with the host's
+network and process list, the host filesystem mounted read-only, and the
+Docker socket for the Docker page (root-equivalent access — drop that
+volume if you'd rather not). Some features need the host itself and don't
+work in the container: the Services page and its actions (systemctl), the
+Logs page (journalctl), certbot renewals, and the firewall / login checks
+in the security audit. Use the installer when you want those.
 
 ## 🔧 Install — manual
 
@@ -177,16 +209,37 @@ npm run build
 
 ```bash
 cp .env.example .env
-# generate a strong JWT secret
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-# paste it into .env as OTHONI_JWT_SECRET
 $EDITOR .env
 ```
 
+Nothing in it is required — othoni generates its session secret in
+`data/session-secret` on first start. On first start it also logs a
+one-time **setup link** (`/setup?code=…`; the code is in
+`data/setup-code`) that creates the first admin account.
+
+### Accounts
+
+People sign in with an email and password. The first admin comes from the
+setup link; after that, admins add, disable and remove accounts and reset
+passwords in **Settings → Access → Accounts**, and everyone can change their
+own under **Your password**. Viewers see every page but can't change
+anything. Five wrong passwords from one IP (or twenty against one account
+from anywhere) lock it for 15 minutes.
+
+Locked out? On the server: `sudo node scripts/reset-password.js
+you@example.com` (Docker: `docker compose exec othoni node
+scripts/reset-password.js you@example.com`) sets and prints a new password.
+Run it without an email to list the accounts.
+
+`OTHONI_PASSWORD_LOGIN=off` turns password sign-in off — for a Google-only
+instance, or a federation peer nobody signs into directly.
+
 ### Google sign-in
 
-Sign-in is Google-only. Setting it up is free and takes about five minutes
-in [Google Cloud Console](https://console.cloud.google.com/auth/overview):
+Optional: let people sign in with their Google account as well — or, with
+`OTHONI_PASSWORD_LOGIN=off`, instead. It needs a domain with HTTPS (Google
+won't send people back to a bare IP). Setting it up is free and takes
+about five minutes in [Google Cloud Console](https://console.cloud.google.com/auth/overview):
 
 1. **Pick a project** — create one (e.g. "othoni"), or reuse one you
    already have for another app.
@@ -218,7 +271,8 @@ in [Google Cloud Console](https://console.cloud.google.com/auth/overview):
    # OTHONI_VIEWER_EMAILS=teammate@example.com   # read-only accounts
    ```
 
-Only those emails can sign in; any other Google account is turned away.
+Only those emails can sign in with Google; any other Google account is
+turned away. (They're separate from the email + password accounts.)
 The allowlist is checked on every request, so removing or demoting an
 email and restarting othoni takes effect immediately, even for open
 sessions. **Settings → Access → Google sign-in** shows the current list
@@ -236,19 +290,22 @@ If sign-in fails at Google's end:
 
 ### HTTPS
 
-Google sign-in needs othoni on `https://`, so it runs behind nginx with a
-Let's Encrypt certificate. The installer sets that up when you say yes in
-the wizard (or pass `OTHONI_SETUP_TLS=1`): it installs nginx + certbot,
+With a domain, othoni runs behind nginx with a Let's Encrypt certificate —
+so passwords never cross the internet in plain text, and Google sign-in
+becomes possible. The installer sets that up when you give it a domain and
+say yes (or pass `OTHONI_SETUP_TLS=1`): it installs nginx + certbot,
 writes `/etc/nginx/sites-available/othoni` (`conf.d/othoni.conf` on RHEL),
 opens ports 80/443 if ufw or firewalld is on, and runs `certbot --nginx`,
 which also sets up automatic renewal. The Let's Encrypt account email is
 the first admin email unless you set `OTHONI_TLS_EMAIL`. It never touches an
 nginx site that already serves the same hostname.
 
-To add it to an existing install, re-run the installer with the flag:
+To add it to an existing install, re-run the installer with the flag
+(and the address, if the install doesn't have one yet):
 
 ```bash
-sudo OTHONI_SETUP_TLS=1 bash /var/www/othoni/install.sh
+sudo OTHONI_PUBLIC_URL=https://othoni.example.com OTHONI_SETUP_TLS=1 \
+  bash /var/www/othoni/install.sh
 ```
 
 Or do it by hand — `nginx-othoni.conf.example` walks through the same steps.
@@ -261,12 +318,17 @@ port 80 blocked by a cloud firewall / security group.
 |-------------------------|--------------|---------------------------------------------|
 | `PORT`                  | `8088`       | TCP port to listen on                       |
 | `HOST`                  | `127.0.0.1`  | bind address — loopback by default; set `0.0.0.0` only to expose the port directly |
-| `OTHONI_PUBLIC_URL`     | unset        | the https origin browsers use (e.g. `https://othoni.example.com`); builds the Google redirect URI. Required in production when Google sign-in is configured |
-| `OTHONI_GOOGLE_CLIENT_ID` | unset      | Google OAuth "Web application" client ID |
+| `OTHONI_PUBLIC_URL`     | unset        | the https origin browsers use (e.g. `https://othoni.example.com`): makes the session cookie https-only and builds the Google redirect URI. Required for Google sign-in |
+| `OTHONI_PASSWORD_LOGIN` | `on`         | email + password sign-in and the first-run setup link; `off` for Google-only (or a federation peer) |
+| `OTHONI_LOGIN_LOCKOUT_FAILS` | `5`     | wrong passwords from one IP before it's locked out |
+| `OTHONI_LOGIN_LOCKOUT_USER_FAILS` | `20` | wrong passwords against one account (from any IP) before it's locked |
+| `OTHONI_LOGIN_LOCKOUT_MS` | `900000`   | lockout length (15 min) |
+| `OTHONI_TRUST_PROXY`    | `loopback`   | which reverse proxies may set `X-Forwarded-For` / `-Proto` — by default only one on this machine, so clients reaching othoni directly can't fake their IP. Any Express "trust proxy" value |
+| `OTHONI_GOOGLE_CLIENT_ID` | unset      | optional: Google OAuth "Web application" client ID |
 | `OTHONI_GOOGLE_CLIENT_SECRET` | unset  | its client secret |
 | `OTHONI_ADMIN_EMAILS`   | unset        | comma-separated Google emails allowed in as **admin** |
 | `OTHONI_VIEWER_EMAILS`  | unset        | comma-separated Google emails allowed in as read-only **viewer** |
-| `OTHONI_JWT_SECRET`     | dev secret   | session signing key — **set in production** |
+| `OTHONI_JWT_SECRET`     | generated    | session signing key; unset → generated once in `data/session-secret`. If set, 32+ random characters |
 | `OTHONI_SESSION_TTL`    | `12h`        | session length (`12h`, `7d`, etc.)          |
 | `OTHONI_DB`             | `data/othoni.db` | path to the historical samples SQLite file |
 | `OTHONI_SAMPLE_MS`      | `5000`       | sampling interval in ms                     |
@@ -311,9 +373,9 @@ npm run build   # builds client/dist
 npm start       # starts Express on $HOST:$PORT (127.0.0.1:8088 by default)
 ```
 
-othoni only listens on localhost by default and production sign-in needs
-https, so browse to it through nginx at `OTHONI_PUBLIC_URL` (see
-[HTTPS](#https)) — not `http://<server-ip>:8088`.
+By default othoni only listens on localhost — put nginx in front (see
+[HTTPS](#https)) and open `OTHONI_PUBLIC_URL`, or set `HOST=0.0.0.0` and
+open `http://<server-ip>:8088`.
 
 ## 🔁 Run as a systemd service
 
@@ -341,13 +403,21 @@ sudo systemctl restart othoni
 
 ## 🔌 API
 
-All `/api/*` routes (except `/api/health` and the `/api/auth/google*`
-sign-in round trip) require an authenticated session.
+All `/api/*` routes (except `/api/health`, sign-in and first-run setup)
+require an authenticated session.
 
 | Method | Path                | Description                       |
 |--------|---------------------|-----------------------------------|
 | GET    | `/api/health`       | Public liveness probe             |
 | GET/POST | `/ping/:token`    | Public heartbeat ping (token = credential; 404 if unknown) |
+| POST   | `/api/auth/login`   | `{email, password}` → session cookie |
+| GET    | `/api/setup`        | Public: `{needed}` — is the first admin still to be created? |
+| POST   | `/api/setup`        | `{code, email, password}` → creates the first admin, session cookie |
+| POST   | `/api/account/password` | Change your own password (`{current, password}`) |
+| GET    | `/api/accounts`     | Admin: list accounts |
+| POST   | `/api/accounts`     | Admin: add an account (`{email, password, role}`) |
+| PATCH  | `/api/accounts/:id` | Admin: reset password (`{password}`) / disable (`{disabled}`) |
+| DELETE | `/api/accounts/:id` | Admin: remove an account |
 | GET    | `/api/auth/google`  | Starts Google sign-in (browser redirect) |
 | GET    | `/api/auth/google/callback` | Google redirects back here → session cookie, then `/` |
 | POST   | `/api/auth/logout`  | Clears session cookie             |
@@ -551,9 +621,10 @@ sudo bash scripts/deploy-peer.sh           # auto-detects the wg0 address
 sudo bash scripts/deploy-peer.sh 10.8.0.5  # or pass the bind IP explicitly
 ```
 
-It checks Node ≥18, runs `npm ci` + the client build, writes a production
+It checks Node ≥20, runs `npm ci` + the client build, writes a production
 `.env` bound to that IP with a freshly-generated `OTHONI_PEER_TOKEN` and
-`OTHONI_JWT_SECRET` (no sign-in — a peer is read through the central),
+`OTHONI_JWT_SECRET`, and `OTHONI_PASSWORD_LOGIN=off` (no sign-in — a peer
+is read through the central),
 installs and starts the `othoni`
 systemd unit, opens the transport subnet through `ufw` if active,
 smoke-tests `/api/health`, and prints the exact **host / url / token** to
@@ -604,24 +675,35 @@ running the monitoring loops (and their periodic `ps`/`systemctl`/`ufw`/
 
 ## 🔒 Security notes
 
-- Set a unique `OTHONI_JWT_SECRET` in production. When `NODE_ENV=production`,
-  the server **refuses to start** on a default/unset JWT secret or a
+- The session secret is generated per install (`data/session-secret`, 0600)
+  unless `OTHONI_JWT_SECRET` is set. With `NODE_ENV=production` the server
+  **refuses to start** on a known-default or short JWT secret, or a
   half-filled Google sign-in config — fail-closed, so a misconfigured deploy
-  can't serve a forgeable session. With no Google config at all it starts
-  but nobody can sign in (fine for a federation peer).
-- **Sign-in is Google-only.** The server runs the standard OIDC
-  authorization-code flow with PKCE, a `state` bound to the browser by a
-  short-lived cookie, and a `nonce`; the ID token's RS256 signature is
-  checked against Google's published keys, along with its audience, issuer
-  and nonce, and only a **verified** email on the allowlist gets a session.
-  Two-factor is whatever the Google account enforces — turn on 2-Step
-  Verification for every allowlisted account.
-- Session and CSRF cookies are issued with `Secure` (forced on under
-  `NODE_ENV=production`), `HttpOnly`, and `SameSite=Lax`.
-- The sign-in endpoints are rate-limited per IP.
-- The session cookie is `httpOnly`, `sameSite=lax`, and `secure` when behind HTTPS.
-- For internet-facing deployments, put othoni behind nginx + TLS rather than
-  exposing port 8088 directly.
+  can't serve a forgeable session.
+- **First-run setup is code-gated.** Until the first admin exists, `/setup`
+  needs the one-time code from `data/setup-code` (0600; also in the
+  installer output and the service log), so whoever reaches a new instance
+  first can't claim it. Wrong codes count toward the lockout.
+- **Passwords** are hashed with scrypt (`data/accounts.json`, 0600). Logins
+  are rate-limited per IP and locked out after 5 failures per IP or 20 per
+  account; unknown emails take as long as wrong passwords. Every request
+  re-checks the account, so deleting, disabling or resetting it ends that
+  person's sessions immediately.
+- **Google sign-in** (optional) runs the standard OIDC authorization-code
+  flow with PKCE, a `state` bound to the browser by a short-lived cookie,
+  and a `nonce`; the ID token's RS256 signature is checked against Google's
+  published keys, along with its audience, issuer and nonce, and only a
+  **verified** email on the allowlist gets a session.
+- Session and CSRF cookies are `HttpOnly` (session) and `SameSite=Lax`,
+  and `Secure` whenever `OTHONI_PUBLIC_URL` is https or the request came in
+  over https.
+- `X-Forwarded-For` is only trusted from a proxy on the same machine
+  (`OTHONI_TRUST_PROXY`), so a client reaching port 8088 directly can't
+  dodge the per-IP limits by faking its address.
+- Plain http (the no-domain install) sends passwords unencrypted — fine on
+  a private network. For anything reachable from the internet, give it a
+  domain and HTTPS ([HTTPS](#https)); the login page warns when it's on
+  plain http.
 - Service status uses `systemctl show`, which works without root for most units.
   If you want Docker support and othoni runs as a non-root user, add that user
   to the `docker` group.
@@ -632,7 +714,11 @@ running the monitoring loops (and their periodic `ps`/`systemctl`/`ufw`/
 othoni/
 ├── server/              # Express server
 │   ├── index.js         # Entry point
-│   ├── auth.js          # session cookie, Google sign-in handlers, logout
+│   ├── auth.js          # session cookie, password + Google sign-in, setup, logout
+│   ├── accounts.js      # email + password accounts (data/accounts.json)
+│   ├── setup.js         # first-run setup code
+│   ├── login-lockout.js # per-IP / per-account wrong-password lockout
+│   ├── password-hash.js # scrypt
 │   ├── google-auth.js   # Google OIDC: PKCE flow, ID-token checks, allowlist
 │   ├── middleware.js    # Rate limiter etc.
 │   ├── logger.js        # Tiny console logger

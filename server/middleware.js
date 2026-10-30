@@ -14,6 +14,17 @@ const loginLimiter = rateLimit({
   handler: (_req, res) => res.redirect(302, '/login?error=rate_limited'),
 });
 
+// Password sign-in and first-run setup: JSON POSTs from the login and setup
+// pages. login-lockout does the per-IP / per-account locking; this caps the
+// raw request rate on top of it.
+const loginApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limited', message: 'Too many sign-in attempts. Wait a few minutes and try again.' },
+});
+
 // Reads `Authorization: Bearer othoni_<hex>`, looks up the key, attaches
 // `req.apiKey = { id, label }` and updates last-used. Rejects 401 if the
 // header is missing / malformed / unknown.
@@ -44,4 +55,4 @@ const metricsLimiter = rateLimit({
   message: { error: 'rate_limited' },
 });
 
-module.exports = { loginLimiter, apiKeyAuth, metricsLimiter };
+module.exports = { loginLimiter, loginApiLimiter, apiKeyAuth, metricsLimiter };

@@ -10,10 +10,15 @@ const express = require('express');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
-const { auth, requireAdmin, googleStart, googleCallback, logout, me, assertProductionSecrets, logAuthConfig } = require('./auth');
+const {
+  auth, requireAdmin, passwordLogin, setupStatus, setupComplete, changeOwnPassword,
+  googleStart, googleCallback, logout, me, assertProductionSecrets, logAuthConfig,
+} = require('./auth');
 const csrf = require('./csrf');
 const google = require('./google-auth');
-const { loginLimiter, metricsLimiter } = require('./middleware');
+const accounts = require('./accounts');
+const setup = require('./setup');
+const { loginLimiter, loginApiLimiter, metricsLimiter } = require('./middleware');
 const apiRouter = require('./routes');
 const metricsRouter = require('./routes/metrics');
 const remoteAuditRouter = require('./routes/remote-audit');
@@ -30,19 +35,37 @@ const securityAudit = require('./security-audit');
 const geoip = require('./geoip');
 const logger = require('./logger');
 
-// Refuse to boot in production on placeholder JWT secret / admin password.
-// Must run before anything binds a port so a misconfigured deploy fails
-// loudly instead of serving a forgeable session.
+// Refuse to boot in production on a placeholder JWT secret or half-filled
+// Google config. Must run before anything binds a port so a misconfigured
+// deploy fails loudly instead of serving a forgeable session.
 assertProductionSecrets();
 logAuthConfig();
 
 const PORT = parseInt(process.env.PORT || '8088', 10);
-// Default to loopback so a deploy that forgets to set HOST isn't reachable
-// directly (which would let clients spoof X-Forwarded-For past the per-IP
-// sign-in rate limiter). Production sits behind nginx on 127.0.0.1;
-// set HOST=0.0.0.0 explicitly only if you intend to expose the port.
+// Default to loopback: behind nginx on the same box is the usual setup.
+// The installer sets HOST=0.0.0.0 for a no-domain install that's opened
+// directly by IP.
 const HOST = process.env.HOST || '127.0.0.1';
 const VERSION = require('../package.json').version;
+
+// Fresh install with no accounts: make sure the one-time setup code exists
+// (before listen, so the installer can read it once /api/health answers)
+// and log the link.
+setup.logPending({ host: HOST, port: PORT });
+
+// Which proxies may set X-Forwarded-For / -Proto. Default: only one on this
+// machine (nginx in front, the installer's HTTPS setup). Trusting "one hop"
+// from anywhere would let a client that reaches othoni directly — HOST=
+// 0.0.0.0, the no-domain install — forge its IP past the per-IP sign-in
+// limits. OTHONI_TRUST_PROXY takes any Express "trust proxy" value (a hop
+// count, or IPs / subnets) for a proxy that lives elsewhere.
+function trustProxySetting() {
+  const v = (process.env.OTHONI_TRUST_PROXY || '').trim();
+  if (!v) return 'loopback';
+  if (/^\d+$/.test(v)) return parseInt(v, 10);
+  if (v === 'true' || v === 'false') return v === 'true';
+  return v;
+}
 
 // Role: "full" (default) runs every subsystem. "peer" is a lightweight
 // federation-peer mode (set OTHONI_ROLE=peer) — the box still samples and
@@ -58,11 +81,9 @@ const LITE = ROLE === 'peer';
 const app = express();
 
 app.disable('x-powered-by');
-// We expect to sit behind exactly one reverse proxy (nginx on the same host)
-// in production. Without this, express-rate-limit warns about untrusted
-// X-Forwarded-For and the IP-based limiter falls back to the proxy's IP for
-// every client. `1` = trust one hop only, which is the safe minimum.
-app.set('trust proxy', 1);
+// Without this, express-rate-limit and login-lockout would see nginx's IP
+// for every client. See trustProxySetting() above.
+app.set('trust proxy', trustProxySetting());
 app.use(
   helmet({
     contentSecurityPolicy: false, // we serve our own static UI; CSP would need tuning per build
@@ -91,8 +112,11 @@ app.get('/api/health', (_req, res) => {
     version: VERSION,
     time: new Date().toISOString(),
     auth: {
-      // The login page shows the Google button only when this is true.
+      // What the login page offers: the email + password form, the Google
+      // button, or (no accounts yet) a pointer to the setup link.
+      password: accounts.passwordLoginEnabled(),
       google: google.isConfigured(),
+      setup: setup.needed(),
       csrf: csrf.isEnabled(),
     },
     storage: {
@@ -104,10 +128,16 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+app.post('/api/auth/login', loginApiLimiter, passwordLogin);
+app.get('/api/setup', setupStatus);
+app.post('/api/setup', loginApiLimiter, setupComplete);
 app.get('/api/auth/google', loginLimiter, googleStart);
 app.get('/api/auth/google/callback', loginLimiter, googleCallback);
 app.post('/api/auth/logout', logout);
 app.get('/api/auth/me', auth, me);
+// Changing your own password is open to viewers too, so it sits outside
+// the requireAdmin wall below (still behind the session + CSRF check).
+app.post('/api/account/password', auth, csrf.middleware, changeOwnPassword);
 
 // Externally-pushed metrics. Bearer-token (API key) auth, NOT cookie auth —
 // must be mounted before the `app.use('/api', auth, ...)` wall below or it

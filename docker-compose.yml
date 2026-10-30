@@ -1,0 +1,41 @@
+# othoni with Docker Compose:
+#
+#   git clone https://github.com/syedhashmi-bit/Othoni.git othoni && cd othoni
+#   docker compose up -d
+#   docker compose logs othoni     # → "create the first admin at http://…/setup?code=…"
+#
+# Then open http://<this-server's-ip>:8088. Settings go in a .env file next
+# to this one (optional — see .env.example), e.g. OTHONI_PUBLIC_URL when it
+# sits behind HTTPS, or the Google sign-in settings.
+#
+# othoni monitors the HOST, so the container shares the host's network and
+# process list and sees its filesystem read-only. A few host features need
+# the real thing and are unavailable here: the Services page and actions
+# (systemctl), the Logs page (journalctl), certbot renewals, and the
+# firewall / login parts of the security audit. For those, use install.sh.
+
+services:
+  othoni:
+    build: .
+    image: othoni:local
+    container_name: othoni
+    restart: unless-stopped
+    # Host network: real interfaces, connections and listening ports, and
+    # othoni listens straight on the host's port 8088. The image defaults to
+    # HOST=0.0.0.0 / PORT=8088; set either in .env to change it (e.g.
+    # HOST=127.0.0.1 behind nginx).
+    network_mode: host
+    # Host PID namespace: the real process list.
+    pid: host
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Accounts, setup code, session secret, metrics history.
+      - ./data:/app/data
+      # Host disk usage (shows up as the /host mount).
+      - /:/host:ro,rslave
+      # Container list for the Docker page. Note: access to this socket is
+      # root-equivalent on the host — remove the line to keep othoni away
+      # from Docker entirely.
+      - /var/run/docker.sock:/var/run/docker.sock

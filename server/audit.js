@@ -45,10 +45,12 @@ const VALID_ACTIONS = new Set([
   'audit.ack',
   'audit.unack',
   'audit.run',
-  // Multi-user management (v0.60).
+  // Multi-user management (v0.60); local accounts again from v0.79.
   'user.create',
   'user.update',
   'user.delete',
+  // First-run setup link used to create the first admin (v0.79).
+  'setup.complete',
   // Phase 2 session management (v0.38).
   'session.revoke',
   // Phase 3 host metadata (v0.43).

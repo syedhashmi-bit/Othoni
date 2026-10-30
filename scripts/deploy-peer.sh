@@ -91,6 +91,10 @@ if [ -z "$PEER_TOKEN" ]; then
   printf 'OTHONI_PEER_TOKEN=%s\n' "$PEER_TOKEN" >> "$ENV_FILE"
 fi
 has_kv OTHONI_JWT_SECRET || printf 'OTHONI_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" >> "$ENV_FILE"
+# A peer is read through the central, never signed into directly — so no
+# accounts and no first-run setup link. (Only when unset: an operator who
+# turned it on keeps it.)
+has_kv OTHONI_PASSWORD_LOGIN || printf 'OTHONI_PASSWORD_LOGIN=off\n' >> "$ENV_FILE"
 
 chmod 600 "$ENV_FILE"
 
@@ -129,5 +133,6 @@ echo "   url  : http://$WG_IP:$PORT"
 echo "   token: $PEER_TOKEN"
 echo ""
 echo " No direct login is set up on this box — you view it THROUGH central."
-echo " (To sign in to it directly, add Google sign-in to its .env; see README.)"
+echo " (To sign in to it directly, remove OTHONI_PASSWORD_LOGIN=off from its .env,"
+echo "  restart it, and use the setup link it logs; see README.)"
 echo "────────────────────────────────────────────────────────"

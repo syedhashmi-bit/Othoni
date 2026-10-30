@@ -11,9 +11,9 @@
 //
 // Mounted AFTER cookie auth + role check on the /api router only. The
 // metrics ingest (`POST /api/metrics`) uses Bearer auth and never carries
-// the session cookie, so it's outside this middleware's reach. The login
-// + logout endpoints (mounted before the cookie wall) are likewise not
-// gated — login is the entry point, logout has nothing useful to attack.
+// the session cookie, so it's outside this middleware's reach. The sign-in,
+// setup and logout endpoints (mounted before the cookie wall) are likewise
+// not gated — they're entry points, and logout has nothing useful to attack.
 
 const crypto = require('crypto');
 const logger = require('./logger');
@@ -50,16 +50,24 @@ function clearCookie(res) {
   res.clearCookie(COOKIE_NAME, { path: '/' });
 }
 
+// Secure flag for the session + CSRF cookies. When OTHONI_PUBLIC_URL says
+// the dashboard is https, always set it — req.secure can't be trusted
+// behind a proxy that doesn't forward X-Forwarded-Proto, and that would
+// ship the session cookie over plaintext. Otherwise follow the request, so
+// a plain-http install (opened by IP on a LAN, or on localhost) can still
+// keep its session.
+function cookieSecure(req) {
+  if (/^https:\/\//i.test((process.env.OTHONI_PUBLIC_URL || '').trim())) return true;
+  return !!(req && req.secure);
+}
+
 // Backfill helper for `auth()` middleware: if a cookie session exists
 // but the CSRF cookie is missing (pre-v0.39 cookies that survived the
 // upgrade), mint one and attach it. Doesn't overwrite a valid cookie.
 function ensureCookie(req, res, ttlMs) {
   if (!isEnabled()) return;
   if (req.cookies && req.cookies[COOKIE_NAME]) return;
-  // Force Secure in production (don't trust req.secure behind a proxy that
-  // may not forward X-Forwarded-Proto); see auth.cookieSecure.
-  const secure = process.env.NODE_ENV === 'production' ? true : !!req.secure;
-  attachCookie(res, generateToken(), { ttlMs, secure });
+  attachCookie(res, generateToken(), { ttlMs, secure: cookieSecure(req) });
 }
 
 function constantTimeEqual(a, b) {
@@ -91,6 +99,7 @@ module.exports = {
   generateToken,
   attachCookie,
   clearCookie,
+  cookieSecure,
   ensureCookie,
   middleware,
 };

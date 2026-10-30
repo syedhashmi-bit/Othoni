@@ -9,6 +9,7 @@ import { notifyFire } from './alerts';
 import { AlertBadge, AlertsPopover } from './AlertsPopover.jsx';
 
 import Login from './pages/Login.jsx';
+import Setup from './pages/Setup.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Storage from './pages/Storage.jsx';
 import Processes from './pages/Processes.jsx';
@@ -599,6 +600,14 @@ export default function App() {
     };
   }, []);
 
+  // Login and first-run setup hand back the signed-in user; /api/auth/me
+  // then fills in the session details.
+  const handleLogin = (u) => {
+    setUser(u);
+    navigate('/', { replace: true });
+    api.me().then((r) => setUser(r.user)).catch(() => {});
+  };
+
   const handleLogout = async () => {
     try {
       await api.logout();
@@ -616,7 +625,8 @@ export default function App() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={<Login onLogin={handleLogin} />} />
+        <Route path="/setup" element={<Setup onLogin={handleLogin} />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );

@@ -1061,6 +1061,317 @@ function SessionsCard() {
   );
 }
 
+function AccountsCard() {
+  const { user } = useApp();
+  const isAdmin = user?.role === 'admin';
+  const [list, setList] = useState(null);
+  const [passwordLogin, setPasswordLogin] = useState(true);
+  const [err, setErr] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ email: '', password: '', role: 'viewer' });
+  const [busy, setBusy] = useState(false);
+  const [resetId, setResetId] = useState(null);
+  const [resetPw, setResetPw] = useState('');
+
+  function refresh() {
+    api.accounts.list()
+      .then((r) => { setList(r.accounts || []); setPasswordLogin(r.passwordLogin !== false); setErr(null); })
+      .catch((e) => setErr(e.body?.message || e.message));
+  }
+  useEffect(() => { if (isAdmin) refresh(); }, [isAdmin]);
+
+  // Viewers can't see this card at all — the API would 403 them, and the
+  // account list itself is sensitive.
+  if (!isAdmin) return null;
+
+  async function create(e) {
+    e?.preventDefault();
+    setErr(null);
+    setBusy(true);
+    try {
+      await api.accounts.create({ email: form.email.trim(), password: form.password, role: form.role });
+      setForm({ email: '', password: '', role: 'viewer' });
+      setAdding(false);
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetPassword(a) {
+    if (!resetPw || resetPw.length < 8) { setErr('The new password needs at least 8 characters.'); return; }
+    try {
+      await api.accounts.update(a.id, { password: resetPw });
+      setResetId(null);
+      setResetPw('');
+      setErr(null);
+      refresh();
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    }
+  }
+
+  async function toggleDisabled(a) {
+    const verb = a.disabled ? 'Enable' : 'Disable';
+    if (!confirm(`${verb} ${a.email}?${!a.disabled ? ' They are signed out everywhere.' : ''}`)) return;
+    try { await api.accounts.update(a.id, { disabled: !a.disabled }); refresh(); }
+    catch (e) { setErr(e.body?.message || e.message); }
+  }
+
+  async function remove(a) {
+    if (!confirm(`Delete ${a.email}? They are signed out everywhere, and this can't be undone.`)) return;
+    try { await api.accounts.remove(a.id); refresh(); }
+    catch (e) { setErr(e.body?.message || e.message); }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Accounts</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            People who sign in with an email and password. Viewers can see everything but
+            change nothing. Resetting a password or disabling an account signs that person
+            out everywhere.
+          </div>
+        </div>
+        {!adding && (
+          <button
+            type="button"
+            className="btn compact"
+            onClick={() => setAdding(true)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <IconPlus /> Add account
+          </button>
+        )}
+      </div>
+
+      {!passwordLogin && (
+        <div className="error" style={{ marginTop: 12 }}>
+          Password sign-in is turned off (<code>OTHONI_PASSWORD_LOGIN=off</code>), so these
+          accounts can't sign in — only Google sign-in works.
+        </div>
+      )}
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      {adding && (
+        <form onSubmit={create} className="toolbar" style={{ marginTop: 14, flexWrap: 'wrap' }}>
+          <input
+            type="email"
+            placeholder="email"
+            value={form.email}
+            maxLength={254}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+            className="input"
+            style={{ width: 220 }}
+            autoComplete="off"
+          />
+          <input
+            type="password"
+            placeholder="password (≥ 8 chars)"
+            value={form.password}
+            maxLength={256}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            className="input"
+            style={{ width: 200 }}
+            autoComplete="new-password"
+          />
+          <select
+            value={form.role}
+            onChange={(e) => setForm({ ...form, role: e.target.value })}
+            className="select"
+            title="Viewer = read-only; admin = full access"
+          >
+            <option value="viewer">Viewer (read-only)</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button type="submit" className="btn compact" disabled={busy || !form.email.trim() || form.password.length < 8}>
+            Create
+          </button>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => { setAdding(false); setForm({ email: '', password: '', role: 'viewer' }); }}
+          >
+            Cancel
+          </button>
+          <div className="muted" style={{ fontSize: 12, flexBasis: '100%' }}>
+            Pass the password on to them; they can change it under Settings → Access → Your password.
+          </div>
+        </form>
+      )}
+
+      {list != null && list.length > 0 && (
+        <div className="table-wrap" style={{ marginTop: 14 }}>
+          <table className="t">
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Last sign-in</th>
+                <th style={{ width: 320 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((a) => (
+                <tr key={a.id} style={{ opacity: a.disabled ? 0.55 : 1 }}>
+                  <td className="mono">
+                    {a.email}
+                    {user.method === 'password' && a.email === user.username && <span className="muted"> (you)</span>}
+                  </td>
+                  <td>
+                    <span className={`pill ${a.role === 'admin' ? 'crit' : 'dim'}`} style={{ fontSize: 10 }}>
+                      {a.role}
+                    </span>
+                  </td>
+                  <td>
+                    {a.disabled
+                      ? <span className="pill dim" style={{ fontSize: 10 }}>Disabled</span>
+                      : <span className="pill ok" style={{ fontSize: 10 }}>Active</span>}
+                  </td>
+                  <td className="muted" style={{ fontSize: 12 }}>{formatRelative(a.createdAt)}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>{formatRelative(a.lastLoginAt)}</td>
+                  <td>
+                    {resetId === a.id ? (
+                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        <input
+                          type="password"
+                          autoFocus
+                          placeholder="new password (≥ 8 chars)"
+                          value={resetPw}
+                          maxLength={256}
+                          onChange={(e) => setResetPw(e.target.value)}
+                          className="input"
+                          style={{ width: 180, fontSize: 12 }}
+                          autoComplete="new-password"
+                        />
+                        <button type="button" className="btn tiny" onClick={() => resetPassword(a)}>Save</button>
+                        <button type="button" className="btn ghost tiny" onClick={() => { setResetId(null); setResetPw(''); }}>Cancel</button>
+                      </span>
+                    ) : (
+                      <span style={{ display: 'inline-flex', gap: 6 }}>
+                        <button type="button" className="btn ghost tiny" onClick={() => { setResetId(a.id); setResetPw(''); }}>
+                          Reset password
+                        </button>
+                        <button type="button" className="btn ghost tiny" onClick={() => toggleDisabled(a)}>
+                          {a.disabled ? 'Enable' : 'Disable'}
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => remove(a)}
+                          title="Delete account"
+                          aria-label={`Delete ${a.email}`}
+                        >
+                          <IconTrash />
+                        </button>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PasswordCard() {
+  const { user } = useApp();
+  const [form, setForm] = useState({ current: '', password: '', confirm: '' });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [err, setErr] = useState(null);
+
+  if (user?.method !== 'password') {
+    return (
+      <div className="card">
+        <div className="card-title">Your password</div>
+        <div className="card-sub" style={{ fontSize: 12 }}>
+          You signed in with Google, so there's no othoni password to change — your Google
+          account's own security settings apply.
+        </div>
+      </div>
+    );
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setMsg(null);
+    setErr(null);
+    if (form.password !== form.confirm) { setErr("The new passwords don't match."); return; }
+    setBusy(true);
+    try {
+      const r = await api.changePassword(form.current, form.password);
+      setForm({ current: '', password: '', confirm: '' });
+      setMsg(r.revokedSessions > 0
+        ? `Password changed. ${r.revokedSessions} other session${r.revokedSessions === 1 ? ' was' : 's were'} signed out.`
+        : 'Password changed.');
+    } catch (e) {
+      setErr(e.body?.message || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-title">Your password</div>
+      <div className="card-sub" style={{ fontSize: 12 }}>
+        Signed in as <span className="mono">{user.username}</span>. Changing the password
+        signs out your other sessions.
+      </div>
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+      {msg && <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>{msg}</div>}
+      <form onSubmit={submit} className="toolbar" style={{ marginTop: 14, flexWrap: 'wrap' }}>
+        <input
+          type="password"
+          placeholder="current password"
+          value={form.current}
+          onChange={(e) => setForm({ ...form, current: e.target.value })}
+          className="input"
+          style={{ width: 180 }}
+          autoComplete="current-password"
+        />
+        <input
+          type="password"
+          placeholder="new password (≥ 8 chars)"
+          value={form.password}
+          maxLength={256}
+          onChange={(e) => setForm({ ...form, password: e.target.value })}
+          className="input"
+          style={{ width: 200 }}
+          autoComplete="new-password"
+        />
+        <input
+          type="password"
+          placeholder="new password again"
+          value={form.confirm}
+          maxLength={256}
+          onChange={(e) => setForm({ ...form, confirm: e.target.value })}
+          className="input"
+          style={{ width: 180 }}
+          autoComplete="new-password"
+        />
+        <button
+          type="submit"
+          className="btn compact"
+          disabled={busy || !form.current || form.password.length < 8 || !form.confirm}
+        >
+          Change password
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function SignInCard() {
   const { user } = useApp();
   const isAdmin = user?.role === 'admin';
@@ -1091,10 +1402,11 @@ function SignInCard() {
         <div style={{ flex: 1 }}>
           <div className="card-title">Google sign-in</div>
           <div className="card-sub" style={{ fontSize: 12 }}>
-            Sign-in is Google-only. Who gets in is set in <code>.env</code> —{' '}
-            <code>OTHONI_ADMIN_EMAILS</code> and <code>OTHONI_VIEWER_EMAILS</code>,
-            comma-separated. Edit them and restart othoni; a removed or demoted
-            account loses access on its next request, even mid-session.
+            Optional: lets people sign in with their Google account. Who gets in is set in{' '}
+            <code>.env</code> — <code>OTHONI_ADMIN_EMAILS</code> and{' '}
+            <code>OTHONI_VIEWER_EMAILS</code>, comma-separated. Edit them and restart othoni;
+            a removed or demoted account loses access on its next request, even mid-session.
+            Set <code>OTHONI_PASSWORD_LOGIN=off</code> to make Google the only way in.
           </div>
         </div>
       </div>
@@ -1102,9 +1414,16 @@ function SignInCard() {
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
 
       {info && !info.configured && (
-        <div className="error" style={{ marginTop: 12 }}>
-          Google sign-in isn't fully configured — set <code>OTHONI_GOOGLE_CLIENT_ID</code>,{' '}
-          <code>OTHONI_GOOGLE_CLIENT_SECRET</code> and at least one allowed email.
+        <div className="muted" style={{ marginTop: 12, fontSize: 12 }}>
+          Not set up. To add it, create a Google OAuth client and set{' '}
+          <code>OTHONI_PUBLIC_URL</code>, <code>OTHONI_GOOGLE_CLIENT_ID</code>,{' '}
+          <code>OTHONI_GOOGLE_CLIENT_SECRET</code> and <code>OTHONI_ADMIN_EMAILS</code> in{' '}
+          <code>.env</code> — README → Google sign-in has the steps. It needs an https domain.
+        </div>
+      )}
+      {info && info.configured && info.password === false && (
+        <div className="muted" style={{ marginTop: 12, fontSize: 12 }}>
+          Password sign-in is off, so Google is the only way in.
         </div>
       )}
 
@@ -1136,7 +1455,7 @@ function SignInCard() {
         </div>
       )}
 
-      {info && (
+      {info && info.configured && (
         <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
           Authorized redirect URI on the Google OAuth client: <code>{info.redirectUri}</code>
         </div>
@@ -1747,6 +2066,8 @@ const SECTION_COMPONENTS = {
   server: ServerSection,
   hosts: HostsCard,
   peers: PeersCard,
+  accounts: AccountsCard,
+  password: PasswordCard,
   'sign-in': SignInCard,
   sessions: SessionsCard,
   'api-keys': ApiKeysCard,

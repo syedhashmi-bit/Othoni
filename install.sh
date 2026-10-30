@@ -2,13 +2,15 @@
 # othoni one-line installer. Usage:
 #
 #   # fresh install on a new VPS — runs a short GUIDED setup wizard
-#   # (port, bind address, peer mode, map geo, Google sign-in, HTTPS):
+#   # (port, domain + HTTPS or open by IP, peer mode, map geo, optional
+#   # Google sign-in), then prints a link to create your admin account:
 #   curl -fsSL https://raw.githubusercontent.com/syedhashmi-bit/Othoni/main/install.sh | sudo bash
 #
-#   # unattended (CI / image build) — skips the wizard:
+#   # unattended (CI / image build) — skips the wizard; open it by IP:
+#   curl -fsSL .../install.sh | sudo OTHONI_NONINTERACTIVE=1 bash
+#   # …or on a domain with HTTPS:
 #   curl -fsSL .../install.sh | sudo OTHONI_PUBLIC_URL=https://othoni.example.com \
-#     OTHONI_GOOGLE_CLIENT_ID=... OTHONI_GOOGLE_CLIENT_SECRET=... \
-#     OTHONI_ADMIN_EMAILS=you@example.com OTHONI_SETUP_TLS=1 OTHONI_NONINTERACTIVE=1 bash
+#     OTHONI_SETUP_TLS=1 OTHONI_NONINTERACTIVE=1 bash
 #
 #   # upgrade an existing install (re-running this script is safe):
 #   sudo bash /var/www/othoni/install.sh
@@ -25,14 +27,16 @@
 #   OTHONI_INSTALL_DIR (default: /var/www/othoni)
 #   OTHONI_REPO_URL    (default: https://github.com/syedhashmi-bit/Othoni.git)
 #   OTHONI_BRANCH      (default: main)
-#   OTHONI_PORT        (default: 8088 — bind to 127.0.0.1 by default; expose via nginx)
-#   OTHONI_HOST        (default: 127.0.0.1)
+#   OTHONI_PORT        (default: 8088)
+#   OTHONI_HOST        (default: 127.0.0.1 with a domain — nginx in front;
+#                       0.0.0.0 without one, so it can be opened by IP)
 #   OTHONI_ROLE        (default: full — set 'peer' for a lightweight federation peer)
 #   OTHONI_GEOLOCATE   (default: on — set 'off' to skip fleet-map IP auto-location)
 #   OTHONI_NONINTERACTIVE (set to 1 to skip the guided wizard)
-#   OTHONI_PUBLIC_URL, OTHONI_GOOGLE_CLIENT_ID, OTHONI_GOOGLE_CLIENT_SECRET,
-#   OTHONI_ADMIN_EMAILS   Google sign-in (the only way in). Give all four, or
-#                         leave them out and fill them into .env afterwards.
+#   OTHONI_PUBLIC_URL  (the https:// address people open, if it has a domain)
+#   OTHONI_GOOGLE_CLIENT_ID, OTHONI_GOOGLE_CLIENT_SECRET, OTHONI_ADMIN_EMAILS
+#                      optional Google sign-in, on top of email + password
+#                      accounts; needs OTHONI_PUBLIC_URL. Give all three or none.
 #   OTHONI_SETUP_TLS   (set to 1 to put nginx + a Let's Encrypt certificate in
 #                       front of OTHONI_PUBLIC_URL's hostname; the wizard asks)
 #   OTHONI_TLS_EMAIL   (Let's Encrypt account email; default: the first admin email)
@@ -43,13 +47,14 @@
 #      is older than 20 or npm is missing.
 #   3. Clones the repo into INSTALL_DIR (or `git pull`s if it already exists).
 #   4. Runs `npm install && npm run build`.
-#   5. On a FRESH install only, generates `.env` with a random JWT secret + the
-#      Google sign-in settings.
+#   5. On a FRESH install only, generates `.env` (and, when othoni listens on
+#      the network, opens its port in ufw / firewalld).
 #   6. Drops a systemd unit (pointing at the node it found), enables + starts it.
 #   7. Smoke-tests `/api/health`.
 #   8. Optionally installs nginx + certbot and gets a Let's Encrypt certificate
 #      for the public hostname (opening ports 80/443 in ufw / firewalld).
-#   9. Prints the next-steps banner.
+#   9. Prints the next-steps banner, with the one-time link that creates the
+#      first admin account.
 #
 # This script is idempotent — re-running it does an upgrade (pull + rebuild +
 # restart) and won't overwrite an existing `.env` or nginx site.
@@ -60,7 +65,7 @@ INSTALL_DIR="${OTHONI_INSTALL_DIR:-/var/www/othoni}"
 REPO_URL="${OTHONI_REPO_URL:-https://github.com/syedhashmi-bit/Othoni.git}"
 BRANCH="${OTHONI_BRANCH:-main}"
 PORT="${OTHONI_PORT:-8088}"
-HOST="${OTHONI_HOST:-127.0.0.1}"
+HOST="${OTHONI_HOST:-}"
 PUBLIC_URL="${OTHONI_PUBLIC_URL:-}"
 GOOGLE_CLIENT_ID="${OTHONI_GOOGLE_CLIENT_ID:-}"
 GOOGLE_CLIENT_SECRET="${OTHONI_GOOGLE_CLIENT_SECRET:-}"
@@ -190,37 +195,34 @@ guided_config() {
 BANNER
 
   ask PORT "Port to listen on" "$PORT"
-  ask HOST "Bind address (127.0.0.1 = behind nginx · 0.0.0.0 = direct)" "$HOST"
-  if ask_yesno "Run as a lightweight federation PEER (skips alert/check/audit loops)?" "n"; then
-    ROLE="peer"
-  fi
-  if ask_yesno "Auto-locate this server on the fleet map by its public IP?" "y"; then
-    GEOLOCATE="on"
+
+  cat > /dev/tty <<'WHERE'
+
+  How will you open the dashboard?
+    · With a domain name (e.g. othoni.example.com) — the installer can
+      set up HTTPS for it. Its DNS should already point at this server.
+    · Without one — open it by this server's IP over plain http. The
+      simplest option; best on a private or home network.
+WHERE
+  local domain="${PUBLIC_URL#https://}"
+  ask domain "Domain name (leave blank to open it by IP)" "${domain%/}"
+  if [ -n "$domain" ]; then
+    PUBLIC_URL="$domain"
+    normalize_public_url
+    HOST="${OTHONI_HOST:-127.0.0.1}"
   else
-    GEOLOCATE="off"
+    PUBLIC_URL=""
+    HOST="${OTHONI_HOST:-0.0.0.0}"
   fi
 
-  cat > /dev/tty <<'GOOGLE'
-
-  Sign-in is Google-only, so the dashboard needs a domain name with
-  https, and an OAuth client ("Web application") from Google Cloud
-  Console — README → "Google sign-in" has the steps. Leave these blank
-  to fill them into .env later.
-GOOGLE
-  ask PUBLIC_URL "Public https URL of this dashboard (e.g. https://othoni.example.com)" "$PUBLIC_URL"
-  normalize_public_url
-  ask GOOGLE_CLIENT_ID "Google OAuth client ID" "$GOOGLE_CLIENT_ID"
-  ask_hidden GOOGLE_CLIENT_SECRET "Google OAuth client secret (hidden)"
-  ask ADMIN_EMAILS "Admin Google email(s), comma-separated" "$ADMIN_EMAILS"
-
-  local host tls_line="not set up by the installer"
+  local host tls_line="no (plain http)"
   if host="$(tls_host)"; then
+    tls_line="not set up by the installer"
     cat > /dev/tty <<EOF
 
   HTTPS: the installer can put nginx in front of othoni and get a free
   Let's Encrypt certificate for $host (agreeing to Let's Encrypt's terms,
-  and opening ports 80/443 if ufw or firewalld is on). $host's DNS
-  must already point at this server.
+  and opening ports 80/443 if ufw or firewalld is on).
 EOF
     if ask_yesno "Set up nginx + HTTPS for $host?" "y"; then
       SETUP_TLS=1
@@ -230,17 +232,53 @@ EOF
     fi
   fi
 
+  if ask_yesno "Run as a lightweight federation PEER (skips alert/check/audit loops)?" "n"; then
+    ROLE="peer"
+  fi
+  if ask_yesno "Auto-locate this server on the fleet map by its public IP?" "y"; then
+    GEOLOCATE="on"
+  else
+    GEOLOCATE="off"
+  fi
+
+  local signin="email + password — you'll create the admin account at the end"
+  if [ -n "$PUBLIC_URL" ]; then
+    cat > /dev/tty <<'GOOGLE'
+
+  Sign-in is email + password. You can also let people sign in with
+  Google — that needs an OAuth client from Google Cloud Console
+  (README → "Google sign-in"); it can be added to .env later too.
+GOOGLE
+    if ask_yesno "Add Google sign-in now?" "n"; then
+      ask GOOGLE_CLIENT_ID "Google OAuth client ID" "$GOOGLE_CLIENT_ID"
+      ask_hidden GOOGLE_CLIENT_SECRET "Google OAuth client secret (hidden)"
+      ask ADMIN_EMAILS "Google account(s) allowed in as admin, comma-separated" "$ADMIN_EMAILS"
+      signin="$signin, plus Google for ${ADMIN_EMAILS:-(no admin emails yet)}"
+    fi
+  fi
+
+  local open_at="$PUBLIC_URL"
+  [ -n "$open_at" ] || open_at="http://<this server's IP>:$PORT"
   cat > /dev/tty <<EOF
 
   Summary
-    sign-in:     ${ADMIN_EMAILS:-(Google not set up yet — finish in .env)}
+    open at:     $open_at
     https:       $tls_line
+    sign-in:     $signin
     listen:      $HOST:$PORT
     role:        $ROLE
     map geo:     $GEOLOCATE
     install dir: $INSTALL_DIR
 EOF
   ask_yesno "Proceed with these settings?" "y" || die "aborted by user."
+}
+
+# Where othoni listens when nothing chose it: behind nginx (loopback) when
+# it has a domain, on every interface when it's opened by IP.
+default_host() {
+  [ -n "$HOST" ] && return 0
+  normalize_public_url
+  if [ -n "$PUBLIC_URL" ]; then HOST=127.0.0.1; else HOST=0.0.0.0; fi
 }
 
 node_major() {
@@ -307,9 +345,6 @@ generate_env_if_missing() {
   local env_path="$INSTALL_DIR/.env"
   if [ -f "$env_path" ]; then
     log "$env_path already exists — leaving it alone (upgrade mode)"
-    # Installs from before Google sign-in have no client configured, so
-    # after this upgrade nobody can log in until it's added.
-    grep -q '^OTHONI_GOOGLE_CLIENT_ID=.' "$env_path" || GOOGLE_PENDING=1
     # Smoke test, nginx and the banner go by the existing install's settings.
     PORT="$(env_value PORT)"; PORT="${PORT:-8088}"
     HOST="$(env_value HOST)"; HOST="${HOST:-127.0.0.1}"
@@ -333,33 +368,51 @@ OTHONI_SAMPLE_MS=5000
 OTHONI_RETENTION_MS=86400000
 NODE_ENV=production
 EOF
-  # Google sign-in goes in live only when complete: a half-filled config
-  # makes a production boot refuse to start, so otherwise it's written
-  # commented out for the operator to finish.
-  if [ -n "$PUBLIC_URL" ] && [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ] && [ -n "$ADMIN_EMAILS" ]; then
-    cat >> "$env_path" <<EOF
-OTHONI_PUBLIC_URL=$PUBLIC_URL
+  if [ -n "$PUBLIC_URL" ]; then echo "OTHONI_PUBLIC_URL=$PUBLIC_URL" >> "$env_path"; fi
+  # Optional Google sign-in goes in live only when complete: a half-filled
+  # config makes a production boot refuse to start, so otherwise it's
+  # written commented out for the operator to finish.
+  if [ -n "$GOOGLE_CLIENT_ID$GOOGLE_CLIENT_SECRET$ADMIN_EMAILS" ]; then
+    if [ -n "$PUBLIC_URL" ] && [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ] && [ -n "$ADMIN_EMAILS" ]; then
+      cat >> "$env_path" <<EOF
 OTHONI_GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 OTHONI_GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
 OTHONI_ADMIN_EMAILS=$ADMIN_EMAILS
 EOF
-    GOOGLE_READY=1
-  else
-    cat >> "$env_path" <<EOF
-# Google sign-in — fill in all four, uncomment, then restart othoni.
-# Redirect URI to register on the OAuth client: <OTHONI_PUBLIC_URL>/api/auth/google/callback
-#OTHONI_PUBLIC_URL=${PUBLIC_URL:-https://othoni.example.com}
+      GOOGLE_READY=1
+    else
+      cat >> "$env_path" <<EOF
+# Google sign-in — fill in all of these (plus OTHONI_PUBLIC_URL above),
+# uncomment, then restart othoni. Redirect URI to register on the OAuth
+# client: <OTHONI_PUBLIC_URL>/api/auth/google/callback
 #OTHONI_GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 #OTHONI_GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
 #OTHONI_ADMIN_EMAILS=$ADMIN_EMAILS
 EOF
-    GOOGLE_PENDING=1
+      GOOGLE_PENDING=1
+    fi
   fi
   # Optional non-default settings (guided setup or env overrides).
   [ "${ROLE:-full}" = "peer" ] && echo "OTHONI_ROLE=peer" >> "$env_path"
   [ "${GEOLOCATE:-on}" = "off" ] && echo "OTHONI_GEOLOCATE=off" >> "$env_path"
   chmod 600 "$env_path"
+  FRESH=1
   log ".env created at $env_path (mode 600)"
+}
+
+# Fresh install listening on the network: let people reach the port if a
+# host firewall is on (nothing to do for loopback — nginx is in front).
+open_port() {
+  [ -n "${FRESH:-}" ] || return 0
+  case "$HOST" in 127.*|localhost|::1) return 0 ;; esac
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    log "opening port $PORT in ufw"
+    ufw allow "$PORT/tcp" >/dev/null || warn "couldn't open port $PORT in ufw"
+  elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    log "opening port $PORT in firewalld"
+    { firewall-cmd --permanent --add-port="$PORT/tcp" >/dev/null \
+        && firewall-cmd --reload >/dev/null; } || warn "couldn't open port $PORT in firewalld"
+  fi
 }
 
 install_systemd() {
@@ -547,6 +600,13 @@ setup_tls() {
     fi
   fi
   TLS_READY=1
+  # An install that started out without a domain doesn't have its public
+  # URL in .env yet — and that's what makes the session cookie https-only.
+  if ! grep -q '^OTHONI_PUBLIC_URL=.' "$INSTALL_DIR/.env" 2>/dev/null; then
+    echo "OTHONI_PUBLIC_URL=$PUBLIC_URL" >> "$INSTALL_DIR/.env"
+    log "added OTHONI_PUBLIC_URL=$PUBLIC_URL to .env; restarting $SERVICE_NAME"
+    systemctl restart "$SERVICE_NAME"
+  fi
 }
 
 # True when some nginx site already proxies to othoni's port.
@@ -554,27 +614,58 @@ nginx_fronts_othoni() {
   grep -rqsE "^[^#]*proxy_pass[[:space:]]+https?://[^;/]*:$PORT([;/]|$)" /etc/nginx
 }
 
+# This server's address on the network it's reached from: the source IP of
+# the default route (a home server's LAN IP, a VPS's public one — or a cloud
+# VM's private one, hence the hint in the banner).
+server_ip() {
+  local ip=""
+  if command -v ip >/dev/null 2>&1; then
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}')"
+  fi
+  [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf '%s\n' "${ip:-<this-server-ip>}"
+}
+
 print_banner() {
-  local version url fronted=""
+  local version base fronted="" direct="" code ip=""
   version="$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || echo unknown)"
   nginx_fronts_othoni && fronted=1
-  url="http://$HOST:$PORT/"
+  case "$HOST" in 127.*|localhost|::1) ;; *) direct=1; ip="$(server_ip)" ;; esac
   if [ -n "${TLS_READY:-}" ]; then
-    url="https://$TLS_HOST/"
+    base="https://$TLS_HOST"
   elif [ -n "$fronted" ] && [ -n "$PUBLIC_URL" ]; then
-    url="$PUBLIC_URL/"
+    base="$PUBLIC_URL"
+  elif [ -n "$direct" ]; then
+    base="http://$ip:$PORT"
+  else
+    base="http://$HOST:$PORT"
   fi
+  # Present until the first admin account exists (server/setup.js).
+  code="$(tr -d '[:space:]' < "$INSTALL_DIR/data/setup-code" 2>/dev/null || true)"
+
   cat <<EOF
 
 ────────────────────────────────────────────────────────────
   othoni v$version is installed and running.
 ────────────────────────────────────────────────────────────
 
-  dashboard: $url
+  dashboard: $base/
+EOF
+  if [ -n "$code" ]; then
+    cat <<EOF
+
+  ➜  Create your admin account (one-time link):
+
+        $base/setup?code=$code
+
+EOF
+  fi
+  cat <<EOF
   config:    $INSTALL_DIR/.env  (mode 600)
-  data:      $INSTALL_DIR/data/othoni.db
+  data:      $INSTALL_DIR/data/
   service:   sudo systemctl status $SERVICE_NAME
              sudo journalctl -u $SERVICE_NAME -f
+  locked out: sudo node $INSTALL_DIR/scripts/reset-password.js <email>
 
   to upgrade later, just re-run this script:
      sudo bash $INSTALL_DIR/install.sh
@@ -585,47 +676,56 @@ EOF
 
   ⚠  HTTPS isn't set up yet: $TLS_PENDING
 EOF
+  elif [ -n "${TLS_READY:-}" ] && [ -n "$direct" ]; then
+    cat <<EOF
+
+  note:      othoni is also still reachable directly on http://$ip:$PORT.
+             Set HOST=127.0.0.1 in .env and restart it to close that.
+EOF
+  elif [ -n "$direct" ] && [ -z "$fronted" ]; then
+    cat <<EOF
+
+  http only: fine on a private network. On a public server, give it a
+             domain with HTTPS (point its DNS here first):
+               sudo OTHONI_PUBLIC_URL=https://your.domain OTHONI_SETUP_TLS=1 \\
+                 bash $INSTALL_DIR/install.sh
+EOF
+    case "$ip" in
+      10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*)
+        echo "             $ip is a private address — from outside this network, use the server's public IP." ;;
+    esac
   elif [ -z "${TLS_READY:-}" ] && [ -z "$fronted" ] && [ "$ROLE" != peer ]; then
     cat <<EOF
 
-  https:     othoni only listens on $HOST:$PORT. To put nginx + a
-             Let's Encrypt certificate in front of it:
-                sudo OTHONI_SETUP_TLS=1 bash $INSTALL_DIR/install.sh
-             (or by hand: nginx-othoni.conf.example in the repo)
+  reach it:  othoni only listens on $HOST:$PORT. From your computer run
+               ssh -L $PORT:127.0.0.1:$PORT <you>@<this-server>
+             and open http://localhost:$PORT — or put nginx + HTTPS in front:
+               sudo OTHONI_SETUP_TLS=1 bash $INSTALL_DIR/install.sh
 EOF
   fi
 
   if [ -n "${GOOGLE_READY:-}" ]; then
     cat <<EOF
 
-  sign in:   $PUBLIC_URL/  with Google ($ADMIN_EMAILS)
-             redirect URI on the OAuth client must be:
+  google:    Google sign-in is on for $ADMIN_EMAILS; the OAuth
+             client's redirect URI must be
              $PUBLIC_URL/api/auth/google/callback
-
 EOF
   elif [ -n "${GOOGLE_PENDING:-}" ]; then
     cat <<EOF
 
-  ⚠  Google sign-in isn't set up yet, so nobody can log in.
-     1. Google Cloud Console → Google Auth Platform: set up the
-        consent screen, then add your Google account under
-        Audience → Test users (or publish the app).
-     2. Clients → Create client → "Web application", with the
-        Authorized redirect URI  <your https URL>/api/auth/google/callback
-     3. Set OTHONI_PUBLIC_URL, OTHONI_GOOGLE_CLIENT_ID,
-        OTHONI_GOOGLE_CLIENT_SECRET and OTHONI_ADMIN_EMAILS in
-        $INSTALL_DIR/.env
-     4. sudo systemctl restart $SERVICE_NAME
-
+  ⚠  Google sign-in is only half set up, so it's commented out in .env.
+     Finish it there (README → "Google sign-in"), then
+     sudo systemctl restart $SERVICE_NAME
 EOF
-  else
-    echo
   fi
+  echo
 }
 
 # ---- main ----
 require_root
 guided_config
+default_host
 
 ensure_tools
 if ! node_ok; then
@@ -636,6 +736,7 @@ fi
 clone_or_pull
 build
 generate_env_if_missing
+open_port
 install_systemd
 restart_if_running
 smoke_test || true

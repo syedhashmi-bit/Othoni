@@ -33,6 +33,8 @@ const vacuum = require('../vacuum');
 const projects = require('../projects');
 const securityAudit = require('../security-audit');
 const google = require('../google-auth');
+const accounts = require('../accounts');
+const { revokeSessionsOf } = require('../auth');
 const peers = require('../peers');
 const geoip = require('../geoip');
 const silences = require('../silences');
@@ -827,26 +829,112 @@ router.post('/projects/:name/control', async (req, res) => {
   }
 });
 
-// ---------- Google sign-in allowlist ----------
+// ---------- Accounts + Google sign-in (v0.79) ----------
 //
-// Read-only view of who can sign in. The list itself lives in .env
-// (OTHONI_ADMIN_EMAILS / OTHONI_VIEWER_EMAILS) so there's nothing to write
-// here. Admin-only — viewer sessions get 403 even on GET, because the list
-// of account emails is sensitive.
+// Local accounts (email + password) are managed here; the Google allowlist
+// is read-only because it lives in .env (OTHONI_ADMIN_EMAILS /
+// OTHONI_VIEWER_EMAILS). Admin-only — viewer sessions get 403 even on GET,
+// because the list of account emails is sensitive.
 
 function requireAdminExplicit(req, res, next) {
   if (req.user && req.user.role === 'admin') return next();
   return res.status(403).json({ error: 'forbidden', message: 'admin only' });
 }
 
+const ACCOUNT_INPUT_ERRORS = ['invalid_email', 'invalid_password', 'invalid_role', 'email_taken'];
+
+function googleHasAdmins() {
+  return google.isConfigured() && google.config().admins.length > 0;
+}
+
 router.get('/sign-in', requireAdminExplicit, (req, res) => {
   const c = google.config();
   res.json({
+    password: accounts.passwordLoginEnabled(),
     configured: google.isConfigured(),
     redirectUri: google.redirectUri(req),
     admins: c.admins,
     viewers: c.viewers.filter((e) => !c.admins.includes(e)),
   });
+});
+
+router.get('/accounts', requireAdminExplicit, (req, res) => {
+  res.json({ accounts: accounts.list(), passwordLogin: accounts.passwordLoginEnabled() });
+});
+
+router.post('/accounts', requireAdminExplicit, (req, res) => {
+  const { email, password, role } = req.body || {};
+  try {
+    const created = accounts.create({
+      email, password, role: role || 'viewer', createdBy: req.user?.username || null,
+    });
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'user.create',
+      target: created.id,
+      metadata: { email: created.email, role: created.role },
+    });
+    res.json({ account: created });
+  } catch (e) {
+    if (ACCOUNT_INPUT_ERRORS.includes(e.code)) return res.status(400).json({ error: e.code, message: e.message });
+    logger.error('accounts create failed:', e.message);
+    res.status(500).json({ error: 'accounts_failed', message: e.message });
+  }
+});
+
+// { password } resets it (signing that account out everywhere);
+// { disabled } turns the account off / back on.
+router.patch('/accounts/:id', requireAdminExplicit, (req, res) => {
+  const { password, disabled } = req.body || {};
+  const before = accounts.findById(req.params.id);
+  if (!before) return res.status(404).json({ error: 'not_found' });
+  if (disabled === true && before.role === 'admin' && accounts.wouldStrandAdmins(before.id, googleHasAdmins())) {
+    return res.status(400).json({ error: 'last_admin', message: "That's the last admin who can sign in — add another admin first." });
+  }
+  try {
+    let updated = null;
+    const changed = [];
+    if (typeof password === 'string') {
+      updated = accounts.setPassword(before.id, password);
+      changed.push('password');
+    }
+    if (typeof disabled === 'boolean') {
+      updated = accounts.setDisabled(before.id, disabled);
+      changed.push(disabled ? 'disabled' : 'enabled');
+    }
+    if (!updated) return res.status(400).json({ error: 'invalid_request', message: 'nothing to update' });
+    const revoked = changed.includes('password') || disabled === true
+      ? revokeSessionsOf(before.email, { by: req.user?.username || 'admin' })
+      : 0;
+    audit.log({
+      ...audit.fromReq(req),
+      action: 'user.update',
+      target: before.id,
+      metadata: { email: before.email, changed, revokedSessions: revoked },
+    });
+    res.json({ account: updated });
+  } catch (e) {
+    if (ACCOUNT_INPUT_ERRORS.includes(e.code)) return res.status(400).json({ error: e.code, message: e.message });
+    logger.error('accounts update failed:', e.message);
+    res.status(500).json({ error: 'accounts_failed', message: e.message });
+  }
+});
+
+router.delete('/accounts/:id', requireAdminExplicit, (req, res) => {
+  const before = accounts.findById(req.params.id);
+  if (!before) return res.status(404).json({ error: 'not_found' });
+  if (before.role === 'admin' && !before.disabled && accounts.wouldStrandAdmins(before.id, googleHasAdmins())) {
+    return res.status(400).json({ error: 'last_admin', message: "That's the last admin who can sign in — add another admin first." });
+  }
+  accounts.remove(before.id);
+  const revoked = revokeSessionsOf(before.email, { by: req.user?.username || 'admin' });
+  audit.log({
+    ...audit.fromReq(req),
+    action: 'user.delete',
+    target: before.id,
+    metadata: { email: before.email, revokedSessions: revoked },
+  });
+  res.json({ ok: true });
 });
 
 // ---------- Federation peers (v0.69) ----------

@@ -131,8 +131,9 @@ What it does, in order:
 4. Writes/updates `.env`:
    - `NODE_ENV=production`, `HOST=<wg-ip>`, `PORT=8088` — always set.
    - `OTHONI_PEER_TOKEN`, `OTHONI_JWT_SECRET` — generated **only if
-     missing**, so re-runs never rotate working secrets. No sign-in is set
-     up: a peer is read through the central, not logged into directly.
+     missing**, so re-runs never rotate working secrets.
+   - `OTHONI_PASSWORD_LOGIN=off` (only if unset) — no sign-in and no setup
+     link: a peer is read through the central, not logged into directly.
 5. Installs the systemd unit from `othoni.service.example` (if not already
    present), `daemon-reload`, `enable --now`, restart.
 6. If `ufw` is active, allows the WireGuard subnet to the port.
@@ -222,11 +223,11 @@ the fix.
 | `systemctl is-active` → `activating` (loops) | service crashes on boot and systemd retries | `journalctl -u othoni --since "2 min ago"` — read the actual error |
 | `Cannot find module 'dotenv'` (or any module) | `npm ci` never ran / failed | run `npm ci` in the othoni dir |
 | `EADDRNOTAVAIL` on boot | `HOST` is a WG IP not assigned to the box | check `ip -4 addr show wg0`; set `HOST` to the address it actually shows |
-| `Refusing to start … insecure auth config` | weak/default `OTHONI_JWT_SECRET` (<32 chars), or a half-filled Google sign-in config | set a 32+ char secret; either set all of `OTHONI_PUBLIC_URL` / `OTHONI_GOOGLE_CLIENT_ID` / `OTHONI_GOOGLE_CLIENT_SECRET` / `OTHONI_ADMIN_EMAILS` or none |
+| `Refusing to start … insecure auth config` | weak/default `OTHONI_JWT_SECRET` (<32 chars), or a half-filled Google sign-in config | set a 32+ char secret (or remove it — othoni generates one); either set all of `OTHONI_PUBLIC_URL` / `OTHONI_GOOGLE_CLIENT_ID` / `OTHONI_GOOGLE_CLIENT_SECRET` / `OTHONI_ADMIN_EMAILS` or none |
 | central `curl` → "Connection refused" but ping works | peer bound to `127.0.0.1`, not the WG IP | set `HOST=<wg-ip>` in `.env`, restart; `ss -lntp \| grep 8088` should show the WG IP |
 | peer `/api/system` returns 401 even via the proxy | `OTHONI_PEER_TOKEN` unset/empty on the peer, or mismatched on the central | confirm `grep OTHONI_PEER_TOKEN .env` on the peer is non-empty and matches the central registration |
 | two boxes share a session unexpectedly | the peer's `.env` was copied from another box (shared `OTHONI_JWT_SECRET`) | give the peer its own `OTHONI_JWT_SECRET`; this is why Step 1 excludes `.env` |
-| proxy returns 405 when you click a button | mutation through the read-only proxy | expected — change the peer's config by signing in to it directly (give it its own Google sign-in settings) |
+| proxy returns 405 when you click a button | mutation through the read-only proxy | expected — change the peer's config by signing in to it directly: remove `OTHONI_PASSWORD_LOGIN=off` from its `.env`, restart it, and use the setup link it logs |
 | proxy returns 502 | peer unreachable within 10s | check the tunnel (`wg show`), the peer service, and the firewall |
 
 A copied `.env` is the subtle one: if the box already had an `.env` from a

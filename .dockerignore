@@ -1,0 +1,11 @@
+.git
+.claude
+.env
+data
+node_modules
+client/node_modules
+client/dist
+test
+docs
+assets
+*.md
