@@ -28,6 +28,24 @@
 
 ---
 
+## 📸 Screenshots
+
+**Dashboard**: the last hour of CPU and memory, live usage cards and a per-core heatmap.
+
+<img alt="Othoni dashboard" src="docs/screenshots/dashboard.png" />
+
+**History**: 24 hours of compute, memory, I/O and network at 5-second resolution, with CSV export per chart.
+
+<img alt="Othoni history page" src="docs/screenshots/history.png" />
+
+**Sentinel**: uptime, TLS expiry, DNS, domain registration and heartbeat checks, grouped by domain.
+
+<img alt="Othoni Sentinel checks" src="docs/screenshots/sentinel.png" />
+
+<sub>Captured from a throwaway instance with seeded demo history; the host name and addresses are placeholders, and the checks point at example.com.</sub>
+
+---
+
 ## 📊 Features
 
 - **Up and running in minutes** — one command installs it; a one-time
