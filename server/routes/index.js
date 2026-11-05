@@ -32,6 +32,7 @@ const retention = require('../retention');
 const vacuum = require('../vacuum');
 const projects = require('../projects');
 const securityAudit = require('../security-audit');
+const updates = require('../updates');
 const google = require('../google-auth');
 const accounts = require('../accounts');
 const { revokeSessionsOf } = require('../auth');
@@ -732,6 +733,17 @@ router.get('/security-audit', async (req, res) => {
 
 // History — time-series of finding counts per severity. Powered by
 // the audit_runs table written on every (manual + auto) run.
+// Pending package updates (read-only). ?refresh=1 re-reads apt/dnf now
+// (at most once a minute); it never runs `apt update` or installs anything.
+router.get('/updates', async (req, res) => {
+  try {
+    res.json(await updates.get({ force: req.query.refresh === '1' }));
+  } catch (e) {
+    logger.error('updates failed:', e.message);
+    res.status(500).json({ error: 'updates_failed', message: e.message });
+  }
+});
+
 router.get('/security-audit/history', (req, res) => {
   const range = String(req.query.range || '7d');
   res.json(securityAudit.listHistory({ range }));

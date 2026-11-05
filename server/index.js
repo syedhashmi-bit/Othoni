@@ -32,6 +32,7 @@ const alerts = require('./alerts');
 const webhooks = require('./webhooks');
 const checks = require('./checks');
 const securityAudit = require('./security-audit');
+const updates = require('./updates');
 const geoip = require('./geoip');
 const logger = require('./logger');
 
@@ -248,12 +249,16 @@ app.listen(PORT, HOST, () => {
     // through the same webhook pipeline as alert fires.
     securityAudit.setDispatcher((event) => webhooks.dispatch(event));
     securityAudit.startAutoRun();
+    // Pending package updates — re-read every 10 min so the updates.*
+    // series (and alert rules on them) stay current.
+    updates.start();
   }
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.once(sig, () => {
     securityAudit.stopAutoRun();
+    updates.stop();
     checks.stop();
     alerts.stop();
     vacuum.stop();

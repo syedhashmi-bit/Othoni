@@ -12,6 +12,7 @@ const logger = require('./logger');
 const history = require('./history');
 const actions = require('./actions');
 const securityAudit = require('./security-audit');
+const updates = require('./updates');
 const silences = require('./silences');
 
 const { getCpu } = require('./collectors/cpu');
@@ -45,6 +46,10 @@ const METRICS = {
   // completes, which the evaluator treats as "no data → no fire".
   security_crit: { label: 'Security crit findings',    unit: '', extract: () => securityAudit.getLastSummary()?.crit ?? null, format: num2, historyKey: 'security.crit_count' },
   security_warn: { label: 'Security warn findings',    unit: '', extract: () => securityAudit.getLastSummary()?.warn ?? null, format: num2, historyKey: 'security.warn_count' },
+  // v0.80 — pending package updates (server/updates.js, re-read every
+  // 10 min). null until the first check, like the audit metrics.
+  updates_security: { label: 'Pending security updates', unit: '', extract: () => updates.getLast()?.counts?.security ?? null, format: count, historyKey: 'updates.security' },
+  updates_pending:  { label: 'Pending package updates',  unit: '', extract: () => updates.getLast()?.counts?.total ?? null,    format: count, historyKey: 'updates.pending' },
 };
 
 // Rate-comparator support. The value compared against the threshold is
@@ -76,6 +81,7 @@ function formatRateValue(meta, ratePerMin) {
 
 function pct(v) { return `${v.toFixed(1)}%`; }
 function num2(v) { return v.toFixed(2); }
+function count(v) { return String(Math.round(v)); }
 function rate(v) {
   if (v == null) return '—';
   if (v < 1024) return `${v.toFixed(0)} B/s`;
@@ -164,6 +170,7 @@ function defaultRules() {
     { id: newRuleId(), enabled: true, metric: 'cpu',       comparator: 'gt', threshold: 90, durationMs: 5*60_000, severity: 'warn', label: 'CPU sustained high' },
     { id: newRuleId(), enabled: true, metric: 'mem',       comparator: 'gt', threshold: 90, durationMs: 5*60_000, severity: 'crit', label: 'Memory pressure' },
     { id: newRuleId(), enabled: true, metric: 'disk_root', comparator: 'gt', threshold: 90, durationMs: 60_000,   severity: 'crit', label: 'Root disk almost full' },
+    { id: newRuleId(), enabled: true, metric: 'updates_security', comparator: 'gt', threshold: 0, durationMs: 24*60*60_000, severity: 'warn', label: 'Security updates waiting a day' },
   ];
 }
 

@@ -27,7 +27,7 @@ const HOST_SCOPED = [
   '/api/system', '/api/cpu', '/api/memory', '/api/disks', '/api/network',
   '/api/diskio', '/api/connections', '/api/logs', '/api/processes',
   '/api/docker', '/api/services', '/api/overview', '/api/history',
-  '/api/projects', '/api/security-audit', '/api/actions', '/api/alerts',
+  '/api/projects', '/api/security-audit', '/api/updates', '/api/actions', '/api/alerts',
   '/api/checks',
 ];
 
@@ -174,6 +174,7 @@ export const api = {
   securityUnack: (id) => request(`/api/security-audit/ack/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   }),
+  updates: ({ refresh = false } = {}) => request(`/api/updates${refresh ? '?refresh=1' : ''}`),
   securityHosts: () => request('/api/security-audit/hosts'),
   securityHostAudit: (host) =>
     request(`/api/security-audit/hosts/${encodeURIComponent(host)}`),

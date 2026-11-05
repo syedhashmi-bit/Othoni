@@ -6,7 +6,28 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.80.0] — 2026-11-05
+
+See what's waiting to be installed on the server, without othoni installing
+anything; plus the Docker image now published on GHCR.
+
 ### Added
+
+- **Pending updates** on the Security page: every package waiting for an
+  upgrade with installed → available version and source, security updates
+  flagged and listed first, "reboot required" (and which packages need it),
+  when the package lists were last refreshed (amber after a week), whether
+  unattended-upgrades is on, and the command to apply them with a copy
+  button. Read-only — othoni never runs `apt update` or installs anything.
+  apt and dnf. New `server/updates.js`, `GET /api/updates` (federated hosts
+  too), re-read every 10 min into `updates.pending` / `updates.security`
+  history series.
+- **Alert-rule metrics** `updates_security` and `updates_pending`. New
+  installs get a default rule, "Security updates waiting a day"
+  (`updates_security > 0` for 24 h, warn); existing installs can add it on
+  the Alerts page.
 
 - **Published Docker image** `ghcr.io/syedhashmi-bit/othoni` (amd64 +
   arm64), built by a new GitHub Actions workflow
@@ -4517,6 +4538,7 @@ First working release. Built end-to-end on the testing VPS at
   postgresql, etc.) instead of `inactive`.
 
 [Unreleased]: #unreleased
+[0.80.0]: #0800--2026-11-05
 [0.79.0]: #0790--2026-10-30
 [0.78.0]: #0780--2026-10-28
 [0.77.0]: #0770--2026-10-16

@@ -483,6 +483,119 @@ function RemoteHostsCard() {
   );
 }
 
+// Pending package updates (read-only — GET /api/updates). Shows what's
+// waiting, flags security updates, a pending reboot, and how stale the
+// package lists are; gives the command to run but never runs it.
+const UPDATES_PREVIEW = 12;
+const STALE_LISTS_MS = 7 * 24 * 3_600_000;
+
+function UpdatesCard() {
+  const [u, setU] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  function load(refresh = false) {
+    setBusy(true);
+    api.updates({ refresh })
+      .then((r) => { setU(r); setErr(null); })
+      .catch((e) => setErr(e.body?.message || e.message))
+      .finally(() => setBusy(false));
+  }
+  useEffect(() => { load(); }, []);
+
+  async function copy() {
+    try { await navigator.clipboard.writeText(u.command); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    catch { /* clipboard blocked (plain http) — the command is selectable */ }
+  }
+
+  const pkgs = u?.packages || [];
+  const shown = showAll ? pkgs : pkgs.slice(0, UPDATES_PREVIEW);
+  const stale = u?.listsRefreshedAt && Date.now() - u.listsRefreshedAt > STALE_LISTS_MS;
+  const sec = u?.counts?.security || 0;
+  const border = sec > 0 || u?.reboot?.required ? 'var(--warn)' : pkgs.length ? 'var(--border)' : 'var(--ok)';
+
+  return (
+    <div className="card updates-card" style={{ marginBottom: 16, borderColor: border }}>
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="card-title">Pending updates</div>
+          <div className="card-sub" style={{ fontSize: 12 }}>
+            {!u ? 'Checking…'
+              : !u.manager ? (u.error || 'No supported package manager found.')
+              : <>
+                  As of the package lists' last refresh{' '}
+                  <strong style={stale ? { color: 'var(--warn)' } : undefined}>
+                    {u.listsRefreshedAt ? relativeTime(u.listsRefreshedAt) : '(unknown)'}
+                  </strong>
+                  {stale && ' — run `apt update` to see newer ones'}
+                  {' · '}checked {relativeTime(u.checkedAt)}
+                  {u.autoUpdates != null && <> · unattended-upgrades {u.autoUpdates ? 'on' : <strong style={{ color: 'var(--warn)' }}>off</strong>}</>}
+                </>}
+          </div>
+        </div>
+        <button type="button" className="btn ghost compact" disabled={busy} onClick={() => load(true)}>
+          {busy ? 'Checking…' : 'Re-check'}
+        </button>
+      </div>
+
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+
+      {u?.manager && (
+        <div className="updates-summary">
+          <span className={`pill ${pkgs.length ? 'dim' : 'ok'}`}>
+            {pkgs.length ? `${pkgs.length} pending` : 'Up to date'}
+          </span>
+          {sec > 0 && <span className="pill warn">{sec} security</span>}
+          {u.reboot?.required && (
+            <span className="pill crit" title={u.reboot.packages.length ? `Needed by: ${u.reboot.packages.join(', ')}` : undefined}>
+              Reboot required{u.reboot.packages.length ? ` (${u.reboot.packages.slice(0, 3).join(', ')}${u.reboot.packages.length > 3 ? '…' : ''})` : ''}
+            </span>
+          )}
+        </div>
+      )}
+
+      {pkgs.length > 0 && (
+        <>
+          <div className="updates-list" role="table" aria-label="Pending package updates">
+            <div className="updates-row head" role="row">
+              <span role="columnheader">Package</span>
+              <span role="columnheader">Installed</span>
+              <span role="columnheader">Available</span>
+              <span role="columnheader">From</span>
+            </div>
+            {shown.map((p) => (
+              <div key={`${p.name}:${p.arch}`} className={`updates-row${p.security ? ' security' : ''}`} role="row">
+                <span className="mono" role="cell">
+                  {p.name}
+                  {p.security && <span className="pill warn" style={{ fontSize: 9.5, marginLeft: 6 }}>security</span>}
+                </span>
+                <span className="mono muted" role="cell">{p.from || '—'}</span>
+                <span className="mono" role="cell">{p.to}</span>
+                <span className="muted" role="cell">{p.source}</span>
+              </div>
+            ))}
+          </div>
+          {pkgs.length > UPDATES_PREVIEW && (
+            <button type="button" className="btn ghost compact" style={{ marginTop: 8 }} onClick={() => setShowAll(!showAll)}>
+              {showAll ? 'Show fewer' : `Show all ${pkgs.length}`}
+            </button>
+          )}
+        </>
+      )}
+
+      {u?.command && (pkgs.length > 0 || u.reboot?.required) && (
+        <div className="updates-apply">
+          <span className="muted">To apply, on the server:</span>
+          <code className="mono">{u.command}{u.reboot?.required ? ' && sudo reboot' : ''}</code>
+          <button type="button" className="btn ghost tiny" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Security() {
   const { user } = useApp();
   const isAdmin = user?.role === 'admin';
@@ -680,6 +793,7 @@ export default function Security() {
 
       <DiffStrip diff={data?.diff} />
       <HistoryCard history={history} range={historyRange} onRangeChange={setHistoryRange} />
+      <UpdatesCard />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12, fontSize: 12, flexWrap: 'wrap' }}>
         {filter && (

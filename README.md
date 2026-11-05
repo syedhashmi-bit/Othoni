@@ -111,6 +111,12 @@
   to push `custom.<name>` series into the same store. They show up
   automatically under a "Custom" section on the History page
 - Public IP + local IPs, hostname, kernel, OS, uptime
+- **Pending updates** — on the Security page: every package waiting for an
+  upgrade (installed → available version, security updates flagged first),
+  whether a reboot is owed, and how fresh the package lists are (apt or
+  dnf; re-read every 10 min, never runs `apt update` or installs anything).
+  Alert-rule metrics `updates_security` / `updates_pending`; new installs
+  get a "security updates waiting a day" rule
 - Settings page for tuning the refresh interval per browser
 - Polished dark UI: nav icons, pulsing live indicator, server clock,
   card hover lift, gradient bars, skeleton loaders, page fade-up
@@ -500,6 +506,7 @@ require an authenticated session.
 | GET    | `/api/history/processes` | Heaviest processes in a range, with sparklines |
 | POST   | `/api/metrics`      | **API key auth.** Push `custom.<name>` metrics |
 | POST   | `/api/security-audit/ingest` | **API key auth.** Push a remote host's `{ host, findings }` audit |
+| GET    | `/api/updates`      | Pending package updates, reboot-required, package-list age (`?refresh=1` re-reads now) |
 | GET    | `/api/security-audit/hosts`  | Remote hosts reporting audits, with latest summary |
 | GET    | `/api/security-audit/hosts/:host` | One remote host's latest run + findings |
 | GET    | `/api/peers`        | List registered federation peers (token stripped) |

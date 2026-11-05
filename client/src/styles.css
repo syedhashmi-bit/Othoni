@@ -2251,3 +2251,66 @@ body[data-density="compact"] .toolbar.sticky {
 .ck-hero-sides { display: flex; gap: 32px; flex-wrap: wrap; }
 .ck-hero-v a { color: var(--accent); text-decoration: none; }
 .ck-hero-v a:hover { text-decoration: underline; }
+
+/* ---------- Security → Pending updates ---------- */
+.updates-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.updates-list {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.updates-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1.4fr) minmax(0, 1.2fr);
+  gap: 12px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  border-top: 1px solid var(--border);
+}
+.updates-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.updates-row.head {
+  border-top: none;
+  background: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+.updates-row.security {
+  background: rgba(245, 158, 11, 0.06);
+}
+.updates-apply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12.5px;
+}
+.updates-apply code {
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  user-select: all;
+}
+@media (max-width: 640px) {
+  .updates-row {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  }
+  .updates-row > span:nth-child(2),
+  .updates-row > span:nth-child(4) {
+    display: none;
+  }
+}
